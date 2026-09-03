@@ -69,8 +69,11 @@ async function cmdAuthorize(config) {
   if (!config.serviceId) throw new Error('SERVICE_ID missing in .env');
   if (!config.blobToken) throw new BlobNotConfiguredError();
 
-  const { state, nonce } = createState(config.appSecret);
+  const { state } = createState(config.appSecret);
   const { tokopediaUrl } = buildAuthorizeUrl({ serviceId: config.serviceId, state });
+  // Tokopedia drops `state`, so the callback cannot echo our nonce back. Match on
+  // freshness instead: any bundle stored after this moment is the one we triggered.
+  const startedAt = Date.now();
 
   console.log(`\nRedirect URL (must match Partner Center):\n  ${redirectUri(config)}\n`);
 
@@ -83,7 +86,7 @@ async function cmdAuthorize(config) {
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS);
     const bundle = await loadTokenBundle({ token: config.blobToken });
-    if (bundle?.nonce === nonce) {
+    if (bundle && Date.parse(bundle.saved_at) > startedAt) {
       console.log(`\n${info('callback completed')}`);
       applyBundle(config, bundle);
       reportBundle(config, bundle);

@@ -35,11 +35,29 @@ export default async function handler(req, res) {
     return;
   }
 
-  const stateCheck = verifyState(config.appSecret, url.searchParams.get('state') ?? '');
-  if (!stateCheck.valid) {
-    console.warn(`callback: rejected state (${stateCheck.reason})`);
-    send(400, page.error('Invalid state', `This callback could not be verified (${stateCheck.reason}). Start again from your terminal.`));
-    return;
+  // The Tokopedia custom-authorize flow does NOT echo `state` back - the callback
+  // arrives as ?app_key&code&locale&shop_region. So state is verified when present
+  // (the global services.tiktokshop.com flow does return it) and otherwise we fall
+  // back to checking that the callback is for this app.
+  const rawState = url.searchParams.get('state');
+  let nonce = 'no-state';
+
+  if (rawState) {
+    const stateCheck = verifyState(config.appSecret, rawState);
+    if (!stateCheck.valid) {
+      console.warn(`callback: rejected state (${stateCheck.reason})`);
+      send(400, page.error('Invalid state', `This callback could not be verified (${stateCheck.reason}). Start again from your terminal.`));
+      return;
+    }
+    nonce = stateCheck.nonce;
+  } else {
+    const callbackAppKey = url.searchParams.get('app_key');
+    if (callbackAppKey && callbackAppKey !== config.appKey) {
+      console.warn(`callback: app_key mismatch (${callbackAppKey})`);
+      send(400, page.error('Wrong app', 'This callback was issued for a different application.'));
+      return;
+    }
+    console.log('callback: no state parameter (Tokopedia flow); verified via app_key');
   }
 
   const authCode = url.searchParams.get('code') || url.searchParams.get('auth_code');
@@ -68,13 +86,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    await saveTokenBundle({ tokens, nonce: stateCheck.nonce, shop });
+    await saveTokenBundle({ tokens, nonce, shop });
   } catch (error) {
     console.error(`callback: could not persist tokens - ${error.message}`);
     send(500, page.error('Could not save tokens', 'The tokens were issued but could not be stored. Check that the blob store is linked to this project.'));
     return;
   }
 
-  console.log(`callback: authorized shop=${shop?.name ?? 'unknown'} nonce=${stateCheck.nonce.slice(0, 6)}`);
+  console.log(`callback: authorized shop=${shop?.name ?? 'unknown'} nonce=${nonce.slice(0, 8)}`);
   send(200, page.success(shop));
 }

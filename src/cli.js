@@ -11,7 +11,9 @@ import { signRequest } from './sign.js';
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
 Usage:
-  npm run authorize           Open the seller approval page, wait for the hosted callback
+  npm run authorize           Approve via the official link, wait for the hosted callback
+  npm run authorize -- --tokopedia        ... via Tokopedia Seller Center instead
+  npm run authorize -- <url>              ... via a Partner Center "Copy authorisation link"
   npm run pull                Pull the stored token bundle from Vercel Blob into .env
   npm run url                 Print the authorization URL and the redirect URL to register
   npm run refresh             Refresh the access token (and sync it to Blob)
@@ -64,22 +66,38 @@ function reportBundle(config, bundle) {
   }
 }
 
-async function cmdAuthorize(config) {
+async function cmdAuthorize(config, args = []) {
   requireAppCredentials(config);
   if (!config.serviceId) throw new Error('SERVICE_ID missing in .env');
   if (!config.blobToken) throw new BlobNotConfiguredError();
 
   const { state } = createState(config.appSecret);
-  const { tokopediaUrl } = buildAuthorizeUrl({ serviceId: config.serviceId, state });
+  const links = buildAuthorizeUrl({ serviceId: config.serviceId, state });
+
+  // Two entry points exist. `partner-service-detail` reports the official one as
+  // services.tiktokshop.com (auth_type 1); the Tokopedia Seller Center link is what
+  // an ID seller reaches by browsing. They are not interchangeable: an authorization
+  // completed through the wrong door can yield a token carrying no API scopes.
+  const useTokopedia = args.includes('--tokopedia');
+  const authorizeUrl = useTokopedia ? links.tokopediaUrl : links.url;
+  const source = useTokopedia ? 'Tokopedia Seller Center' : 'official (services.tiktokshop.com)';
+
+  // A custom link from Partner Center's "Copy authorisation link" overrides both.
+  const override = args.find((a) => a.startsWith('https://'));
+  const finalUrl = override
+    ? `${override}${override.includes('?') ? '&' : '?'}state=${encodeURIComponent(state)}`
+    : authorizeUrl;
+
+  console.log(`\nAuthorize via: ${override ? 'custom link you supplied' : source}`);
   // Tokopedia drops `state`, so the callback cannot echo our nonce back. Match on
   // freshness instead: any bundle stored after this moment is the one we triggered.
   const startedAt = Date.now();
 
   console.log(`\nRedirect URL (must match Partner Center):\n  ${redirectUri(config)}\n`);
 
-  const opened = openBrowser(tokopediaUrl);
+  const opened = openBrowser(finalUrl);
   console.log(opened ? info('opening the authorization page...') : warn('open this URL manually:'));
-  console.log(`\n  ${tokopediaUrl}\n`);
+  console.log(`\n  ${finalUrl}\n`);
   console.log(info('waiting for the hosted callback to store the tokens (5 min timeout)...'));
 
   const deadline = Date.now() + POLL_TIMEOUT_MS;

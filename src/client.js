@@ -1,6 +1,18 @@
 import { buildSignedUrl } from './sign.js';
 import { refreshAccessToken, persistTokens } from './auth.js';
 
+/**
+ * Endpoints that reject shop_cipher outright ("not required for this request").
+ * /authorization/202309/shops is the call that discovers the cipher; the seller
+ * endpoints below are shop-agnostic.
+ */
+export const NO_SHOP_CIPHER_PATHS = new Set([
+  '/authorization/202309/shops',
+  '/seller/202309/permissions',
+  '/seller/202309/shops',
+  '/seller/202508/status',
+]);
+
 /** Server-side codes that mean "the access token is no longer usable". */
 const TOKEN_INVALID_CODES = new Set([36009005, 105002, 105004]);
 const EXPIRY_SKEW_SECONDS = 60;
@@ -80,7 +92,7 @@ export async function callApi({
       app_key: config.appKey,
       timestamp: Math.floor(Date.now() / 1000).toString(),
     };
-    if (shopCipher && config.shopCipher && !('shop_cipher' in query)) {
+    if (shopCipher && !NO_SHOP_CIPHER_PATHS.has(path) && config.shopCipher && !('shop_cipher' in query)) {
       merged.shop_cipher = config.shopCipher;
     }
     return merged;

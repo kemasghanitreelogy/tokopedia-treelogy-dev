@@ -76,6 +76,21 @@ Locally, `BLOB_READ_WRITE_TOKEN` lives in `.env.local` (written by
 vercel env pull .env.local --yes
 ```
 
+## Authorization entry point (important)
+
+Two links can authorize this service, and they are **not** interchangeable:
+
+| Link | Result |
+|---|---|
+| `https://services.tiktokshop.com/open/authorize?service_id=...` | Correct. Token carries the app's API scopes. Reported by `partner-service-detail` as `auth_link` (`auth_type: 1`) |
+| `https://seller-id.tokopedia.com/services/market/custom-authorize/<service_id>` | Token is issued and the exchange succeeds, but it carries **no scopes** - every call returns `105005` |
+
+This is easy to misdiagnose: the token looks valid, the seller sees "Authorized",
+and `105005` reads like a missing-scope problem in Partner Center even when all
+scopes are active there. `npm run authorize` uses the official link by default;
+`--tokopedia` selects the other one, and a positional URL accepts a link copied
+from Partner Center's "Copy authorisation link".
+
 ## CSRF without a session
 
 The callback is a stateless function, so it cannot remember the `state` it issued.

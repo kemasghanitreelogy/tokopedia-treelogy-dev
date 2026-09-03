@@ -2,6 +2,7 @@ import { loadConfig, requireAppCredentials, redirectUri } from './config.js';
 import { buildAuthorizeUrl, refreshAccessToken, persistTokens } from './auth.js';
 import { callApi, ApiError, accessTokenExpired } from './client.js';
 import { fetchAuthorizedShops, persistShop } from './shops.js';
+import { searchOrders, getOrderDetail, getTracking, getPackage, firstPackageId } from './orders.js';
 import { createState } from './state.js';
 import { loadTokenBundle, saveTokenBundle, BlobNotConfiguredError } from './token-store.js';
 import { openBrowser } from './open-browser.js';
@@ -18,6 +19,8 @@ Usage:
   npm run url                 Print the authorization URL and the redirect URL to register
   npm run refresh             Refresh the access token (and sync it to Blob)
   npm run shops               List authorized shops and save shop_cipher
+  npm run orders [status]     Recent orders with status, carrier and tracking number
+  npm run track <order_id>    Carrier timeline plus package detail for one order
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -187,6 +190,87 @@ async function cmdShops(config) {
   }
 }
 
+const localDateTime = (seconds) =>
+  seconds ? new Date(seconds * 1000).toISOString().slice(0, 16).replace('T', ' ') : '-';
+
+async function cmdOrders(config, args) {
+  requireAppCredentials(config);
+  if (!config.shopCipher) throw new Error('No SHOP_CIPHER - run `npm run authorize` first');
+
+  const status = args.find((a) => !a.startsWith('-'))?.toUpperCase() ?? null;
+  const { orders, requestId } = await searchOrders({ config, pageSize: 20, status });
+
+  console.log(`\nOrders: ${orders.length}${status ? ` (status ${status})` : ''}   [request_id ${requestId}]\n`);
+  if (orders.length === 0) {
+    console.log(info('nothing matched.\n'));
+    return 0;
+  }
+
+  // The search response omits carrier fields; the detail endpoint carries them.
+  const detail = await getOrderDetail({ config, ids: orders.map((o) => o.id) });
+  const byId = new Map(detail.orders.map((o) => [o.id, o]));
+
+  console.log(
+    `  ${'ORDER ID'.padEnd(20)} ${'CREATED'.padEnd(17)} ${'STATUS'.padEnd(21)} ${'CARRIER'.padEnd(16)} TRACKING`,
+  );
+  for (const order of orders) {
+    const full = byId.get(order.id) ?? {};
+    console.log(
+      `  ${String(order.id).padEnd(20)} ${localDateTime(order.create_time).padEnd(17)} ` +
+        `${String(order.status ?? '-').padEnd(21)} ` +
+        `${String(full.shipping_provider ?? full.delivery_option_name ?? '-').slice(0, 15).padEnd(16)} ` +
+        `${full.tracking_number || '-'}`,
+    );
+  }
+  console.log(`\n${info('detail for one order:  npm run track -- <order_id>')}\n`);
+  return 0;
+}
+
+async function cmdTrack(config, args) {
+  requireAppCredentials(config);
+  const orderId = args.find((a) => /^\d+$/.test(a));
+  if (!orderId) throw new Error('Usage: npm run track -- <order_id>');
+
+  const { orders } = await getOrderDetail({ config, ids: orderId });
+  const order = orders[0];
+  if (!order) throw new Error(`Order ${orderId} not found`);
+
+  console.log(`\nOrder ${order.id}`);
+  console.log(`  status          : ${order.status}`);
+  console.log(`  platform        : ${order.commerce_platform ?? '-'}`);
+  console.log(`  carrier         : ${order.shipping_provider ?? '-'} (${order.delivery_option_name ?? '-'})`);
+  console.log(`  tracking number : ${order.tracking_number || '-'}`);
+  console.log(`  placed          : ${localDateTime(order.create_time)}`);
+  console.log(`  ready to ship   : ${localDateTime(order.rts_time)}`);
+  console.log(`  collected       : ${localDateTime(order.collection_time)}`);
+  console.log(`  delivered       : ${localDateTime(order.delivery_time)}`);
+
+  const { events, requestId } = await getTracking({ config, orderId });
+  console.log(`\n  Carrier timeline (${events.length})   [request_id ${requestId}]`);
+  if (events.length === 0) {
+    console.log(warn('empty - the platform prunes events once an order settles'));
+  } else {
+    for (const event of events) {
+      const when = new Date(event.update_time_millis ?? 0).toISOString().slice(0, 19).replace('T', ' ');
+      console.log(`    ${when}  [${event.action_code}] ${event.description}`);
+    }
+  }
+
+  const packageId = firstPackageId(order);
+  if (packageId) {
+    const { pkg } = await getPackage({ config, packageId });
+    console.log(`\n  Package ${packageId}`);
+    console.log(`    status   : ${pkg.package_status ?? '-'} / ${pkg.package_sub_status ?? '-'}`);
+    console.log(`    carrier  : ${pkg.shipping_provider_name ?? '-'}  (${pkg.handover_method ?? '-'})`);
+    const w = pkg.weight ?? {};
+    const d = pkg.dimension ?? {};
+    console.log(`    weight   : ${w.value ?? '-'} ${w.unit ?? ''}`);
+    console.log(`    size     : ${d.length ?? '-'} x ${d.width ?? '-'} x ${d.height ?? '-'} ${d.unit ?? ''}`);
+  }
+  console.log();
+  return 0;
+}
+
 async function cmdApi(config, args) {
   requireAppCredentials(config);
 
@@ -345,6 +429,8 @@ const COMMANDS = {
   url: cmdUrl,
   refresh: cmdRefresh,
   shops: cmdShops,
+  orders: cmdOrders,
+  track: cmdTrack,
   doctor: cmdDoctor,
   api: cmdApi,
 };

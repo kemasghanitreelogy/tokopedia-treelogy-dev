@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "TikTok Shop Open API integration for PT Treelogy Regenerative Moringa (ID / Tokopedia)",
+  "description": "TikTok Shop Open API integration for PT Treelogy Regenerative Moringa (ID / Tokopedia) - order management",
   "engines": {
     "node": ">=18"
   },
@@ -17,6 +17,8 @@
     "url": "node bin/tts.mjs url",
     "refresh": "node bin/tts.mjs refresh",
     "shops": "node bin/tts.mjs shops",
+    "orders": "node bin/tts.mjs orders",
+    "track": "node bin/tts.mjs track",
     "doctor": "node bin/tts.mjs doctor",
     "api": "node bin/tts.mjs api",
     "test": "node --test test/*.test.js"

@@ -1,7 +1,9 @@
 # tokopedia-treelogy-dev
 
-TikTok Shop Open API integration for **PT Treelogy Regenerative Moringa** (region `ID`,
-shop *Treelogy Moringa*, sold through Tokopedia Seller Center).
+Order management over the TikTok Shop Open API for **PT Treelogy Regenerative Moringa**
+(region `ID`, shop *Treelogy Moringa*, sold through Tokopedia Seller Center).
+
+Partner Center app: **Manage Order** (`6l0viu15fe0cp`, service `7676046219668670224`).
 
 The OAuth callback is hosted on Vercel; the CLI is a thin local client over the same
 `src/` modules. One runtime dependency (`@vercel/blob`).
@@ -48,15 +50,37 @@ npm run doctor      # verify end to end
 | `npm run url` | Print the authorization URL and the redirect URL to register |
 | `npm run refresh` | Refresh the access token and sync it back to Blob |
 | `npm run shops` | List authorized shops, persist the first shop's `shop_cipher` |
+| `npm run orders [status]` | Recent orders with status, carrier and tracking number |
+| `npm run track -- <order_id>` | Carrier timeline plus package detail for one order |
 | `npm run doctor` | Eight-step health check, including the live deployment |
 | `npm run api -- <METHOD> <path> [k=v ...]` | Signed call to any endpoint |
 | `npm test` | Offline tests |
 
 ```bash
+npm run orders                       # 20 most recent orders
+npm run orders IN_TRANSIT            # filter by status
+npm run track -- 585851175436649573  # timeline + package detail
+
 npm run api -- GET /seller/202309/shops
-npm run api -- GET /product/202312/products/search page_size=10
-npm run api -- POST /product/202309/products/search --body '{"status":"ACTIVE"}'
+npm run api -- POST /product/202312/products/search page_size=10 --body '{"status":"ACTIVATE"}'
 ```
+
+## What the API does and does not expose
+
+| Capability | Endpoint | Available |
+|---|---|---|
+| Order list, status, carrier, tracking number | `order/202309/orders/search` + `order/202507/orders` | yes |
+| Carrier scan timeline | `fulfillment/202309/orders/{id}/tracking` | yes, while the order is live |
+| Package weight, size, handover, addresses | `fulfillment/202309/packages/{id}` | yes (buyer address is masked) |
+| Product rating distribution (stars, counts) | `analytics/202509/shop_products/{id}/performance` | yes |
+| **Review text / review list** | - | **no such endpoint** |
+
+`review_rating/*` runs the other way: `ImportProductReviews` pushes reviews *into*
+TikTok Shop from external platforms. There is no read-reviews API anywhere in the 405
+paths of the spec.
+
+Completed orders return `{"tracking": []}` - the platform prunes the event trail once
+an order settles, so a durable history must be harvested while orders are live.
 
 ## Environment
 
@@ -138,6 +162,7 @@ src/sign.js              request signature
 src/auth.js              authorize URL, token exchange, refresh, persistence
 src/client.js            signed transport, auto-refresh, error normalization
 src/shops.js             authorized-shop discovery and shop_cipher persistence
+src/orders.js            order search, detail, tracking, package reads
 src/token-store.js       private Blob bundle read/write
 src/page.js              server-rendered callback pages (HTML-escaped)
 src/open-browser.js      launch the approval page without a shell

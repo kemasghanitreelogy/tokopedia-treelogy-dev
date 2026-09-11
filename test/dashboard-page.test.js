@@ -526,3 +526,36 @@ test('the combined Tokopedia/TikTok column uses no invented brand logo', async (
   assert.ok(html.includes('Tokped + TikTok'), 'and say it covers both storefronts');
   assert.match(html, /title="Tokopedia \+ TikTok Shop - ikut disinkronkan"/);
 });
+
+test('the shipment queue names the courier before anything is committed', () => {
+  // Different couriers mean different dropoff points, so the split has to be visible
+  // before the button is pressed, not discovered at the counter.
+  const mk = (channel, status, id, carrier) => ({
+    channel, id, status, carrier, stage: 'to_ship', createdAt: 1788900000,
+    buyer: 'b', tracking: '', total: 1, lines: [], packageId: 'p', packageNumber: 'P',
+  });
+  const html = renderProcess({
+    orders: [
+      mk('shopee', 'READY_TO_SHIP', 'S1', 'JNE Reguler'),
+      mk('shopee', 'READY_TO_SHIP', 'S2', 'JNE Reguler'),
+      mk('tokopedia', 'AWAITING_SHIPMENT', 'T1', 'J&T Express'),
+    ],
+    ...common, csrf: 'tok',
+  });
+
+  assert.equal((html.match(/class="wo__car"/g) ?? []).length, 3, 'every card should name its courier');
+  assert.match(html, /data-carrier="JNE Reguler"[^>]*>JNE Reguler <b>2<\/b>/, 'couriers should be counted');
+  assert.match(html, /data-carrier=""[^>]*>Semua kurir <b>3<\/b>/);
+});
+
+test('an order with no courier yet says so rather than showing a blank', () => {
+  const html = renderProcess({
+    orders: [{
+      channel: 'shopee', id: 'X', status: 'READY_TO_SHIP', stage: 'to_ship', carrier: '',
+      createdAt: 1788900000, buyer: 'b', tracking: '', total: 1, lines: [], packageNumber: 'P',
+    }],
+    ...common, csrf: 'tok',
+  });
+  assert.ok(html.includes('kurir belum ditentukan'), 'an empty courier should be stated, not implied');
+  assert.match(html, /data-carrier="Belum ditentukan"/);
+});

@@ -386,6 +386,13 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .wo__who{display:flex; align-items:baseline; justify-content:space-between; gap:.6rem;
   font-size:.84rem; color:var(--muted)}
 .wo__who b{color:var(--fg); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap}
+.wo__car{display:flex; align-items:center; gap:.35rem; font-size:.78rem; color:var(--muted)}
+.wo__car .ico{width:14px; height:14px; color:var(--muted)}
+/* A card outside the chosen courier stays readable but steps back. */
+.wo--dim{opacity:.45}
+.wo--dim:hover{opacity:1}
+.wl__note{padding:0 1rem 1rem; margin:-.5rem 0 0}
+.wl__bar .chip b{margin-left:.25rem; font-weight:600; font-variant-numeric:tabular-nums}
 .wo__in{display:flex; gap:.35rem}
 .wo__in .trk{flex:1; width:auto; min-width:0}
 .wo__in .trk--s{flex:0 0 6.5rem}
@@ -915,6 +922,17 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const byAction = {};
   for (const row of rows) (byAction[row.next.action] ??= []).push(row);
 
+  const carriers = new Map();
+  for (const { order } of rows) {
+    const name = order.carrier || 'Belum ditentukan';
+    carriers.set(name, (carriers.get(name) ?? 0) + 1);
+  }
+  const carrierChips = [...carriers.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, n]) => `<button class="chip" type="button" data-carrier="${escape(name)}"
+      >${escape(name)} <b>${n}</b></button>`)
+    .join('');
+
   const GROUPS = {
     tiktok_rts: {
       title: 'Tokopedia &amp; TikTok Shop',
@@ -940,7 +958,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   // should not have to know that Shopee and TikTok batch differently.
   const card = ({ order: o }) => {
     const ch = CHANNELS[o.channel];
-    return `<label class="wo">
+    return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}">
       <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
         aria-label="Pilih ${escape(o.id)}">
       <span class="wo__body">
@@ -953,6 +971,9 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           <span>${escape(o.buyer) || '<span class="dim">tanpa nama</span>'}</span>
           <b class="mono">${escape(rupiah(o.total))}</b>
         </span>
+        <span class="wo__car">${svg('truck')}${o.carrier
+          ? escape(o.carrier)
+          : '<span class="dim">kurir belum ditentukan</span>'}</span>
       </span>
     </label>`;
   };
@@ -1005,6 +1026,25 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   picks.forEach(function (p) { p.addEventListener('change', sync); });
   document.getElementById('all').addEventListener('click', function () { setAll(true); });
   document.getElementById('none').addEventListener('click', function () { setAll(false); });
+
+  // Selecting by courier rather than hiding by it: a dropoff run covers one courier, but
+  // the rest of the day's orders should stay visible so nothing is forgotten.
+  document.querySelectorAll('[data-carrier]').forEach(function (chip) {
+    if (chip.tagName !== 'BUTTON') return;
+    chip.addEventListener('click', function () {
+      document.querySelectorAll('button[data-carrier]').forEach(function (c) {
+        c.classList.toggle('is-on', c === chip);
+      });
+      var want = chip.dataset.carrier;
+      picks.forEach(function (p) {
+        var card = p.closest('.wo');
+        p.checked = want === '' || card.dataset.carrier === want;
+        card.classList.toggle('wo--dim', want !== '' && card.dataset.carrier !== want);
+      });
+      sync();
+    });
+  });
+
   sync();
 })();\n`,
     body: rows.length === 0
@@ -1014,11 +1054,13 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           ${hidden}
           <input type="hidden" name="action" value="mass_arrange">
           <div class="wl__bar">
+            <button class="chip is-on" type="button" data-carrier="">Semua kurir <b>${rows.length}</b></button>
+            ${carrierChips}
+            <span class="strip__grow"></span>
             <button class="chip" type="button" id="all">Pilih semua</button>
             <button class="chip" type="button" id="none">Kosongkan</button>
-            <span class="strip__grow"></span>
-            <span class="note">Pengiriman tidak bisa dibatalkan dari sini</span>
           </div>
+          <p class="wl__note note">Pengiriman tidak bisa dibatalkan dari sini. Menyaring kurir hanya mengubah yang tercentang, bukan yang ditampilkan.</p>
           ${sections}
           <div class="wl__go">
             <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${rows.length}</span> pesanan</button>

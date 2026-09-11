@@ -28,8 +28,14 @@ export const SHOPEE_PUSH_CODES = [3, 4];
 /** Confirmed against the live TikTok Shop API: PUT /event/202309/webhooks takes these. */
 export const TIKTOK_EVENTS = ['ORDER_STATUS_CHANGE'];
 
-/** Paid is the event that matters; create covers a shop that captures payment up front. */
-export const SHOPIFY_TOPICS = ['ORDERS_PAID', 'ORDERS_CREATE'];
+/**
+ * Paid is the only event that matters. ORDERS_CREATE was subscribed too, but Shopify fires
+ * both within seconds for an order paid at checkout, and the two invocations raced each
+ * other to Jurnal - the loser got a 409 and rang the phone. orders/paid fires for every
+ * paid order, including ones paid at creation, so create adds nothing but the race.
+ */
+export const SHOPIFY_TOPICS = ['ORDERS_PAID'];
+export const SHOPIFY_RETIRED_TOPICS = ['ORDERS_CREATE'];
 
 export function baseUrl(config = loadConfig()) {
   const explicit = process.env.PUBLIC_BASE_URL || config.publicBaseUrl || DEFAULT_PUBLIC_BASE_URL;
@@ -114,12 +120,30 @@ mutation TreelogyWebhookCreate($topic: WebhookSubscriptionTopic!, $webhookSubscr
   }
 }`;
 
+const WEBHOOK_DELETE = `
+mutation TreelogyWebhookDelete($id: ID!) {
+  webhookSubscriptionDelete(id: $id) {
+    deletedWebhookSubscriptionId
+    userErrors { field message }
+  }
+}`;
+
 export async function registerShopify({ url = webhookUrl('shopify') } = {}) {
   if (isReadOnly()) throw new ReadOnlyError('langganan webhook Shopify');
 
   const existing = await shopifyStatus();
   const done = [];
   const skipped = [];
+  const removed = [];
+
+  // Retired topics are unsubscribed, not left to keep racing the ones that matter.
+  for (const w of existing.webhooks) {
+    if (!SHOPIFY_RETIRED_TOPICS.includes(w.topic)) continue;
+    const data = await shopifyGraphql(WEBHOOK_DELETE, { id: w.id });
+    const errors = data.webhookSubscriptionDelete?.userErrors ?? [];
+    if (errors.length > 0) throw new Error(`hapus ${w.topic}: ${errors.map((e) => e.message).join(', ')}`);
+    removed.push(w.topic);
+  }
 
   for (const topic of SHOPIFY_TOPICS) {
     // Shopify rejects a duplicate topic+uri with a userError rather than ignoring it,
@@ -136,5 +160,5 @@ export async function registerShopify({ url = webhookUrl('shopify') } = {}) {
     if (errors.length > 0) throw new Error(`${topic}: ${errors.map((e) => e.message).join(', ')}`);
     done.push(topic);
   }
-  return { url, created: done, alreadyThere: skipped };
+  return { url, created: done, alreadyThere: skipped, removed };
 }

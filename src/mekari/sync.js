@@ -2,7 +2,7 @@ import { put, get } from '@vercel/blob';
 import { mekari, isMekariConfigured, MekariError } from './client.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
-import { ensureContact } from './setup.js';
+import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
 import { loadConfig } from '../config.js';
 
 /**
@@ -207,17 +207,13 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
   }
   if (isReadOnly()) throw new ReadOnlyError(`faktur ${customId}`);
 
-  // Ask before writing: cheaper than a duplicate, and the only protection if the local
-  // ledger was lost.
-  try {
-    const existing = await findExisting(order, { deadlineAt });
-    if (existing) {
-      return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: existing.id, total: expectedTotal };
-    }
-  } catch (error) {
-    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: `cek duplikat gagal: ${error.message}` };
-  }
-
+  // No read-before-write. Jurnal refuses a second invoice with the same custom_id with a
+  // 409, which is a stronger duplicate check than any probe we could make - it is done by
+  // the server, atomically, at the moment of writing - and it costs nothing extra, where
+  // the probe cost one request per order out of a budget of forty a minute. The probe was
+  // also blind to every Shopify order: the '#' in their ids breaks Jurnal's routing and
+  // the lookup answered "not found" for invoices that plainly existed.
+  //
   // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now
   // names its own buyer, so the contact is made to exist first.
   try {
@@ -234,6 +230,11 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
       invoiceId: invoice?.id, transactionNo: invoice?.transaction_no, total: expectedTotal,
     };
   } catch (error) {
+    // Already in the books - a concurrent webhook or an earlier run got there first. That
+    // is the idempotency working, not a failure; record it and move on.
+    if (error.status === 409) {
+      return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: error.body?.id ?? null, total: expectedTotal };
+    }
     return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: error.message };
   }
 }
@@ -262,6 +263,8 @@ export async function runSync({ orders, depositTo = null, dryRun = true, limit =
 
 async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null }) {
   const ledger = await loadSyncLedger();
+  // Contacts already settled with Jurnal, so a repeat buyer costs no request at all.
+  rememberContacts(ledger.contacts);
   const backlog = postable(orders, ledger);
   const queue = backlog.slice(0, limit);
   const results = [];
@@ -278,6 +281,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     results.push(result);
 
     if (!dryRun && (result.status === 'created' || result.status === 'exists')) {
+      ledger.contacts = knownContactNames();
       ledger.orders[result.customId] = {
         invoice_id: result.invoiceId ?? null,
         channel: order.channel,

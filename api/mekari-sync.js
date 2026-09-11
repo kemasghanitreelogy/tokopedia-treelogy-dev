@@ -27,14 +27,16 @@ const DEFAULT_WINDOW_DAYS = 2;
 // forty overran the function's 120 seconds on the first live run and was killed with the
 // last few invoices unrecorded. A sweep every fifteen minutes clears twenty at a time
 // faster than a busy day produces them.
-const MAX_PER_RUN = 12;
 /**
- * The whole handler must be done inside Vercel's 120 seconds, or the platform kills it
- * with no response, no log line and no Telegram - which is exactly how the first run from
- * GitHub ended. So the budget is not a fixed number for the posting loop: it is whatever
- * is left after the collect, and each later stage is skipped rather than started when the
- * remainder is too small to finish it.
+ * Sized to Jurnal's quota, not to Vercel's clock.
+ *
+ * Jurnal allows about forty requests a minute in total. A round spends roughly six on
+ * setup and then, with the probe gone, one per invoice plus one per buyer not seen
+ * before - so fifteen invoices is a round that fits inside the window with room for the
+ * webhooks that share the same quota from other instances. The time budget below is the
+ * other ceiling; whichever is hit first ends the round cleanly.
  */
+const MAX_PER_RUN = 15;
 const TOTAL_BUDGET_MS = 85_000;
 const RECOVERY_NEEDS_MS = 12_000;
 

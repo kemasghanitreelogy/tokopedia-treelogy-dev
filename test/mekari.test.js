@@ -460,3 +460,35 @@ test('a transient failure is deferred, a real one is failed', async () => {
   assert.equal(isTransient(new MekariError('HTTP 409', { status: 409 })), false);
   assert.equal(isTransient(new Error('SKU tidak ada di data master')), false);
 });
+
+/* ------------------------------------------------------------- kuota & 409 */
+
+test('the request budget stops before the fortieth call, and a 429 opens a cool-down', async () => {
+  const { budgetWaitMs, noteRateLimited, resetBudget, REQUESTS_PER_MINUTE } = await import('../src/mekari/client.js');
+  resetBudget();
+  // Measured live: 40 unpaced requests went through, then everything was 429 for the rest
+  // of the minute. The budget keeps a margin under that for webhooks on other instances.
+  assert.ok(REQUESTS_PER_MINUTE < 40);
+  assert.equal(budgetWaitMs(1_000_000), 0);
+  resetBudget();
+  noteRateLimited(2_000_000);
+  assert.ok(budgetWaitMs(2_000_100) > 59_000, 'setelah 429 seluruh proses menunggu jendela berikutnya');
+  assert.equal(budgetWaitMs(2_061_000), 0, 'dan jendela itu berlalu');
+  resetBudget();
+});
+
+test('a duplicate invoice is an "exists" with the id Jurnal returned, never a failure', async () => {
+  // Live 409 body: {"custom_id":"(Custom id attribute had already been used.)","id":1967902018,...}
+  // A concurrent webhook or an earlier run simply got there first.
+  const { MekariError } = await import('../src/mekari/client.js');
+  const { isTransient } = await import('../src/mekari/sync.js');
+  const dup = new MekariError('POST -> HTTP 409', { status: 409, body: { id: 1967902018, custom_id: '(Custom id attribute had already been used.)' } });
+  assert.equal(isTransient(dup), false, '409 bukan sementara, tapi juga bukan gagal - ditangani terpisah');
+  assert.equal(dup.body.id, 1967902018);
+});
+
+test('the Shopify subscription is paid-only; create is retired, not merely unused', async () => {
+  const { SHOPIFY_TOPICS, SHOPIFY_RETIRED_TOPICS } = await import('../src/webhooks/register.js');
+  assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID']);
+  assert.deepEqual(SHOPIFY_RETIRED_TOPICS, ['ORDERS_CREATE']);
+});

@@ -77,11 +77,60 @@ export const MIN_INTERVAL_MS = Number(process.env.MEKARI_MIN_INTERVAL_MS) || 350
 export const MIN_WRITE_INTERVAL_MS = Number(process.env.MEKARI_MIN_WRITE_INTERVAL_MS) || 1100;
 let nextSlot = 0;
 
-async function takeSlot(interval = MIN_INTERVAL_MS) {
+/**
+ * Jurnal's limiter is a count, not a speed.
+ *
+ * Measured against the live account with unpaced reads: exactly 40 requests went through,
+ * then every request was 429 until the window rolled over - reads and writes counted
+ * together, no Retry-After header. Pacing individual calls therefore does nothing; what
+ * matters is how many this process has made in the last minute. This bucket keeps it
+ * under the line, and a 429 that slips through anyway opens a cool-down so the rest of
+ * the run fails fast as "deferred" instead of each call discovering the same closed door.
+ */
+export const REQUESTS_PER_MINUTE = Number(process.env.MEKARI_REQUESTS_PER_MINUTE) || 34;
+const WINDOW_MS = 60_000;
+const recent = [];
+let cooldownUntil = 0;
+
+export class RateLimitedError extends MekariError {
+  constructor(message, waitMs) {
+    super(message, { status: 429 });
+    this.name = 'MekariError';
+    this.waitMs = waitMs;
+  }
+}
+
+/** How long until the bucket has room again; 0 when it has room now. */
+export function budgetWaitMs(now = Date.now()) {
+  while (recent.length && now - recent[0] > WINDOW_MS) recent.shift();
+  if (now < cooldownUntil) return cooldownUntil - now;
+  if (recent.length < REQUESTS_PER_MINUTE) return 0;
+  return recent[0] + WINDOW_MS - now + 50;
+}
+
+export function noteRateLimited(now = Date.now()) {
+  cooldownUntil = Math.max(cooldownUntil, now + WINDOW_MS);
+}
+
+export function resetBudget() {
+  recent.length = 0;
+  cooldownUntil = 0;
+  nextSlot = 0;
+}
+
+async function takeSlot(interval = MIN_INTERVAL_MS, deadlineAt = null) {
+  const wait = budgetWaitMs();
+  if (wait > 0) {
+    if (deadlineAt !== null && Date.now() + wait >= deadlineAt) {
+      throw new RateLimitedError(`kuota ${REQUESTS_PER_MINUTE} request/menit Jurnal habis, tenggat tidak cukup untuk menunggu ${Math.ceil(wait / 1000)}s`, wait);
+    }
+    await sleep(wait);
+  }
   const now = Date.now();
-  const wait = Math.max(0, nextSlot - now);
+  recent.push(now);
+  const spacing = Math.max(0, nextSlot - now);
   nextSlot = Math.max(now, nextSlot) + interval;
-  if (wait > 0) await sleep(wait);
+  if (spacing > 0) await sleep(spacing);
 }
 
 /**
@@ -99,7 +148,7 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
   const canWait = (ms) => deadlineAt === null || Date.now() + ms < deadlineAt;
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    await takeSlot(method === 'GET' ? MIN_INTERVAL_MS : MIN_WRITE_INTERVAL_MS);
+    await takeSlot(method === 'GET' ? MIN_INTERVAL_MS : MIN_WRITE_INTERVAL_MS, deadlineAt);
     // The date is re-signed on every attempt; replaying a stale one would fail auth.
     const date = httpDate();
     const { header } = signRequest({
@@ -135,6 +184,7 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
     }
 
     // 5xx and 429 are transient. A 4xx is an answer - retrying it would only duplicate work.
+    if (response.status === 429) noteRateLimited();
     if ((response.status >= 500 || response.status === 429) && attempt < RETRY_DELAYS_MS.length) {
       // Honour the server's own number when it gives one; ours is only a guess.
       const advised = Number(response.headers.get('retry-after')) * 1000;

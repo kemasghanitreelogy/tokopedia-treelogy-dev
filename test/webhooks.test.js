@@ -105,7 +105,7 @@ test('every platform has its own path and the registration constants are the con
   // 3 is Shopee's order status push; the live get_push_config confirms the name.
   assert.ok(SHOPEE_PUSH_CODES.includes(3));
   assert.deepEqual(TIKTOK_EVENTS, ['ORDER_STATUS_CHANGE']);
-  assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID', 'ORDERS_CREATE']);
+  assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID']);
   assert.match(webhookUrl('shopee'), /^https:\/\/.+\/api\/webhook\/shopee$/);
 });
 

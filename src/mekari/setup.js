@@ -37,7 +37,9 @@ const ALREADY_EXISTS = 409;
  */
 const knownContacts = new Set();
 
-export const rememberContacts = (names) => { for (const n of names) knownContacts.add(n); };
+/** Seed from a persisted list, so a cold instance does not re-learn every buyer by 409. */
+export const rememberContacts = (names) => { for (const n of names ?? []) knownContacts.add(n); };
+export const knownContactNames = () => [...knownContacts];
 
 const existingIdFrom = (error) =>
   (error.status === ALREADY_EXISTS ? (error.body?.id ?? null) : undefined);

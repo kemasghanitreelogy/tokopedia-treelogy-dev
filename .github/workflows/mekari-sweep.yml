@@ -23,7 +23,7 @@ concurrency:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Sapu pesanan yang terlewat ke Jurnal
         env:
@@ -40,7 +40,7 @@ jobs:
           for round in 1 2 3 4 5 6; do
             body=$(curl -sS --fail-with-body --max-time 110 \
               -H "Authorization: Bearer ${CRON_SECRET}" \
-              "${BASE_URL}/api/mekari-sync?dry=0&days=2&limit=12")
+              "${BASE_URL}/api/mekari-sync?dry=0&days=2&limit=15")
             echo "--- ronde ${round}"
             echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("ok","live","orders_seen","considered","posted","remaining","created","exists","failed","deferred","ranOutOfTime","skipped","channel_errors","timings","took_ms")}, ensure_ascii=False))'
             ok=$(echo "$body" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("ok") else "no")')
@@ -51,6 +51,9 @@ jobs:
             # done yet, and another round is the right response.
             more=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if (d.get("remaining") or 0) > 0 or d.get("ranOutOfTime") or (d.get("deferred") or 0) > 0 else "no")')
             test "$more" = "yes" || break
+            # Jurnal's quota is ~40 requests a minute; a round uses most of it. Wait for
+            # the window to roll over rather than spend the next round discovering that.
+            sleep 60
           done
           # A failed order is reported, not swallowed: the job goes red so somebody looks.
           test "$total_failed" = "0"

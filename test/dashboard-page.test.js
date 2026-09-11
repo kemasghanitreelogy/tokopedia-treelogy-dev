@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  renderDashboard, renderPicklist, renderLabels, renderProducts, renderProcess, renderStock, renderJurnal, renderLogin,
+  renderDashboard, renderPicklist, renderLabels, renderProducts, renderProcess, renderStock, renderJurnal,
+  renderManual, renderLogin,
 } from '../src/dashboard-page.js';
 import { syncOverview } from '../src/mekari/sync.js';
 import { summarize } from '../src/omni.js';
@@ -51,6 +52,7 @@ const pages = () => [
   ['stock', renderStock({ catalog, ledger, plan, ...common })],
   ['process', renderProcess({ orders: [order], ...common })],
   ['jurnal', renderJurnal({ overview: jurnalOverview(), live: false, depositTo: null, configured: true, ...common })],
+  ['manual', renderManual({ source: 'CS', code: 'CS-260911-001', today: '2026-09-11', contacts: ['Toko Sehat'], existingCodes: [], live: true, depositTo: 'Cash', ...common })],
   ['login', renderLogin({})],
 ];
 
@@ -611,4 +613,52 @@ test('the send button appears only when live posting is on and something is queu
 test('the Jurnal table shows the prefixed order code, not the bare platform id', () => {
   const html = renderJurnal({ overview: jurnalOverview(), live: false, depositTo: null, configured: true, ...common });
   assert.match(html, /SP-260909ABC/);
+});
+
+const manualPage = (over = {}) => renderManual({
+  source: 'CS', code: 'CS-260911-001', today: '2026-09-11', contacts: ['Toko Sehat'],
+  existingCodes: ['CS-260911-001'], live: true, depositTo: 'Cash', ...common, ...over,
+});
+
+test('the manual form offers every offline source and no online one', () => {
+  const html = manualPage();
+  for (const prefix of ['CS', 'LB', 'DP', 'DW', 'WS']) {
+    assert.match(html, new RegExp(`value="${prefix}"`), prefix);
+  }
+  // An online sale must never be enterable by hand - it would duplicate the webhook.
+  for (const prefix of ['SP', 'TP', 'TT', 'WA', 'WX']) {
+    assert.ok(!new RegExp(`name="source" value="${prefix}"`).test(html), prefix);
+  }
+});
+
+test('the form ships with a code, a date and one product row', () => {
+  const html = manualPage();
+  assert.match(html, /value="CS-260911-001"/);
+  assert.match(html, /value="2026-09-11"/);
+  // Counted in the markup only: the script below it also mentions the selector.
+  const markup = html.split('<script>')[0];
+  assert.equal((markup.match(/data-row/g) ?? []).length, 1, 'tepat satu baris awal');
+  assert.match(html, /name="action" value="manual_invoice"/);
+  assert.match(html, /name="csrf"/);
+});
+
+test('the submit button starts disabled, because an empty form is not a sale', () => {
+  assert.match(manualPage(), /id="mxgo" disabled/);
+});
+
+test('the form says plainly when it cannot actually post yet', () => {
+  assert.match(manualPage({ live: false }), /MEKARI_SYNC_LIVE/);
+  assert.ok(!/MEKARI_SYNC_LIVE/.test(manualPage({ live: true }).split('<script>')[0]));
+});
+
+test('every number field in the manual form is wheel-guarded', () => {
+  // The house rule: a focused number field must not change because the page scrolled.
+  const body = manualPage().split('<script>').pop();
+  assert.match(body, /addEventListener\('wheel'/);
+  assert.match(body, /document\.activeElement !== input/);
+});
+
+test('the manual form is reachable from the Jurnal tab', () => {
+  const html = renderJurnal({ overview: jurnalOverview(), live: false, depositTo: null, configured: true, ...common });
+  assert.match(html, /\?view=jurnal&amp;add=1/);
 });

@@ -1,5 +1,5 @@
 import { collectOrders, summarize } from '../src/omni.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -9,7 +9,11 @@ import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
 import { planSync, applySync, applyPrice, writeAudit } from '../src/stock-sync.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
-import { runSync, loadSyncLedger, syncOverview } from '../src/mekari/sync.js';
+import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
+import { buildManualOrder, suggestCode } from '../src/mekari/manual.js';
+import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
+import { listContacts } from '../src/mekari/setup.js';
+import { wibDate } from '../src/range.js';
 import { ensureCustomers } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
@@ -233,6 +237,56 @@ async function handleWrite(form, ip) {
     };
   }
 
+  if (action === 'manual_invoice') {
+    if (!isMekariConfigured()) throw new Error('kredensial Mekari belum diisi');
+
+    // Rebuilt from the submitted fields and checked from scratch. The running total the
+    // browser showed is a courtesy; nothing it sent is trusted as arithmetic.
+    const lines = form.getAll('sku').map((sku, index) => ({
+      sku,
+      qty: Number(form.getAll('qty')[index]),
+      unitPrice: Number(form.getAll('unitPrice')[index]),
+      unitDiscount: Number(form.getAll('unitDiscount')[index]),
+    }));
+
+    const order = buildManualOrder({
+      source: form.get('source'),
+      code: form.get('code'),
+      date: form.get('date'),
+      customer: form.get('customer'),
+      note: form.get('note'),
+      shipping: form.get('shipping'),
+      lines,
+    });
+
+    const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
+    const built = buildInvoice({ order, depositTo });
+    verifyInvoice(built, built.expectedTotal);
+
+    // A disagreement between what the operator saw and what is about to be booked is a
+    // stop, not a rounding note - they approved a number, and that is the number.
+    const claimed = Number(form.get('total'));
+    if (Number.isFinite(claimed) && claimed !== built.expectedTotal) {
+      throw new Error(`total di layar (${claimed}) tidak sama dengan hasil hitung ulang (${built.expectedTotal})`);
+    }
+
+    if (process.env.MEKARI_SYNC_LIVE !== '1') {
+      throw new Error(`${order.id} valid senilai ${built.expectedTotal}, tapi MEKARI_SYNC_LIVE belum disetel`);
+    }
+
+    const result = await postManual({ order, depositTo, dryRun: false });
+    if (result.status === 'failed') throw new Error(`${order.id}: ${result.error}`);
+    invalidate('jurnal');
+    console.log(`dashboard: manual_invoice ${order.id} -> ${result.status}`);
+
+    return {
+      view: 'jurnal',
+      message: result.status === 'exists'
+        ? `${order.id} sudah ada di Jurnal, tidak dibuat dua kali`
+        : `${order.id} tersimpan di Jurnal senilai ${built.expectedTotal.toLocaleString('id-ID')}`,
+    };
+  }
+
   throw new Error(`aksi tidak dikenal: ${action}`);
 }
 
@@ -406,6 +460,24 @@ export default async function handler(req, res) {
         catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
         generatedAt: Date.now(), csrf, flash,
         selected: url.searchParams.get('sku') ?? null,
+      }));
+      return;
+    }
+
+    if (view === 'jurnal' && url.searchParams.get('add') === '1') {
+      const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })));
+      const used = manualCodes(ledger);
+      const source = url.searchParams.get('source') ?? 'CS';
+      // The contact list is a convenience, not a requirement: a Jurnal that will not
+      // answer must not stop someone entering a sale they have in their hand.
+      const contacts = await listContacts().then((m) => [...m.keys()].sort()).catch(() => []);
+
+      send(200, renderManual({
+        range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
+        source, code: suggestCode(source, used), today: wibDate(Math.floor(Date.now() / 1000)),
+        contacts, existingCodes: used,
+        live: process.env.MEKARI_SYNC_LIVE === '1',
+        depositTo: process.env.MEKARI_DEPOSIT_ACCOUNT || null,
       }));
       return;
     }

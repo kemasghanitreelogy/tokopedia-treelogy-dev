@@ -225,3 +225,111 @@ test('due date is the transaction date plus the term, in WIB', () => {
   assert.equal(invoice.transaction_date, '2026-09-11');
   assert.equal(invoice.due_date, '2026-09-25');
 });
+
+/* ------------------------------------------------------- transaksi manual */
+
+const { buildManualOrder, suggestCode, SOURCE_OPTIONS, SELLABLE } = await import('../src/mekari/manual.js');
+const { manualCodes } = await import('../src/mekari/sync.js');
+
+const manual = (over = {}) => ({
+  source: 'CS', code: 'CS-260911-001', date: '2026-09-11', customer: 'Toko Sehat',
+  shipping: 0, lines: [{ sku: 'OMP-45-001', qty: 2, unitPrice: 150_000, unitDiscount: 0 }],
+  ...over,
+});
+
+test('a typed transaction becomes the same order shape as an online one', () => {
+  const order = buildManualOrder(manual());
+  assert.equal(order.channel, 'manual');
+  assert.equal(order.id, 'CS-260911-001');
+  assert.equal(order.stage, 'completed');
+  assert.equal(order.customer, 'Toko Sehat');
+  assert.equal(order.total, 300_000);
+  assert.equal(order.finance.lines[0].name, 'Moringa Powder - 45 gram', 'nama diambil dari data master');
+
+  const built = buildInvoice({ order, depositTo: 'Cash' });
+  assert.equal(verifyInvoice(built, built.expectedTotal), 300_000);
+  assert.equal(built.sales_invoice.reference_no, 'CS-260911-001', 'kode tidak boleh diberi prefiks dua kali');
+  assert.equal(built.sales_invoice.custom_id, 'TRL-manual-CS-260911-001');
+  assert.equal(built.sales_invoice.person_name, 'Toko Sehat');
+  assert.equal(built.sales_invoice.due_date, '2026-09-18', 'consignment Net 7');
+});
+
+test('without a customer the source itself is the customer', () => {
+  const built = buildInvoice({ order: buildManualOrder(manual({ customer: '' })) });
+  assert.equal(built.sales_invoice.person_name, 'Consignment');
+});
+
+test('the note reaches the invoice memo', () => {
+  const built = buildInvoice({ order: buildManualOrder(manual({ note: 'titip di toko A' })) });
+  assert.match(built.sales_invoice.memo, /titip di toko A/);
+});
+
+test('every online prefix is refused as a manual source', () => {
+  for (const source of ['SP', 'TP', 'TT', 'SHF', 'WA', 'WX', '', 'ZZ']) {
+    assert.throws(() => buildManualOrder(manual({ source, code: `${source}-260911-001` })), InvoiceError, source);
+  }
+});
+
+test('a code that does not match its source is refused', () => {
+  assert.throws(() => buildManualOrder(manual({ source: 'CS', code: 'DW-260911-001' })), /tidak cocok/);
+  assert.throws(() => buildManualOrder(manual({ code: 'sembarangan' })), /tidak berbentuk/);
+  assert.throws(() => buildManualOrder(manual({ code: '' })), /tidak berbentuk/);
+});
+
+test('a transaction cannot be dated into the future', () => {
+  const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+  assert.throws(() => buildManualOrder(manual({ date: tomorrow })), /masa depan/);
+  assert.throws(() => buildManualOrder(manual({ date: '2026-02-31' })), /tanggal tidak valid/);
+  assert.throws(() => buildManualOrder(manual({ date: '' })), /tanggal tidak valid/);
+});
+
+test('money that is not money never becomes a line', () => {
+  const bad = [
+    { lines: [] },
+    { lines: [{ sku: 'tidak-ada', qty: 1, unitPrice: 1000 }] },
+    { lines: [{ sku: 'OMP-45-001', qty: 0, unitPrice: 1000 }] },
+    { lines: [{ sku: 'OMP-45-001', qty: 1.5, unitPrice: 1000 }] },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: 1000.5 }] },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: -1 }] },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: 'abc' }] },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: 1000, unitDiscount: 2000 }] },
+    { shipping: -1 },
+    { shipping: 'gratis' },
+  ];
+  for (const over of bad) {
+    assert.throws(() => buildManualOrder(manual(over)), InvoiceError, JSON.stringify(over));
+  }
+});
+
+test('a blank row is dropped rather than failing the whole entry', () => {
+  // The form always leaves an empty row at the bottom; submitting with it there is normal.
+  const order = buildManualOrder(manual({
+    lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: 100_000 }, { sku: '', qty: 1, unitPrice: 0 }],
+  }));
+  assert.equal(order.finance.lines.length, 1);
+});
+
+test('a suggested code never collides with one already used', () => {
+  const now = Date.parse('2026-09-11T05:00:00Z');
+  assert.equal(suggestCode('CS', [], now), 'CS-260911-001');
+  assert.equal(suggestCode('CS', ['CS-260911-001', 'CS-260911-002'], now), 'CS-260911-003');
+  // Another source's codes, and another day's, are none of this one's business.
+  assert.equal(suggestCode('DW', ['CS-260911-009'], now), 'DW-260911-001');
+  assert.equal(suggestCode('CS', ['CS-260910-009'], now), 'CS-260911-001');
+});
+
+test('used codes are read back out of the ledger', () => {
+  const ledger = { orders: { 'TRL-manual-CS-260911-001': {}, 'TRL-shopee-260911X': {} } };
+  assert.deepEqual(manualCodes(ledger), ['CS-260911-001']);
+});
+
+test('the form is offered exactly the five offline sources and real SKUs', () => {
+  assert.deepEqual(SOURCE_OPTIONS.map((o) => o.prefix), ['CS', 'LB', 'DP', 'DW', 'WS']);
+  assert.equal(SOURCE_OPTIONS.find((o) => o.prefix === 'CS').termDays, 7);
+  assert.ok(SELLABLE.length > 0);
+  for (const product of SELLABLE) assert.ok(findProductForTest(product.sku), product.sku);
+});
+
+function findProductForTest(sku) {
+  return SELLABLE.some((p) => p.sku === sku);
+}

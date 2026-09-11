@@ -34,6 +34,17 @@ export const PREFIXES = {
 const BY_CHANNEL = { shopee: 'SP', tokopedia: 'TP', tiktok_shop: 'TT', shopify: 'SHF' };
 
 /**
+ * The sources that never arrive over an API.
+ *
+ * A consignment shop, a walk-in, a WhatsApp order - none of these has a marketplace to
+ * push them, so they are typed in. They still become the same kind of invoice as an
+ * online sale, which is the whole point: one set of books, not two.
+ */
+export const MANUAL_SOURCES = ['CS', 'LB', 'DP', 'DW', 'WS'];
+
+export const isManualSource = (prefix) => MANUAL_SOURCES.includes(prefix);
+
+/**
  * Which gateway paid for a Shopify order.
  *
  * Matched on a pattern rather than an exact string because Shopify reports the gateway
@@ -58,6 +69,9 @@ export function shopifyPrefix(gateways = []) {
 
 /** The prefix for an order, from its channel and - for Shopify - how it was paid. */
 export function orderPrefix(order) {
+  // A typed-in transaction already carries its prefix inside its code, chosen by the
+  // person entering it. Nothing about it is detected, so nothing about it can drift.
+  if (order.channel === 'manual') return String(order.id ?? '').split('-')[0] || 'SHF';
   if (order.channel === 'shopify') return shopifyPrefix(order.gateways ?? []);
   return BY_CHANNEL[order.channel] ?? 'SHF';
 }
@@ -69,6 +83,7 @@ export function orderPrefix(order) {
  * carries no information once the prefix says where the order came from, so it goes.
  */
 export function orderCode(order) {
+  if (order.channel === 'manual') return String(order.id ?? '');
   const bare = String(order.id ?? '').replace(/^#/, '');
   return `${orderPrefix(order)}-${bare}`;
 }

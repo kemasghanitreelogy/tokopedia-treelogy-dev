@@ -2,6 +2,7 @@ import { put, get } from '@vercel/blob';
 import { mekari, isMekariConfigured, MekariError } from './client.js';
 import { buildInvoice, verifyInvoice, customIdFor, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
+import { ensureContact } from './setup.js';
 import { loadConfig } from '../config.js';
 
 /**
@@ -269,4 +270,25 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     results,
     syncedTotal: Object.keys(ledger.orders).length,
   };
+}
+
+/**
+ * Post one typed-in transaction.
+ *
+ * The customer is made to exist first: Jurnal rejects an invoice naming a contact it does
+ * not hold, and a consignment shop or a wholesale buyer is not one of the four channel
+ * contacts created at setup. Everything after that is the ordinary path - same mapper,
+ * same total check, same idempotency key - because a manual sale is a sale.
+ */
+export async function postManual({ order, depositTo = null, dryRun = true }) {
+  if (!dryRun && order.customer) await ensureContact(order.customer);
+  const result = await runSync({ orders: [order], depositTo, dryRun, limit: 1, lock: false });
+  return result.results[0] ?? { status: 'failed', error: 'tidak ada yang diproses' };
+}
+
+/** Codes already used by typed-in transactions, so a suggested one cannot collide. */
+export function manualCodes(ledger) {
+  return Object.keys(ledger.orders ?? {})
+    .filter((customId) => customId.startsWith('TRL-manual-'))
+    .map((customId) => customId.slice('TRL-manual-'.length));
 }

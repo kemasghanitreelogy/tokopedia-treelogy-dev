@@ -67,6 +67,37 @@ export async function ensureCustomers({ dryRun = true } = {}) {
   return { created, existing: wanted.filter((n) => existingByName.has(n)), missing: [] };
 }
 
+/**
+ * Make sure one named customer exists, creating it only if it does not.
+ *
+ * A typed transaction can name any customer at all - a consignment shop, a wholesale
+ * buyer - and Jurnal will not accept an invoice for a contact it does not hold. Looking
+ * before writing matters more here than for the four fixed channels: two contacts with
+ * the same display name would quietly split that customer's history in two.
+ */
+export async function ensureContact(name) {
+  const wanted = String(name ?? '').trim();
+  if (!wanted) throw new Error('nama pelanggan kosong');
+
+  const existing = await listContacts();
+  if (existing.has(wanted)) return { name: wanted, created: false };
+  if (isReadOnly()) throw new ReadOnlyError(`kontak ${wanted}`);
+
+  await mekari({
+    method: 'POST',
+    path: CONTACTS_PATH,
+    body: {
+      person: {
+        display_name: wanted,
+        is_customer: true,
+        is_vendor: false,
+        other_detail: 'Dibuat dari transaksi manual di dashboard Treelogy',
+      },
+    },
+  });
+  return { name: wanted, created: true };
+}
+
 /** A deposit account has to exist before an invoice can be marked paid into it. */
 export async function findDepositAccount(name) {
   let page = 1;

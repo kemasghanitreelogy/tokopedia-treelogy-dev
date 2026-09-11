@@ -5,6 +5,7 @@ import { labelReadiness } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode } from './mekari/prefix.js';
+import { SOURCE_OPTIONS, SELLABLE } from './mekari/manual.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
@@ -60,6 +61,8 @@ const icon = {
   lock: '<path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 12.75v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/>',
   warn: '<path d="M12 9v3.75m9.303 3.376c.866 1.5-.217 3.374-1.948 3.374H4.645c-1.73 0-2.813-1.874-1.948-3.374l7.108-12.28c.866-1.5 2.994-1.5 3.86 0l7.107 12.28ZM12 15.75h.007v.008H12v-.008Z"/>',
 };
+
+icon.plus = '<path d="M12 4.5v15m7.5-7.5h-15"/>';
 
 const svg = (name, cls = '') =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon[name]}</svg>`;
@@ -637,6 +640,92 @@ tbody tr:hover{background:var(--panel-2)}
   .kpi__value{font-size:1.35rem}
   th,td{padding:.6rem .7rem}
 }
+/* ------------------------------------------------- transaksi manual ---------- */
+/* A data-entry form, so it is built for one hand on the keyboard: every field is
+   reachable by tab in reading order, the running total never leaves the screen, and the
+   money columns are monospaced so a missing zero is visible rather than merely present. */
+.mx{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:1.1rem; align-items:start}
+@media (max-width:900px){.mx{grid-template-columns:minmax(0,1fr)}}
+
+.mx__side{position:sticky; top:1rem; display:flex; flex-direction:column; gap:.7rem}
+@media (max-width:900px){.mx__side{position:static}}
+
+.src{display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:.5rem}
+.src__o{position:relative; cursor:pointer}
+.src__o input{position:absolute; inset:0; opacity:0; margin:0; cursor:pointer}
+.src__b{display:flex; flex-direction:column; gap:.2rem; padding:.65rem .75rem; border-radius:10px;
+  border:1px solid var(--line); background:var(--panel-2);
+  transition:border-color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out)}
+.src__o:hover .src__b{border-color:var(--brand)}
+.src__o input:focus-visible + .src__b{outline:2px solid var(--brand); outline-offset:2px}
+.src__o input:checked + .src__b{border-color:var(--brand); background:color-mix(in srgb,var(--brand) 16%,var(--panel-2))}
+.src__p{font-family:"Fira Code",ui-monospace,monospace; font-weight:600; font-size:.9rem; color:var(--brand)}
+.src__o input:checked + .src__b .src__p{color:var(--fg)}
+.src__l{font-size:.74rem; color:var(--muted); line-height:1.25}
+.src__t{font-size:.68rem; color:var(--dim)}
+
+.fset{padding:1rem; border-top:1px solid var(--line)}
+.fset:first-child{border-top:0}
+.fset__h{font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:0 0 .7rem}
+
+.flds{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.7rem}
+.fld{display:flex; flex-direction:column; gap:.28rem; min-width:0}
+.fld label{font-size:.74rem; color:var(--muted)}
+.fld input,.fld select,.fld textarea{width:100%; font:inherit; font-size:.86rem; padding:.5rem .65rem;
+  min-height:40px; border-radius:9px; border:1px solid var(--line); background:var(--panel-2); color:var(--fg)}
+.fld input:focus-visible,.fld select:focus-visible,.fld textarea:focus-visible{
+  outline:2px solid var(--brand); outline-offset:1px; border-color:transparent}
+.fld--mono input{font-family:"Fira Code",ui-monospace,monospace; letter-spacing:.02em}
+.fld__hint{font-size:.68rem; color:var(--dim)}
+
+/* Line rows: product wide, money narrow and monospaced, remove last so tabbing through
+   a row never lands on the destructive control on the way to the next field. */
+.ln{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 116px 92px 36px; gap:.4rem; align-items:center;
+  padding:.4rem 0; animation:rise 260ms var(--ease-out) both}
+.ln + .ln{border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.ln select,.ln input{width:100%; font:inherit; font-size:.82rem; padding:.42rem .5rem; min-height:38px;
+  border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--fg)}
+.ln input[type="number"]{font-family:"Fira Code",ui-monospace,monospace; text-align:right}
+.ln select:focus-visible,.ln input:focus-visible{outline:2px solid var(--brand); outline-offset:1px; border-color:transparent}
+.ln__t{font-family:"Fira Code",ui-monospace,monospace; font-size:.82rem; text-align:right; color:var(--muted)}
+.ln__x{display:grid; place-items:center; width:32px; height:32px; border-radius:8px; cursor:pointer;
+  border:1px solid transparent; background:none; color:var(--dim); font-size:1.1rem; line-height:1;
+  transition:color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
+.ln__x:hover{color:var(--bad); border-color:var(--bad)}
+.ln__x:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
+.lnh{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 116px 92px 36px; gap:.4rem;
+  font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); padding-bottom:.35rem;
+  border-bottom:1px solid var(--line)}
+.lnh span:nth-child(n+2){text-align:right}
+@media (max-width:720px){
+  .lnh{display:none}
+  .ln{grid-template-columns:minmax(0,1fr) 36px; grid-auto-rows:auto; gap:.35rem;
+    padding:.7rem 0; border-top:1px solid var(--line)}
+  .ln select{grid-column:1}
+  .ln__x{grid-row:1; grid-column:2}
+  .ln input,.ln__t{grid-column:1/-1}
+}
+
+.addln{margin-top:.6rem; font:inherit; font-size:.8rem; font-weight:600; padding:.45rem .8rem; min-height:38px;
+  border-radius:9px; cursor:pointer; border:1px dashed var(--line); background:none; color:var(--muted);
+  transition:color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
+.addln:hover{color:var(--fg); border-color:var(--brand)}
+.addln:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
+
+.sum{padding:1rem}
+.sum__r{display:flex; justify-content:space-between; gap:1rem; font-size:.8rem; padding:.3rem 0; color:var(--muted)}
+.sum__r b{font-family:"Fira Code",ui-monospace,monospace; font-weight:500; color:var(--fg)}
+.sum__t{margin-top:.5rem; padding-top:.6rem; border-top:1px solid var(--line);
+  display:flex; justify-content:space-between; align-items:baseline; gap:1rem}
+.sum__t span{font-size:.78rem; color:var(--muted)}
+.sum__t b{font-family:"Fira Code",ui-monospace,monospace; font-size:1.25rem; font-weight:600; color:var(--fg)}
+.sum__go{width:100%; margin-top:.9rem; font:inherit; font-size:.88rem; font-weight:600; padding:.7rem 1rem;
+  min-height:46px; border-radius:10px; cursor:pointer; border:0; background:var(--brand-deep); color:#F1F3EE;
+  transition:filter var(--t-fast) var(--ease-out)}
+.sum__go:hover:not(:disabled){filter:brightness(1.15)}
+.sum__go:disabled{opacity:.45; cursor:not-allowed}
+.sum__go:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+
 /* ---------------------------------------------------- motion & loading -------- */
 /* Entrances follow the motion doctrine: power3.out, no overshoot, and a stagger whose
    total stays under ~0.5s so an arrival reads as one beat rather than a queue. */
@@ -1179,6 +1268,7 @@ export function renderJurnal({
         <span class="strip__grow"></span>
         <span class="note">${overview.ledgerTotal} faktur tercatat seluruhnya${
           depositTo ? ` &middot; lunas ke ${escape(depositTo)}` : ' &middot; faktur dibiarkan terbuka'}</span>
+        <a class="chip" href="?view=jurnal&amp;add=1">${svg('plus')}Tambah transaksi</a>
       </div>`,
     body: `
       ${configured ? '' : '<div class="alert">' + svg('warn') + '<span>Kredensial Mekari belum diisi, jadi tidak ada yang bisa dikirim.</span></div>'}
@@ -1206,6 +1296,285 @@ export function renderJurnal({
           </table></div>
           <div class="foot"><span>${overview.rows.length} pesanan pada rentang ini</span></div>`
         : '<p class="empty">Tidak ada pesanan pada rentang ini.</p>'}`,
+  });
+}
+
+/**
+ * The form for a sale that never went through a marketplace.
+ *
+ * Built for someone entering a stack of consignment slips, so it optimises for the tenth
+ * entry rather than the first: the source is one click, the code is already filled in,
+ * the money columns are monospaced and right-aligned so a missing zero is visible, and
+ * the running total never scrolls off. Every number is checked again on the server - the
+ * live arithmetic here is a courtesy, not the authority.
+ */
+export function renderManual({
+  range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
+  live, depositTo, existingCodes = [],
+}) {
+  const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
+
+  const sources = SOURCE_OPTIONS.map((o) => `
+    <label class="src__o">
+      <input type="radio" name="source" value="${o.prefix}" ${o.prefix === chosen.prefix ? 'checked' : ''}
+             data-term="${o.termDays}" data-label="${escape(o.label)}">
+      <span class="src__b">
+        <span class="src__p">${o.prefix}</span>
+        <span class="src__l">${escape(o.label)}</span>
+        <span class="src__t">Net ${o.termDays}</span>
+      </span>
+    </label>`).join('');
+
+  // Grouped so a long flat list does not have to be read top to bottom every time.
+  const byCategory = new Map();
+  for (const product of SELLABLE) {
+    if (!byCategory.has(product.category)) byCategory.set(product.category, []);
+    byCategory.get(product.category).push(product);
+  }
+  const productOptions = [...byCategory.entries()]
+    .map(([category, items]) => `<optgroup label="${escape(CATEGORIES[category] ?? category)}">${
+      items.map((p) => `<option value="${escape(p.sku)}">${escape(p.name)}</option>`).join('')
+    }</optgroup>`)
+    .join('');
+
+  const lineRow = (index) => `
+    <div class="ln" data-row>
+      <select name="sku" aria-label="Produk baris ${index + 1}">
+        <option value="">Pilih produk&hellip;</option>
+        ${productOptions}
+      </select>
+      <input type="number" name="qty" value="1" min="1" step="1" inputmode="numeric" aria-label="Kuantitas">
+      <input type="number" name="unitPrice" value="" min="0" step="1" inputmode="numeric" placeholder="Harga" aria-label="Harga satuan">
+      <input type="number" name="unitDiscount" value="0" min="0" step="1" inputmode="numeric" aria-label="Diskon satuan">
+      <span class="ln__t" data-line-total>&mdash;</span>
+      <button class="ln__x" type="button" data-remove aria-label="Hapus baris ${index + 1}">&times;</button>
+    </div>`;
+
+  return shell({
+    title: 'Transaksi manual',
+    range,
+    errors,
+    shopeeShop,
+    generatedAt,
+    view: 'jurnal',
+    flash,
+    hideRangeControls: true,
+    kpis: `
+      <div class="strip">
+        <span class="note">Untuk penjualan yang tidak lewat marketplace. Tersimpan sebagai faktur Jurnal yang sama persis dengan pesanan online.</span>
+        <span class="strip__grow"></span>
+        <a class="chip" href="?view=jurnal">&larr; Kembali ke Jurnal</a>
+      </div>`,
+    body: `
+      ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif &mdash; transaksi akan dihitung dan diperiksa, tapi belum dikirim ke Jurnal sampai <span class="mono">MEKARI_SYNC_LIVE=1</span> disetel.</span></div>`}
+      <form method="post" id="mxform" data-confirm="Simpan transaksi ini dan kirim ke Mekari Jurnal?">
+        <input type="hidden" name="csrf" value="${escape(csrf)}">
+        <input type="hidden" name="view" value="jurnal">
+        <input type="hidden" name="action" value="manual_invoice">
+
+        <div class="mx">
+          <div class="panel">
+            <div class="fset">
+              <h3 class="fset__h">Sumber</h3>
+              <div class="src">${sources}</div>
+            </div>
+
+            <div class="fset">
+              <h3 class="fset__h">Detail</h3>
+              <div class="flds">
+                <div class="fld fld--mono">
+                  <label for="code">Kode transaksi</label>
+                  <input id="code" name="code" value="${escape(code)}" required maxlength="43"
+                         pattern="[A-Za-z]{2}-[A-Za-z0-9-]{1,40}" data-code>
+                  <span class="fld__hint" data-code-hint>Otomatis dari sumber dan tanggal. Boleh diubah.</span>
+                </div>
+                <div class="fld">
+                  <label for="date">Tanggal</label>
+                  <input id="date" name="date" type="date" value="${escape(today)}" max="${escape(today)}" required>
+                </div>
+                <div class="fld">
+                  <label for="customer">Pelanggan</label>
+                  <input id="customer" name="customer" list="mxcontacts" maxlength="120"
+                         placeholder="${escape(chosen.label)}" data-customer>
+                  <span class="fld__hint">Dibuat otomatis di Jurnal kalau belum ada.</span>
+                </div>
+                <div class="fld">
+                  <label for="shipping">Ongkir</label>
+                  <input id="shipping" name="shipping" type="number" value="0" min="0" step="1" inputmode="numeric">
+                </div>
+              </div>
+              <datalist id="mxcontacts">${
+                contacts.map((c) => `<option value="${escape(c)}"></option>`).join('')
+              }</datalist>
+            </div>
+
+            <div class="fset">
+              <h3 class="fset__h">Produk</h3>
+              <div class="lnh">
+                <span>Produk</span><span>Qty</span><span>Harga</span><span>Diskon</span><span>Subtotal</span><span></span>
+              </div>
+              <div id="lines">${lineRow(0)}</div>
+              <button class="addln" type="button" id="addln">+ Tambah baris</button>
+            </div>
+
+            <div class="fset">
+              <h3 class="fset__h">Catatan</h3>
+              <div class="fld">
+                <label for="note">Keterangan (ikut ke memo faktur)</label>
+                <input id="note" name="note" maxlength="200" placeholder="mis. titip di toko A, tempo 7 hari">
+              </div>
+            </div>
+          </div>
+
+          <aside class="mx__side">
+            <div class="panel sum">
+              <div class="sum__r"><span>Produk</span><b data-sum-goods>Rp0</b></div>
+              <div class="sum__r"><span>Ongkir</span><b data-sum-ship>Rp0</b></div>
+              <div class="sum__r"><span>Termin</span><b data-sum-term>Net ${chosen.termDays}</b></div>
+              <div class="sum__r"><span>Jatuh tempo</span><b data-sum-due>&mdash;</b></div>
+              <div class="sum__t"><span>Total</span><b data-sum-total>Rp0</b></div>
+              <input type="hidden" name="total" data-total-field value="0">
+              <button class="sum__go" type="submit" id="mxgo" disabled>Simpan &amp; kirim ke Jurnal</button>
+              <p class="fld__hint" style="margin:.6rem 0 0">${
+                depositTo
+                  ? `Ditandai lunas ke <b>${escape(depositTo)}</b>.`
+                  : 'Faktur dibiarkan terbuka sebagai piutang.'
+              }</p>
+            </div>
+          </aside>
+        </div>
+      </form>`,
+    script: `
+(function () {
+  var form = document.getElementById('mxform');
+  if (!form) return;
+
+  var lines = document.getElementById('lines');
+  var template = lines.firstElementChild.cloneNode(true);
+  var codeField = form.querySelector('[data-code]');
+  var customer = form.querySelector('[data-customer]');
+  var dateField = form.querySelector('input[name="date"]');
+  var shipField = form.querySelector('input[name="shipping"]');
+  var go = document.getElementById('mxgo');
+  var existing = ${JSON.stringify(existingCodes)};
+  // The code is only regenerated while it still looks generated. The moment someone
+  // types their own, the source and date stop overwriting it.
+  var codeIsOurs = true;
+
+  var rupiah = function (n) { return 'Rp' + Math.round(n).toLocaleString('id-ID'); };
+  var num = function (el) { var v = Number(el && el.value); return isFinite(v) ? v : 0; };
+
+  function source() {
+    var picked = form.querySelector('input[name="source"]:checked');
+    return picked || form.querySelector('input[name="source"]');
+  }
+
+  function suggest() {
+    var prefix = source().value;
+    var d = (dateField.value || '').replace(/-/g, '').slice(2);
+    var stem = prefix + '-' + d + '-';
+    var used = existing.filter(function (c) { return c.indexOf(stem) === 0; })
+      .map(function (c) { return Number(c.slice(stem.length)); })
+      .filter(function (n) { return isFinite(n); });
+    var next = used.length ? Math.max.apply(null, used) + 1 : 1;
+    return stem + String(next).padStart(3, '0');
+  }
+
+  function refreshCode() {
+    if (codeIsOurs) codeField.value = suggest();
+  }
+
+  function total() {
+    var goods = 0;
+    Array.prototype.forEach.call(lines.querySelectorAll('[data-row]'), function (row) {
+      var sku = row.querySelector('select').value;
+      var qty = num(row.querySelector('[name="qty"]'));
+      var price = num(row.querySelector('[name="unitPrice"]'));
+      var disc = num(row.querySelector('[name="unitDiscount"]'));
+      var cell = row.querySelector('[data-line-total]');
+      // A row without a product or a price contributes nothing and says so, rather than
+      // quietly counting as zero in a total that looks complete.
+      if (!sku || price <= 0 || qty <= 0) { cell.textContent = '\\u2014'; return; }
+      var net = Math.max(0, price - disc) * qty;
+      cell.textContent = rupiah(net);
+      goods += net;
+    });
+
+    var ship = Math.max(0, num(shipField));
+    var term = Number(source().dataset.term) || 14;
+
+    form.querySelector('[data-sum-goods]').textContent = rupiah(goods);
+    form.querySelector('[data-sum-ship]').textContent = rupiah(ship);
+    form.querySelector('[data-sum-term]').textContent = 'Net ' + term;
+    form.querySelector('[data-sum-total]').textContent = rupiah(goods + ship);
+    form.querySelector('[data-total-field]').value = String(goods + ship);
+
+    var due = form.querySelector('[data-sum-due]');
+    if (dateField.value) {
+      var d = new Date(dateField.value + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + term);
+      due.textContent = d.toISOString().slice(0, 10);
+    } else {
+      due.textContent = '\\u2014';
+    }
+
+    go.disabled = goods <= 0;
+    // The confirmation quotes what is actually about to be written - the house rule for
+    // anything that writes - so it is rebuilt whenever the numbers change.
+    form.dataset.confirm = 'Simpan ' + (codeField.value || 'transaksi') +
+      ' senilai ' + rupiah(goods + ship) + ' dan kirim ke Mekari Jurnal?';
+    return goods + ship;
+  }
+
+  function wire(row) {
+    row.querySelectorAll('input[type="number"]').forEach(function (input) {
+      // Same rule as everywhere else on this dashboard: a focused number field must not
+      // change value because the page scrolled past it.
+      input.addEventListener('wheel', function (e) {
+        if (document.activeElement !== input) return;
+        e.preventDefault();
+        input.blur();
+      }, { passive: false });
+    });
+    row.querySelector('[data-remove]').addEventListener('click', function () {
+      if (lines.querySelectorAll('[data-row]').length === 1) {
+        row.querySelector('select').value = '';
+        row.querySelector('[name="unitPrice"]').value = '';
+      } else {
+        row.remove();
+      }
+      total();
+    });
+  }
+
+  wire(lines.firstElementChild);
+
+  document.getElementById('addln').addEventListener('click', function () {
+    var row = template.cloneNode(true);
+    row.querySelector('select').value = '';
+    row.querySelector('[name="unitPrice"]').value = '';
+    row.querySelector('[data-line-total]').textContent = '\\u2014';
+    lines.appendChild(row);
+    wire(row);
+    row.querySelector('select').focus();
+    total();
+  });
+
+  form.addEventListener('input', function (e) {
+    if (e.target === codeField) codeIsOurs = false;
+    total();
+  });
+  form.addEventListener('change', function (e) {
+    if (e.target.name === 'source') {
+      customer.placeholder = e.target.dataset.label;
+      refreshCode();
+    }
+    if (e.target === dateField) refreshCode();
+    total();
+  });
+
+  total();
+}());`,
   });
 }
 

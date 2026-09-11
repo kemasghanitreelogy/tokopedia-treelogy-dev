@@ -1,6 +1,6 @@
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
-import { orderCode, termDaysFor } from './prefix.js';
+import { orderCode, orderPrefix, termDaysFor, PREFIXES } from './prefix.js';
 
 /**
  * Turning an order into a Jurnal sales invoice.
@@ -96,7 +96,9 @@ export function buildInvoice({ order, depositTo = null }) {
   if (shipping < 0) throw new InvoiceError(`${order.id}: ongkir negatif`);
 
   const date = jurnalDate(order.createdAt);
-  const channel = CHANNELS[order.channel]?.label ?? order.channel;
+  // A typed-in transaction names its own source; the four online channels are named by
+  // the channel table.
+  const channel = CHANNELS[order.channel]?.label ?? PREFIXES[orderPrefix(order)]?.label ?? order.channel;
   // The business writes every order with its source prefix, so the books do too.
   const code = orderCode(order);
 
@@ -104,14 +106,17 @@ export function buildInvoice({ order, depositTo = null }) {
     transaction_date: date,
     // Net 14 for every source except consignment, which is Net 7.
     due_date: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600),
-    person_name: CUSTOMER_NAMES[order.channel] ?? channel,
+    // A marketplace buyer is anonymous, so the channel is the customer. Someone typing in
+    // a consignment or a wholesale order knows exactly who bought, so they say.
+    person_name: order.customer || CUSTOMER_NAMES[order.channel] || channel,
     custom_id: customIdFor(order),
     reference_no: code,
     transaction_lines_attributes: lines,
     shipping_price: shipping,
     // The buyer's name is masked by the marketplaces, so it belongs in the memo rather
     // than as a contact that could never be reached.
-    memo: [channel, code, order.buyer && `pembeli ${order.buyer}`].filter(Boolean).join(' · '),
+    memo: [channel, code, order.buyer && `pembeli ${order.buyer}`, order.note]
+      .filter(Boolean).join(' · '),
   };
 
   if (order.carrier) invoice.ship_via = order.carrier;

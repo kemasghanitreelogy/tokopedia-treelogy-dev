@@ -47,6 +47,9 @@ export async function handlePush(push) {
   let outcome;
   try {
     outcome = await handleVerifiedPush(push);
+    // A push accepted without a matching signature is still acted on - the order is
+    // re-read either way - but it is never allowed to look like a verified one.
+    if (push.unverified) outcome = { ...outcome, status: `${outcome.status} · tak-terverifikasi` };
   } catch (error) {
     // A crash here would answer the platform with a 500 and nothing else; say so.
     await notifySyncFailures({ source: `webhook ${push.channel}`, results: [{ status: 'failed', customId: push.id ?? push.gid, error: error.message }] });

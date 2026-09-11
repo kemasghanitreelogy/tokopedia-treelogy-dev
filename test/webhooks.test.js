@@ -127,3 +127,31 @@ test("Shopee's verification push is recognised by its content and nothing else i
   const [noSig] = await call('{"code":0,"data":{}}');
   assert.equal(noSig, 401, 'code 0 tanpa verify_info bukan handshake');
 });
+
+test('an unverifiable Shopee push is trusted only when it is shaped like our own order push', async () => {
+  const { looksLikeOrderPush, unverifiedAllowed } = await import('../api/webhook/shopee.js');
+  assert.equal(looksLikeOrderPush({ code: 3, data: { ordersn: '260909JG9BJHD9' } }), true);
+  assert.equal(looksLikeOrderPush({ code: 4, data: { ordersn: '260909JG9BJHD9', tracking_no: 'CM1' } }), true);
+  // Anything that is not an order push, or whose order code is not an order code, is not.
+  assert.equal(looksLikeOrderPush({ code: 0, data: { verify_info: 'x' } }), false);
+  assert.equal(looksLikeOrderPush({ code: 3, data: {} }), false);
+  assert.equal(looksLikeOrderPush({ code: 3, data: { ordersn: '../../etc' } }), false);
+  assert.equal(looksLikeOrderPush({ code: 3, data: { ordersn: 'x'.repeat(40) } }), false);
+
+  // A flood of unverified pushes is capped, so a forger cannot spend our Shopee API budget.
+  let t = 1_000_000;
+  let allowed = 0;
+  for (let i = 0; i < 40; i++) if (unverifiedAllowed(t)) allowed++;
+  assert.equal(allowed, 30);
+  assert.equal(unverifiedAllowed(t + 61_000), true, 'jendela satu menit bergeser');
+});
+
+test('a push naming a shop that is not ours is refused even if it looks right', async () => {
+  const { Readable } = await import('node:stream');
+  const handler = (await import('../api/webhook/shopee.js')).default;
+  const raw = JSON.stringify({ shop_id: 999, code: 3, timestamp: 1, data: { ordersn: '260909JG9BJHD9' } });
+  const req = Object.assign(Readable.from([Buffer.from(raw)]), { method: 'POST', headers: { host: 'x', authorization: 'deadbeef' } });
+  let out = ''; const res = { statusCode: 0, setHeader() {}, end(b) { out = b ?? ''; } };
+  await handler(req, res);
+  assert.equal(res.statusCode, 401, out);
+});

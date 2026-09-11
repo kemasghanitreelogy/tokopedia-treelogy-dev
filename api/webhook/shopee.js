@@ -2,6 +2,7 @@ import { readRawBody, verifyShopee } from '../../src/webhooks/verify.js';
 import { handlePush, statusFor } from '../../src/webhooks/handle.js';
 import { beatRejected } from '../../src/mekari/heartbeat.js';
 import { loadShopeeConfig } from '../../src/shopee/config.js';
+import { resolveShopeeSession } from '../../src/shopee/session.js';
 import { put } from '@vercel/blob';
 
 /**
@@ -30,6 +31,50 @@ async function keepRejected(detail) {
  * Shopee keeps three days of undelivered pushes, which is the recovery path when this
  * endpoint was down - see src/webhooks/recover.js.
  */
+
+/**
+ * Accepting a push whose signature we cannot verify.
+ *
+ * Shopee signs its pushes in a way that matched none of the documented shapes - a real
+ * code-4 push was captured off the wire and brute-forced offline against 9,000-odd
+ * combinations of base string, key and encoding without a hit. Meanwhile Shopee retries
+ * every rejected delivery and suspends the push channel of an endpoint that keeps
+ * answering 401, which would cost every Shopee order its real-time path.
+ *
+ * So an unverifiable push is accepted as a TRIGGER when, and only when, it names our own
+ * shop and is shaped like an order push. It is safe to do that because a push is never
+ * data here: the order is re-read from Shopee over our own signed connection before
+ * anything is booked, so the most a forged push can do is make us look up an order we
+ * already own - and a flood of them is capped below. Every such push is recorded as
+ * unverified, the candidate shapes are still computed on each one, and the first that
+ * matches is logged so the signature can be pinned and this path retired.
+ */
+const UNVERIFIED_PER_MINUTE = 30;
+const unverifiedWindow = [];
+
+export function unverifiedAllowed(now = Date.now()) {
+  while (unverifiedWindow.length && now - unverifiedWindow[0] > 60_000) unverifiedWindow.shift();
+  if (unverifiedWindow.length >= UNVERIFIED_PER_MINUTE) return false;
+  unverifiedWindow.push(now);
+  return true;
+}
+
+let ownShopId = null;
+async function isOurShop(shopId) {
+  if (ownShopId === null) {
+    try {
+      ownShopId = String((await resolveShopeeSession()).auth.shopId);
+    } catch {
+      return false;
+    }
+  }
+  return String(shopId ?? '') === ownShopId;
+}
+
+export const looksLikeOrderPush = (push) =>
+  (push?.code === ORDER_STATUS_PUSH || push?.code === TRACKING_NO_PUSH)
+  && typeof (push?.data?.ordersn ?? push?.data?.order_sn) === 'string'
+  && /^[A-Z0-9]{6,20}$/i.test(push.data.ordersn ?? push.data.order_sn);
 
 /** Shopee's push codes; only the order ones are acted on. */
 export const VERIFICATION_PUSH = 0;
@@ -84,32 +129,39 @@ export default async function handler(req, res) {
     rawBody: raw, header: req.headers.authorization, url, partnerKey: config.partnerKey,
   });
 
-  if (!check.ok) {
-    console.warn(`webhook/shopee: tanda tangan ditolak - ${check.reason}`);
-    await beatRejected('shopee', check.reason);
-    await keepRejected({
-      reason: check.reason,
-      url,
-      method: req.method,
-      headers: req.headers,
-      rawLength: raw.length,
-      rawPreview: raw.slice(0, 2000),
-      reqBodyType: typeof req.body,
-      reqBodyPreview: req.body === undefined ? null : JSON.stringify(req.body).slice(0, 500),
-    });
-    res.statusCode = 401;
-    return res.end('invalid signature');
-  }
-  // Which base string Shopee actually signs is not something the documentation would
-  // confirm, so the first genuine push says it out loud and it can be pinned.
-  console.log(`webhook/shopee: tanda tangan sah (bentuk: ${check.shape})`);
-
   let push;
   try {
     push = JSON.parse(raw);
   } catch {
     res.statusCode = 400;
     return res.end('bad json');
+  }
+
+  let verified = check.ok;
+  if (check.ok) {
+    // Which base string Shopee actually signs is not something the documentation would
+    // confirm, so a genuine match says it out loud and it can be pinned.
+    console.log(`webhook/shopee: tanda tangan sah (bentuk: ${check.shape})`);
+  } else {
+    const trusted = req.headers.authorization && looksLikeOrderPush(push) && await isOurShop(push.shop_id);
+    if (!trusted || !unverifiedAllowed()) {
+      console.warn(`webhook/shopee: ditolak - ${check.reason}`);
+      await beatRejected('shopee', check.reason);
+      await keepRejected({
+        reason: check.reason,
+        url,
+        method: req.method,
+        headers: req.headers,
+        rawLength: raw.length,
+        rawPreview: raw.slice(0, 2000),
+        reqBodyType: typeof req.body,
+      });
+      res.statusCode = trusted ? 429 : 401;
+      return res.end(trusted ? 'too many' : 'invalid signature');
+    }
+    console.warn('webhook/shopee: diterima sebagai pemicu tak-terverifikasi (toko sendiri, bentuk push pesanan)');
+    // Kept so the shape can still be worked out from real traffic later.
+    await keepRejected({ reason: 'diterima tak-terverifikasi', url, method: req.method, headers: req.headers, rawLength: raw.length, rawPreview: raw.slice(0, 2000) });
   }
 
   if (push.code !== ORDER_STATUS_PUSH && push.code !== TRACKING_NO_PUSH) {
@@ -121,7 +173,7 @@ export default async function handler(req, res) {
   // Shopee has spelled this field both ways across versions; take whichever arrived
   // rather than dropping a real order over a naming detail.
   const id = push.data?.ordersn ?? push.data?.order_sn ?? '';
-  const outcome = await handlePush({ channel: 'shopee', id, reason: `code ${push.code}` });
+  const outcome = await handlePush({ channel: 'shopee', id, reason: `code ${push.code}`, unverified: !verified });
 
   res.statusCode = statusFor(outcome);
   res.end(outcome.status);

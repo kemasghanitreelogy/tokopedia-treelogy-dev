@@ -243,7 +243,8 @@ export async function runSync({ orders, depositTo = null, dryRun = true, limit =
 
 async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null }) {
   const ledger = await loadSyncLedger();
-  const queue = postable(orders, ledger).slice(0, limit);
+  const backlog = postable(orders, ledger);
+  const queue = backlog.slice(0, limit);
   const results = [];
   const stopAt = deadlineMs ? Date.now() + deadlineMs : Infinity;
   const deadlineAt = Number.isFinite(stopAt) ? stopAt : null;
@@ -274,7 +275,10 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     dryRun,
     considered: queue.length,
     posted: results.length,
-    remaining: queue.length - results.length,
+    // Counted against the whole backlog, not this run's cap: the caller uses it to decide
+    // whether to call again, and "nothing left of the twelve I asked for" is not "nothing
+    // left". The first chained sweep stopped after one round on exactly that misreading.
+    remaining: backlog.length - results.length,
     ranOutOfTime,
     created: count('created'),
     exists: count('exists'),

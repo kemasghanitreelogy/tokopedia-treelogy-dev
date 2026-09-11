@@ -1,5 +1,6 @@
 import { readRawBody, verifyTikTok } from '../../src/webhooks/verify.js';
 import { handlePush, statusFor } from '../../src/webhooks/handle.js';
+import { beatRejected } from '../../src/mekari/heartbeat.js';
 import { loadConfig } from '../../src/config.js';
 
 /**
@@ -32,6 +33,7 @@ export default async function handler(req, res) {
   });
   if (!check.ok) {
     console.warn('webhook/tiktok: tanda tangan ditolak');
+    await beatRejected('tiktok_shop', 'tanda tangan tidak cocok');
     res.statusCode = 401;
     return res.end('invalid signature');
   }

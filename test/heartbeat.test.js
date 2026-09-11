@@ -61,3 +61,20 @@ test('a page with no heartbeat at all still renders, and says so', () => {
   assert.match(html, /belum pernah jalan/);
   assert.equal((html.match(/belum ada push/g) ?? []).length, 4);
 });
+
+test('a rejection newer than the last accepted push outranks it on the chip', () => {
+  const html = renderJurnal({
+    ...common,
+    heartbeat: {
+      webhooks: {
+        shopee: { at: minutesAgo(30), status: 'created', rejected: { at: minutesAgo(2), reason: 'tidak ada bentuk tanda tangan yang cocok', count: 3 } },
+        shopify: { at: minutesAgo(2), status: 'created', rejected: { at: minutesAgo(30), reason: 'x', count: 1 } },
+      },
+      sweep: null,
+    },
+  });
+  assert.match(html, /hb--stop"><b>Shopee<\/b> push ditolak 2 menit lalu/);
+  assert.match(html, /3x · tidak ada bentuk tanda tangan yang cocok/);
+  // An old rejection followed by a fresh accepted push is a healthy channel.
+  assert.match(html, /hb--ok"><b>Shopify/);
+});

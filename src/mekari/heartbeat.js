@@ -52,6 +52,28 @@ export async function beatWebhook(channel, outcome) {
   }
 }
 
+/**
+ * A push arrived on this channel and was turned away.
+ *
+ * Counted separately from accepted pushes because the two mean opposite things: an
+ * accepted push says the channel is healthy, a run of rejections says the platform is
+ * talking and we are not listening - a signature that no longer matches, a key that was
+ * rotated. Without this, a broken verifier looks identical to a quiet day.
+ */
+export async function beatRejected(channel, reason) {
+  try {
+    const state = await loadHeartbeat();
+    const current = state.webhooks[channel] ?? {};
+    state.webhooks[channel] = {
+      ...current,
+      rejected: { at: new Date().toISOString(), reason: String(reason ?? '').slice(0, 120), count: (current.rejected?.count ?? 0) + 1 },
+    };
+    await save(state);
+  } catch {
+    // As above.
+  }
+}
+
 /** A reconciliation sweep finished, whatever it found. */
 export async function beatSweep(summary) {
   try {

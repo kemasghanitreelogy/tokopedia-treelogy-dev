@@ -21,10 +21,15 @@ import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/da
  */
 
 const DEFAULT_WINDOW_DAYS = 3;
-const MAX_PER_RUN = 40;
-// The function is allowed 120s; stop posting well before that so a run ends on a written
-// ledger rather than on a kill signal mid-request.
-const POST_BUDGET_MS = 85_000;
+// Each posted order is now three paced writes - its buyer's contact, the duplicate
+// probe, the invoice - which is about 2.6 seconds. Twenty of those is under a minute;
+// forty overran the function's 120 seconds on the first live run and was killed with the
+// last few invoices unrecorded. A sweep every fifteen minutes clears twenty at a time
+// faster than a busy day produces them.
+const MAX_PER_RUN = 20;
+// Stop posting well before the platform limit so a run ends on a written ledger rather
+// than on a kill signal mid-request; the collect and the Shopee drain need room too.
+const POST_BUDGET_MS = 55_000;
 
 /** Cron calls carry CRON_SECRET; a person calls it with their dashboard session. */
 function authorized(req) {
@@ -58,7 +63,7 @@ export default async function handler(req, res) {
 
   const url = new URL(req.url, 'http://localhost');
   const days = Math.min(Math.max(Number(url.searchParams.get('days')) || DEFAULT_WINDOW_DAYS, 1), 30);
-  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || MAX_PER_RUN, 1), 200);
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || MAX_PER_RUN, 1), MAX_PER_RUN);
   const depositTo = url.searchParams.get('deposit_to') ?? process.env.MEKARI_DEPOSIT_ACCOUNT ?? null;
 
   // Live posting needs the flag AND the absence of the read-only brake. Asking for

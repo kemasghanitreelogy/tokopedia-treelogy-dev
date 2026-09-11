@@ -35,7 +35,7 @@ jobs:
           # is set on the deployment, so this flag alone can never write.
           body=$(curl -sS --fail-with-body --max-time 150 \
             -H "Authorization: Bearer ${CRON_SECRET}" \
-            "${BASE_URL}/api/mekari-sync?dry=0&days=3&limit=40")
+            "${BASE_URL}/api/mekari-sync?dry=0&days=3&limit=20")
           echo "$body" | head -c 4000
           echo
           ok=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if d.get("ok") else "no")')

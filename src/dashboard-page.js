@@ -650,6 +650,8 @@ tbody tr:hover{background:var(--panel-2)}
 .hb--flag{border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
 .hb--flag b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--warn); margin-right:.35rem}
 .hb--muted b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--dim); margin-right:.35rem}
+.hb--stop{border-color:color-mix(in srgb,var(--bad) 60%,transparent); color:var(--fg)}
+.hb--stop b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--bad); margin-right:.35rem}
 
 /* ------------------------------------------------- transaksi manual ---------- */
 /* A data-entry form, so it is built for one hand on the keyboard: every field is
@@ -1252,9 +1254,17 @@ function syncHealth(heartbeat, now = Date.now()) {
   ];
   const rows = channels.map(([key, label]) => {
     const beat = heartbeat?.webhooks?.[key];
-    const tone = !beat ? 'muted' : stale(beat.at, 4 * 60) ? 'flag' : 'ok';
-    return `<span class="hb hb--${tone}"><b>${escape(label)}</b> ${
-      beat ? `${escape(ageOf(beat.at, now))} <span class="dim">(${escape(beat.status)})</span>` : 'belum ada push'}</span>`;
+    const rejected = beat?.rejected;
+    // A rejection newer than the last accepted push means the platform is talking and we
+    // are not listening - that outranks everything else the chip could say.
+    const rejecting = rejected && (!beat?.at || rejected.at > beat.at);
+    const tone = rejecting ? 'stop' : !beat?.at ? 'muted' : stale(beat.at, 4 * 60) ? 'flag' : 'ok';
+    const text = rejecting
+      ? `push ditolak ${escape(ageOf(rejected.at, now))} <span class="dim">(${rejected.count}x · ${escape(rejected.reason)})</span>`
+      : beat?.at
+        ? `${escape(ageOf(beat.at, now))} <span class="dim">(${escape(beat.status)})</span>`
+        : 'belum ada push';
+    return `<span class="hb hb--${tone}"><b>${escape(label)}</b> ${text}</span>`;
   });
   const sweep = heartbeat?.sweep;
   const sweepTone = !sweep ? 'muted' : stale(sweep.at, 60) ? 'flag' : 'ok';

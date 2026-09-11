@@ -1,5 +1,6 @@
 import { readRawBody, verifyShopee } from '../../src/webhooks/verify.js';
 import { handlePush, statusFor } from '../../src/webhooks/handle.js';
+import { beatRejected } from '../../src/mekari/heartbeat.js';
 import { loadShopeeConfig } from '../../src/shopee/config.js';
 import { put } from '@vercel/blob';
 
@@ -85,6 +86,7 @@ export default async function handler(req, res) {
 
   if (!check.ok) {
     console.warn(`webhook/shopee: tanda tangan ditolak - ${check.reason}`);
+    await beatRejected('shopee', check.reason);
     await keepRejected({
       reason: check.reason,
       url,

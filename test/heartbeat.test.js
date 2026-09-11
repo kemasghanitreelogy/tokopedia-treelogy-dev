@@ -78,3 +78,12 @@ test('a rejection newer than the last accepted push outranks it on the chip', ()
   // An old rejection followed by a fresh accepted push is a healthy channel.
   assert.match(html, /hb--ok"><b>Shopify/);
 });
+
+test('under the test runner a heartbeat writes nowhere', async () => {
+  // Forged pushes in this suite must never show up as real rejections in production.
+  const { beatRejected, loadHeartbeat } = await import('../src/mekari/heartbeat.js');
+  assert.ok(process.env.NODE_TEST_CONTEXT, 'node:test should mark its own process');
+  await beatRejected('shopee', 'uji');
+  const state = await loadHeartbeat();
+  assert.deepEqual(state, { webhooks: {}, sweep: null });
+});

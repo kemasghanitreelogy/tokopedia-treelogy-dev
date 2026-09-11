@@ -11,7 +11,7 @@ import { put } from '@vercel/blob';
  * is a diagnostic for pinning the signature and comes out once it is pinned.
  */
 async function keepRejected(detail) {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  const token = process.env.NODE_TEST_CONTEXT ? '' : process.env.BLOB_READ_WRITE_TOKEN;
   if (!token) return;
   try {
     await put('mekari/webhook-diag/shopee-last.json', JSON.stringify({ at: new Date().toISOString(), ...detail }), {

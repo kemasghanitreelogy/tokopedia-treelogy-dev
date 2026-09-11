@@ -12,7 +12,15 @@ import { loadConfig } from '../config.js';
 
 export const HEARTBEAT_PATHNAME = 'mekari/heartbeat.json';
 
-const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || '';
+/**
+ * No Blob token under the test runner, whatever .env says.
+ *
+ * The suite drives the webhook handlers with forged pushes on purpose, and each rejection
+ * writes a heartbeat. With a real token in the local .env those writes landed in the
+ * production heartbeat and showed five Shopee rejections that never happened. node:test
+ * marks its processes with NODE_TEST_CONTEXT, which is the cleanest way to tell.
+ */
+const blobToken = () => (process.env.NODE_TEST_CONTEXT ? '' : (process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || ''));
 
 export async function loadHeartbeat() {
   const token = blobToken();

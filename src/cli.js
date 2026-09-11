@@ -663,7 +663,8 @@ function printSyncResult(result) {
   const total = result.results.reduce((n, r) => n + (r.total ?? 0), 0);
 
   console.log(`\n  ${result.considered} pesanan diproses` +
-    `  ·  dibuat ${result.created}  ·  sudah ada ${result.exists}  ·  gagal ${result.failed}`);
+    `  ·  dibuat ${result.created}  ·  sudah ada ${result.exists}  ·  gagal ${result.failed}` +
+    (result.deferred ? `  ·  tertunda ${result.deferred} (dicoba lagi run berikutnya)` : ''));
   console.log(`  nilai  Rp${total.toLocaleString('id-ID')}\n`);
 
   for (const r of failed) console.log(fail(`${r.customId}: ${r.error}`));

@@ -446,3 +446,17 @@ test('a shipping address stands in for a missing billing address', () => {
   const invoice = buildInvoice({ order: order({ shipTo: 'Bali, ID', billTo: '' }) }).sales_invoice;
   assert.equal(invoice.address, 'Bali, ID');
 });
+
+test('a transient failure is deferred, a real one is failed', async () => {
+  const { isTransient } = await import('../src/mekari/sync.js');
+  const { MekariError } = await import('../src/mekari/client.js');
+  // Not now: the next sweep takes these again, nobody needs waking.
+  assert.equal(isTransient(new MekariError('x', { status: 429 })), true);
+  assert.equal(isTransient(new MekariError('x', { status: 503 })), true);
+  assert.equal(isTransient(new MekariError('tidak terjangkau: fetch failed')), true);
+  assert.equal(isTransient(new MekariError('POST -> HTTP 429, tenggat habis sebelum bisa dicoba lagi', { status: 429 })), true);
+  // Not like this: Jurnal rejected the content, and retrying cannot change that.
+  assert.equal(isTransient(new MekariError('HTTP 422: product not available', { status: 422 })), false);
+  assert.equal(isTransient(new MekariError('HTTP 409', { status: 409 })), false);
+  assert.equal(isTransient(new Error('SKU tidak ada di data master')), false);
+});

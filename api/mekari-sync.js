@@ -147,7 +147,7 @@ export default async function handler(req, res) {
       // The per-order payloads are large and only useful when debugging a mapping.
       results: url.searchParams.get('verbose') === '1'
         ? result.results
-        : result.results.filter((r) => r.status === 'failed'),
+        : result.results.filter((r) => r.status === 'failed' || r.status === 'deferred'),
     });
   } catch (error) {
     if (!dryRun) await notifyCrash({ source: 'sapuan otomatis', error });

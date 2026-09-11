@@ -22,6 +22,25 @@ import { loadConfig } from '../config.js';
 
 export const LEDGER_PATHNAME = 'mekari/synced.json';
 
+/**
+ * Whether a failure is worth waking anyone for.
+ *
+ * A 429, a 5xx, a dropped connection or a deadline that ran out before a retry could
+ * start all mean "not now": the order stays out of the ledger and the next sweep picks
+ * it up. A 4xx is Jurnal saying "not like this", and no amount of retrying changes it -
+ * that one needs a person. The first chained sweep reported eleven of the former as
+ * failures, turned the job red and rang the phone for problems that had fixed
+ * themselves by the next round.
+ */
+export function isTransient(error) {
+  const status = error?.status;
+  if (status === 429 || (status >= 500 && status < 600)) return true;
+  if (status === undefined && error?.name === 'MekariError') return true; // unreachable / timed out
+  return /tenggat habis|tidak terjangkau|ECONNRESET|ETIMEDOUT|fetch failed/i.test(String(error?.message ?? ''));
+}
+
+const failureOf = (error) => (isTransient(error) ? 'deferred' : 'failed');
+
 /** Stages that represent money actually earned. */
 export const POSTABLE_STAGES = new Set(['to_ship', 'shipping', 'delivered', 'completed']);
 
@@ -196,7 +215,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
       return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: existing.id, total: expectedTotal };
     }
   } catch (error) {
-    return { customId, id: order.id, channel: order.channel, status: 'failed', error: `cek duplikat gagal: ${error.message}` };
+    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: `cek duplikat gagal: ${error.message}` };
   }
 
   // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now
@@ -204,7 +223,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
   try {
     await ensureContact(customerFor(order), { deadlineAt });
   } catch (error) {
-    return { customId, id: order.id, channel: order.channel, status: 'failed', error: `kontak gagal: ${error.message}` };
+    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: `kontak gagal: ${error.message}` };
   }
 
   try {
@@ -215,7 +234,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
       invoiceId: invoice?.id, transactionNo: invoice?.transaction_no, total: expectedTotal,
     };
   } catch (error) {
-    return { customId, id: order.id, channel: order.channel, status: 'failed', error: error.message };
+    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: error.message };
   }
 }
 
@@ -283,6 +302,8 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     created: count('created'),
     exists: count('exists'),
     failed: count('failed'),
+    // Left out of the ledger on purpose; the next run takes them again.
+    deferred: count('deferred'),
     results,
     syncedTotal: Object.keys(ledger.orders).length,
   };

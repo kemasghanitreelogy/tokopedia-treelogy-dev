@@ -37,17 +37,19 @@ jobs:
           # dry=0 asks for a live run; the endpoint still refuses unless MEKARI_SYNC_LIVE=1
           # is set on the deployment, so this flag alone can never write.
           total_failed=0
-          for round in 1 2 3 4; do
+          for round in 1 2 3 4 5 6; do
             body=$(curl -sS --fail-with-body --max-time 110 \
               -H "Authorization: Bearer ${CRON_SECRET}" \
               "${BASE_URL}/api/mekari-sync?dry=0&days=2&limit=12")
             echo "--- ronde ${round}"
-            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("ok","live","orders_seen","considered","posted","remaining","created","exists","failed","ranOutOfTime","skipped","channel_errors","timings","took_ms")}, ensure_ascii=False))'
+            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("ok","live","orders_seen","considered","posted","remaining","created","exists","failed","deferred","ranOutOfTime","skipped","channel_errors","timings","took_ms")}, ensure_ascii=False))'
             ok=$(echo "$body" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("ok") else "no")')
             test "$ok" = "yes"
             failed=$(echo "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("failed",0))')
             total_failed=$((total_failed + failed))
-            more=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if (d.get("remaining") or 0) > 0 or d.get("ranOutOfTime") else "no")')
+            # Deferred orders (429, 5xx, deadline) are not failures: they are simply not
+            # done yet, and another round is the right response.
+            more=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if (d.get("remaining") or 0) > 0 or d.get("ranOutOfTime") or (d.get("deferred") or 0) > 0 else "no")')
             test "$more" = "yes" || break
           done
           # A failed order is reported, not swallowed: the job goes red so somebody looks.

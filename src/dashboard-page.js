@@ -415,17 +415,39 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
   transition:border-color var(--t-base) var(--ease-out), background var(--t-base) var(--ease-out)}
 .st[hidden]{display:none}
 .st--new{border-style:dashed}
+/* The left edge carries the state so a problem is visible without reading the card. */
+.st--new{box-shadow:inset 3px 0 0 var(--muted)}
+.st--held,.st--drift{box-shadow:inset 3px 0 0 var(--warn)}
+.st--ready{box-shadow:inset 3px 0 0 var(--good)}
+.st--blind{box-shadow:inset 3px 0 0 var(--bad)}
+.filters .chip b{margin-left:.3rem; font-weight:600; font-variant-numeric:tabular-nums}
+.filters .chip b.ok{color:var(--good)}
+.filters .chip b.flag{color:var(--warn)}
+.chip.is-on b{color:inherit}
 .st--dirty{border-color:var(--brand); background:color-mix(in srgb,var(--brand) 8%,var(--panel-2))}
 .st__head{display:flex; flex-direction:column; gap:.1rem; min-width:0}
 .st__name{font-size:.9rem; font-weight:500; line-height:1.3}
 .st__sku{font-size:.7rem; color:var(--dim)}
 .st__ch{display:flex; gap:.5rem; flex-wrap:wrap; padding:.4rem 0; border-top:1px solid var(--line);
   border-bottom:1px solid var(--line)}
-.st__c{display:flex; align-items:baseline; gap:.3rem; font-size:.84rem}
-.st__c i{font-style:normal; font-size:.66rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted)}
-.st__c b{font-family:"Fira Code",ui-monospace,monospace; font-weight:500; font-variant-numeric:tabular-nums}
+.cm{display:inline-flex; align-items:center; gap:.3rem; font-size:.84rem; padding:.2rem .45rem;
+  border-radius:7px; background:var(--panel); border:1px solid var(--line)}
+.cm__i{width:13px; height:13px; flex:none; fill:var(--accent)}
+/* The combined storefront glyph is a line drawing, not a filled brand logo. */
+.cm__i--o{fill:none; stroke:var(--accent); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round}
+.cm i{font-style:normal; font-size:.66rem; letter-spacing:.03em; text-transform:uppercase;
+  color:var(--muted); font-family:"Inter",sans-serif}
+.cm b{font-family:"Fira Code",ui-monospace,monospace; font-weight:500; font-variant-numeric:tabular-nums}
 /* A channel that already disagrees with the master is the thing worth spotting. */
-.st__c--off b{color:var(--warn)}
+.cm--off{border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.cm--off b{color:var(--warn)}
+/* Read-only channels are drawn hollow: sync never writes them, and a card that looked
+   identical to the others would quietly imply that it does. */
+.cm--ro{border-style:dashed}
+.cm--ro .cm__i{fill:none; stroke:var(--accent); stroke-width:1.4}
+.cm--ro b{color:var(--muted)}
+.cm__l{width:11px; height:11px; flex:none; margin-left:.1rem; fill:none; stroke:var(--muted);
+  stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
 .st__edit{display:flex; align-items:center; gap:.3rem}
 .st__b{width:34px; height:34px; flex:none; font:inherit; font-size:1.05rem; line-height:1; cursor:pointer;
   border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--muted);
@@ -1183,6 +1205,53 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
 }
 
 
+
+/**
+ * Channel marks.
+ *
+ * Official glyphs from Simple Icons for Shopee, TikTok and Shopify. Tokopedia has no
+ * entry there and needs none: Tokopedia and TikTok Shop are one listing behind one API
+ * account, so a single TikTok mark is the accurate representation of that column - two
+ * storefronts, one stock number.
+ */
+const CHANNEL_MARKS = {
+  // Tokopedia has no Simple Icons entry, and inventing a brand mark is worse than not
+  // using one - so this column gets a neutral storefront glyph in Tokopedia's green and
+  // a label that states the truth: one listing, two storefronts, one stock number.
+  tiktok: {
+    label: 'Tokopedia + TikTok Shop', short: 'Tokped + TikTok', accent: '#42B549',
+    path: 'M13.5 21v-7.5a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 .75.75V21m-4.5 0H2.36m11.14 0H18m0 0h3.64m-1.39 0V9.349M3.75 21V9.349m0 0a3.001 3.001 0 0 0 3.75-.615A2.993 2.993 0 0 0 9.75 9.75c.896 0 1.7-.393 2.25-1.016a2.993 2.993 0 0 0 2.25 1.016c.896 0 1.7-.393 2.25-1.015a3.001 3.001 0 0 0 3.75.614m-16.5 0a3.004 3.004 0 0 1-.621-4.72l1.189-1.19A1.5 1.5 0 0 1 5.378 3h13.243a1.5 1.5 0 0 1 1.06.44l1.19 1.189a3 3 0 0 1-.621 4.72M6.75 18h3.75a.75.75 0 0 0 .75-.75V13.5a.75.75 0 0 0-.75-.75H6.75a.75.75 0 0 0-.75.75v3.75c0 .414.336.75.75.75Z', outline: true,
+  },
+  shopee: { label: 'Shopee', short: 'Shopee', accent: '#EE4D2D', path: 'M15.9414 17.9633c.229-1.879-.981-3.077-4.1758-4.0969-1.548-.528-2.277-1.22-2.26-2.1719.065-1.056 1.048-1.825 2.352-1.85a5.2898 5.2898 0 0 1 2.8838.89c.116.072.197.06.263-.039.09-.145.315-.494.39-.62.051-.081.061-.187-.068-.281-.185-.1369-.704-.4149-.983-.5319a6.4697 6.4697 0 0 0-2.5118-.514c-1.909.008-3.4129 1.215-3.5389 2.826-.082 1.1629.494 2.1078 1.73 2.8278.262.152 1.6799.716 2.2438.892 1.774.552 2.695 1.5419 2.478 2.6969-.197 1.047-1.299 1.7239-2.818 1.7439-1.2039-.046-2.2878-.537-3.1278-1.19l-.141-.11c-.104-.08-.218-.075-.287.03-.05.077-.376.547-.458.67-.077.108-.035.168.045.234.35.293.817.613 1.134.775a6.7097 6.7097 0 0 0 2.8289.727 4.9048 4.9048 0 0 0 2.0759-.354c1.095-.465 1.8029-1.394 1.9449-2.554zM11.9986 1.4009c-2.068 0-3.7539 1.95-3.8329 4.3899h7.6657c-.08-2.44-1.765-4.3899-3.8328-4.3899zm7.8516 22.5981-.08.001-15.7843-.002c-1.074-.04-1.863-.91-1.971-1.991l-.01-.195L1.298 6.2858a.459.459 0 0 1 .45-.494h4.9748C6.8448 2.568 9.1607 0 11.9996 0c2.8388 0 5.1537 2.5689 5.2757 5.7898h4.9678a.459.459 0 0 1 .458.483l-.773 15.5883-.007.131c-.094 1.094-.979 1.9769-2.0709 2.0059z' },
+  shopify: { label: 'Shopify', short: 'Shopify', accent: '#5E8E3E', path: 'M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z', readOnly: true },
+};
+
+/**
+ * One channel's stock, with its mark.
+ *
+ * `readOnly` is not decoration: Shopify's stock lives in location-scoped inventory levels
+ * and is never written by sync, so the card has to say so or an operator will reasonably
+ * assume all three move together.
+ */
+function channelChip(key, qty, { failed = false, off = false } = {}) {
+  const mark = CHANNEL_MARKS[key];
+  const value = failed ? '<b class="stop">?</b>' : qty === null ? '<b class="dim">&mdash;</b>' : `<b>${qty}</b>`;
+  const title = mark.readOnly
+    ? `${mark.label} - hanya dibaca, tidak ikut disinkronkan`
+    : `${mark.label} - ikut disinkronkan`;
+
+  const lock = mark.readOnly
+    ? '<svg class="cm__l" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 12.75v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>'
+    : '';
+
+  return `<span class="cm${off ? ' cm--off' : ''}${mark.readOnly ? ' cm--ro' : ''}"
+    style="--accent:${mark.accent}" title="${escape(title)}">
+    <svg class="cm__i${mark.outline ? ' cm__i--o' : ''}" viewBox="0 0 24 24" aria-hidden="true"
+      ><path d="${mark.path}"/></svg>
+    <i>${escape(mark.short)}</i>${value}${lock}
+  </span>`;
+}
+
 /**
  * Stock editing: one screen where every number can be changed without drilling in.
  *
@@ -1247,9 +1316,9 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
       if (row) managed += 1;
 
       const channels = [
-        ['Tokped', entry.tiktok?.qty ?? null, errors.tiktok],
-        ['Shopee', entry.shopee?.qty ?? null, errors.shopee],
-        ['Shopify', entry.shopify?.qty ?? null, errors.shopify],
+        ['tiktok', entry.tiktok?.qty ?? null, errors.tiktok],
+        ['shopee', entry.shopee?.qty ?? null, errors.shopee],
+        ['shopify', entry.shopify?.qty ?? null, errors.shopify],
       ].filter(([, qty, failed]) => qty !== null || failed);
 
       const values = channels.map(([, q]) => q).filter((q) => typeof q === 'number');
@@ -1292,9 +1361,10 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
           <span class="st__sku mono">${escape(entry.sku)}</span>
         </div>
         <div class="st__ch">
-          ${channels.map(([label, qty, failed]) => `<span class="st__c${
-            typeof qty === 'number' && master !== null && qty !== master ? ' st__c--off' : ''}">
-            <i>${label}</i>${failed ? '<b class="stop">?</b>' : `<b>${qty}</b>`}</span>`).join('')}
+          ${channels.map(([key, qty, failed]) => channelChip(key, qty, {
+            failed: Boolean(failed),
+            off: typeof qty === 'number' && master !== null && qty !== master,
+          })).join('')}
         </div>
         <div class="st__edit">
           <button class="st__b" type="button" data-step="-1" aria-label="Kurangi ${escape(entry.sku)}">&minus;</button>
@@ -1395,33 +1465,65 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
   var form = document.getElementById('stockform');
   if (!form) return;
   var inputs = Array.prototype.slice.call(form.querySelectorAll('.st__in'));
+  var vouches = Array.prototype.slice.call(form.querySelectorAll('[name^="vouch:"]'));
+  var cards = Array.prototype.slice.call(form.querySelectorAll('.st'));
+  var groups = Array.prototype.slice.call(form.querySelectorAll('.grp'));
   var counter = document.getElementById('n');
   var save = document.getElementById('save');
   var search = document.getElementById('q');
-  var cards = Array.prototype.slice.call(form.querySelectorAll('.st'));
+  var empty = document.getElementById('empty');
+  var state = { filter: ${JSON.stringify(active)}, q: '' };
 
-  var vouches = Array.prototype.slice.call(form.querySelectorAll('[name^="vouch:"]'));
+  var EMPTY = {
+    attention: 'Tidak ada yang perlu perhatian. Semua stok sudah beres.',
+    'new': 'Semua SKU sudah dikelola di ledger.',
+    drift: 'Semua kanal sudah seragam.',
+    held: 'Tidak ada yang ditahan.',
+    ready: 'Tidak ada perubahan yang siap ditulis.',
+    ok: 'Belum ada SKU yang sepenuhnya sinkron.',
+    all: 'Tidak ada SKU yang cocok dengan pencarian.'
+  };
 
-  function changed(input) {
-    return input.value !== input.dataset.original;
+  function matches(card) {
+    var s = card.dataset.state;
+    if (state.filter === 'all') return true;
+    if (state.filter === 'attention') return s === 'new' || s === 'held' || s === 'drift';
+    return s === state.filter;
   }
+
+  function apply() {
+    var shown = 0;
+    cards.forEach(function (c) {
+      var ok = matches(c) && (state.q === '' || c.textContent.toLowerCase().indexOf(state.q) !== -1);
+      c.hidden = !ok;
+      if (ok) shown++;
+    });
+    // A heading with nothing under it is noise, so it hides with its variants.
+    groups.forEach(function (g) {
+      var any = false;
+      for (var el = g.nextElementSibling; el && !el.classList.contains('grp'); el = el.nextElementSibling) {
+        if (!el.hidden) { any = true; break; }
+      }
+      g.hidden = !any;
+    });
+    empty.hidden = shown !== 0;
+    if (shown === 0) empty.textContent = EMPTY[state.filter] || EMPTY.all;
+  }
+
+  function changed(i) { return i.value !== i.dataset.original; }
+
   function sync() {
-    // A vouch is a change too: it converts a seeded number into one a human stands behind.
+    // A vouch is a change too: it turns a seeded number into one a human stands behind.
     var n = inputs.filter(changed).length + vouches.filter(function (v) { return v.checked; }).length;
     inputs.forEach(function (i) { i.closest('.st').classList.toggle('st--dirty', changed(i)); });
+    vouches.forEach(function (v) { if (v.checked) v.closest('.st').classList.add('st--dirty'); });
     counter.textContent = n;
-    // Nothing edited means nothing to save; a live button would only produce a no-op.
     save.disabled = n === 0;
     form.dataset.confirm = 'Simpan ' + n + ' perubahan stok ke ledger?';
   }
 
   inputs.forEach(function (i) { i.addEventListener('input', sync); });
-  vouches.forEach(function (v) {
-    v.addEventListener('change', function () {
-      v.closest('.st').classList.toggle('st--dirty', v.checked);
-      sync();
-    });
-  });
+  vouches.forEach(function (v) { v.addEventListener('change', sync); });
 
   form.addEventListener('click', function (e) {
     var step = e.target.closest('[data-step]');
@@ -1429,22 +1531,51 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
     var input = (step || set) && (step || set).closest('.st').querySelector('.st__in');
     if (!input) return;
     if (step) {
-      var next = (parseInt(input.value, 10) || 0) + parseInt(step.dataset.step, 10);
-      input.value = String(Math.max(0, next));
+      input.value = String(Math.max(0, (parseInt(input.value, 10) || 0) + parseInt(step.dataset.step, 10)));
     } else {
       input.value = set.dataset.set;
     }
     sync();
   });
 
+  document.querySelectorAll('[data-filter]').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      document.querySelectorAll('[data-filter]').forEach(function (c) { c.classList.toggle('is-on', c === chip); });
+      state.filter = chip.dataset.filter;
+      // Keep the choice in the URL so a reload, the back button and a shared link all
+      // land on the same view - without a round trip to do it.
+      var url = new URL(window.location.href);
+      if (state.filter === 'all') url.searchParams.delete('filter');
+      else url.searchParams.set('filter', state.filter);
+      window.history.replaceState({}, '', url);
+      apply();
+    });
+  });
+
   if (search) {
     search.addEventListener('input', function (e) {
-      var q = e.target.value.trim().toLowerCase();
-      cards.forEach(function (c) {
-        c.hidden = q !== '' && c.textContent.toLowerCase().indexOf(q) === -1;
-      });
+      state.q = e.target.value.trim().toLowerCase();
+      apply();
     });
   }
+
+  // Bulk moves: the point of filtering to a set is being able to act on all of it.
+  var fixall = document.getElementById('fixall');
+  if (fixall) fixall.addEventListener('click', function () {
+    cards.forEach(function (c) {
+      if (c.dataset.drift !== '1' || !c.dataset.lowest) return;
+      c.querySelector('.st__in').value = c.dataset.lowest;
+    });
+    sync();
+  });
+
+  var vouchall = document.getElementById('vouchall');
+  if (vouchall) vouchall.addEventListener('click', function () {
+    vouches.forEach(function (v) { v.checked = true; });
+    sync();
+  });
+
+  apply();
   sync();
 })();`,
   });

@@ -457,3 +457,72 @@ test('the ritual set sizes share one product name so they can group', async () =
     assert.ok(findProduct(sku).variant, `${sku} needs a variant to tell it apart`);
   }
 });
+
+test('each stock card shows which channels it syncs to, and which it does not', async () => {
+  // Shopify is read-only: its stock lives in location-scoped inventory levels and sync
+  // never writes it. A card that drew all three identically would imply otherwise.
+  const entry = {
+    sku: 'OMP-45-001', title: 'Powder',
+    tiktok: { qty: 10, price: 1, rows: [{ qty: 10, price: 1 }], ignored: [], conflict: false },
+    shopee: { qty: 10, price: 1, rows: [{ qty: 10, price: 1 }], ignored: [], conflict: false },
+    shopify: { qty: 10, price: 1, rows: [{ qty: 10, price: 1 }], ignored: [], conflict: false },
+  };
+  const html = renderStock({ catalog: { skus: [entry], errors: {} }, ledger: { skus: {} }, plan, ...common });
+
+  assert.equal((html.match(/<span class="cm[^"]*"/g) ?? []).length, 3, 'all three channels need a mark');
+  assert.equal((html.match(/<span class="cm[^"]*cm--ro/g) ?? []).length, 1, 'exactly one channel is read-only');
+  assert.match(html, /title="Shopify - hanya dibaca[^"]*"/, 'and it must say so');
+  assert.match(html, /title="Shopee - ikut disinkronkan"/);
+  assert.equal((html.match(/class="cm__i[^"]*"/g) ?? []).length, 3, 'each mark needs its glyph');
+  // Outline styling means two different things - a neutral glyph and a read-only channel -
+  // so read-only carries a lock rather than relying on line weight alone.
+  assert.equal((html.match(/class="cm__l"/g) ?? []).length, 1, 'read-only needs an unambiguous mark');
+});
+
+test('a channel out of step with the ledger is marked, not just listed', () => {
+  const entry = {
+    sku: 'A', title: 'A',
+    tiktok: { qty: 10, price: 1, rows: [{ qty: 10, price: 1 }], ignored: [], conflict: false },
+    shopee: { qty: 7, price: 1, rows: [{ qty: 7, price: 1 }], ignored: [], conflict: false },
+    shopify: null,
+  };
+  const html = renderStock({
+    catalog: { skus: [entry], errors: {} },
+    ledger: { skus: { A: { qty: 10 } } }, plan, ...common,
+  });
+  assert.equal((html.match(/<span class="cm[^"]*cm--off/g) ?? []).length, 1, 'only the channel that differs is flagged');
+});
+
+test('filter chips carry their own counts and survive in the URL', () => {
+  // A chip only appears when it has something to show, so the fixture needs a problem
+  // for the attention chip to exist at all.
+  const unmanaged = {
+    skus: [{
+      sku: 'ZZZ', title: 'Z',
+      tiktok: { qty: 5, price: 1, rows: [{ qty: 5, price: 1 }], ignored: [], conflict: false },
+      shopee: null, shopify: null,
+    }],
+    errors: {},
+  };
+  const html = renderStock({ catalog: unmanaged, ledger: { skus: {} }, plan, ...common });
+  assert.match(html, /data-filter="attention"/, 'reviewing needs a way to see only problems');
+  assert.match(html, /data-filter="all"/);
+  assert.ok(html.includes('replaceState'), 'the chosen filter should be deep-linkable');
+  assert.ok(html.includes('id="empty"'), 'an empty filter needs to explain itself');
+});
+
+test('the combined Tokopedia/TikTok column uses no invented brand logo', async () => {
+  // Tokopedia has no Simple Icons entry. Drawing an approximation would be a fake brand
+  // mark; a neutral storefront glyph with an honest label is the correct answer.
+  const { renderStock } = await import('../src/dashboard-page.js');
+  const entry = {
+    sku: 'A', title: 'A',
+    tiktok: { qty: 5, price: 1, rows: [{ qty: 5, price: 1 }], ignored: [], conflict: false },
+    shopee: null, shopify: null,
+  };
+  const html = renderStock({ catalog: { skus: [entry], errors: {} }, ledger: { skus: {} }, plan, ...common });
+
+  assert.match(html, /class="cm__i cm__i--o"/, 'the combined column should use the neutral glyph');
+  assert.ok(html.includes('Tokped + TikTok'), 'and say it covers both storefronts');
+  assert.match(html, /title="Tokopedia \+ TikTok Shop - ikut disinkronkan"/);
+});

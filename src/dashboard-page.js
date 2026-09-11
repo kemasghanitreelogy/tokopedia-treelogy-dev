@@ -6,6 +6,7 @@ import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFr
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode } from './mekari/prefix.js';
 import { SOURCE_OPTIONS, SELLABLE } from './mekari/manual.js';
+import { ageOf } from './mekari/heartbeat.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
@@ -640,6 +641,16 @@ tbody tr:hover{background:var(--panel-2)}
   .kpi__value{font-size:1.35rem}
   th,td{padding:.6rem .7rem}
 }
+/* Sync health: one chip per path, coloured by whether its silence is normal. */
+.hbs{display:flex; flex-wrap:wrap; gap:.4rem .6rem; padding:.7rem 1rem; border-bottom:1px solid var(--line); font-size:.76rem}
+.hb{display:inline-flex; gap:.35rem; align-items:baseline; padding:.25rem .6rem; border-radius:999px; border:1px solid var(--line); color:var(--muted)}
+.hb b{font-weight:600; color:var(--fg)}
+.hb--ok{border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+.hb--ok b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--good); margin-right:.35rem}
+.hb--flag{border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
+.hb--flag b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--warn); margin-right:.35rem}
+.hb--muted b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--dim); margin-right:.35rem}
+
 /* ------------------------------------------------- transaksi manual ---------- */
 /* A data-entry form, so it is built for one hand on the keyboard: every field is
    reachable by tab in reading order, the running total never leaves the screen, and the
@@ -1226,8 +1237,34 @@ const JURNAL_STATE = {
  * explicitly queued, deliberately skipped, or flagged - there is no fourth, quieter
  * state where an order simply disappears.
  */
+/**
+ * One line per sync path saying when it last did something.
+ *
+ * Silence is ambiguous: a quiet channel and a dead one look the same until you know when
+ * the last push was handled. A webhook that has not spoken in over four hours during the
+ * day is worth a look; a sweep that has not run in over an hour means the scheduler
+ * stopped, because it is meant to run four times an hour.
+ */
+function syncHealth(heartbeat, now = Date.now()) {
+  const stale = (iso, limitMinutes) => !iso || (now - Date.parse(iso)) / 60_000 > limitMinutes;
+  const channels = [
+    ['shopee', 'Shopee'], ['tokopedia', 'Tokopedia'], ['tiktok_shop', 'TikTok Shop'], ['shopify', 'Shopify'],
+  ];
+  const rows = channels.map(([key, label]) => {
+    const beat = heartbeat?.webhooks?.[key];
+    const tone = !beat ? 'muted' : stale(beat.at, 4 * 60) ? 'flag' : 'ok';
+    return `<span class="hb hb--${tone}"><b>${escape(label)}</b> ${
+      beat ? `${escape(ageOf(beat.at, now))} <span class="dim">(${escape(beat.status)})</span>` : 'belum ada push'}</span>`;
+  });
+  const sweep = heartbeat?.sweep;
+  const sweepTone = !sweep ? 'muted' : stale(sweep.at, 60) ? 'flag' : 'ok';
+  rows.push(`<span class="hb hb--${sweepTone}"><b>Sapuan</b> ${
+    sweep ? `${escape(ageOf(sweep.at, now))} <span class="dim">(${sweep.created ?? 0} dibuat, ${sweep.failed ?? 0} gagal)</span>` : 'belum pernah jalan'}</span>`);
+  return `<div class="hbs" aria-label="Kesehatan sinkronisasi">${rows.join('')}</div>`;
+}
+
 export function renderJurnal({
-  overview, range, errors, shopeeShop, generatedAt, csrf, flash, live, depositTo, configured,
+  overview, range, errors, shopeeShop, generatedAt, csrf, flash, live, depositTo, configured, heartbeat = null,
 }) {
   const order = { synced: 0, queued: 1, broken: 2, skipped: 3 };
   const rows = [...overview.rows]
@@ -1278,6 +1315,7 @@ export function renderJurnal({
           ? 'Sinkronisasi <b>real-time aktif</b> &mdash; tiap pesanan berbayar didorong platform ke Jurnal saat itu juga. Daftar di bawah adalah jaring pengaman: apa pun yang terlewat muncul sebagai <b>antre</b>.'
           : 'Sinkronisasi <b>belum aktif</b>. Setel <span class="mono">MEKARI_SYNC_LIVE=1</span> untuk menyalakannya; sampai itu webhook tetap diterima tapi tidak menulis apa pun.'}</span>
       </div>
+      ${syncHealth(heartbeat, generatedAt)}
       ${canPost ? `<form method="post" data-confirm="Kirim ${overview.queued} faktur senilai ${escape(rupiah(overview.queuedValue))} ke Mekari Jurnal?">
         <input type="hidden" name="csrf" value="${escape(csrf)}">
         <input type="hidden" name="view" value="jurnal">

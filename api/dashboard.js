@@ -14,6 +14,7 @@ import { buildManualOrder, suggestCode } from '../src/mekari/manual.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
+import { loadHeartbeat } from '../src/mekari/heartbeat.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
@@ -509,12 +510,16 @@ export default async function handler(req, res) {
     }
 
     if (view === 'jurnal') {
-      const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })));
+      const [ledger, heartbeat] = await Promise.all([
+        cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} }))),
+        // Not cached: its whole point is to say what happened in the last few minutes.
+        loadHeartbeat(),
+      ]);
       const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
       const overview = syncOverview({ orders: data.orders, ledger, depositTo });
       console.log(`dashboard/jurnal: ${overview.synced} synced, ${overview.queued} queued, ${overview.broken} broken`);
       send(200, renderJurnal({
-        ...data, overview, csrf, flash, depositTo,
+        ...data, overview, csrf, flash, depositTo, heartbeat,
         live: process.env.MEKARI_SYNC_LIVE === '1',
         configured: isMekariConfigured(),
       }));

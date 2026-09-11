@@ -1,0 +1,45 @@
+# The safety net under the webhooks.
+#
+# Webhooks are fast but never guaranteed: a deploy mid-push, a cold start that ran long, a
+# minute of platform trouble, and the push is gone. This sweep asks the platforms directly
+# for the last three days of orders and posts whatever the ledger says is missing. It is
+# idempotent end to end - the ledger and Jurnal's custom_id both refuse a duplicate - so
+# running it when nothing was missed costs a few reads and writes nothing.
+#
+# GitHub Actions is the scheduler because the Vercel project is on the Hobby plan, whose
+# crons run once a day at best. Actions schedules can drift by ten minutes or so under
+# load; that is fine for a net whose job is minutes-to-hours, not seconds.
+name: Mekari Jurnal sweep
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: mekari-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Sapu pesanan yang terlewat ke Jurnal
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          BASE_URL: https://tokopedia-treelogy-dev.vercel.app
+        run: |
+          set -euo pipefail
+          # dry=0 asks for a live run; the endpoint still refuses unless MEKARI_SYNC_LIVE=1
+          # is set on the deployment, so this flag alone can never write.
+          body=$(curl -sS --fail-with-body --max-time 150 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${BASE_URL}/api/mekari-sync?dry=0&days=3&limit=40")
+          echo "$body" | head -c 4000
+          echo
+          ok=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if d.get("ok") else "no")')
+          failed=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("failed",0))')
+          test "$ok" = "yes"
+          # A failed order is reported, not swallowed: the job goes red so somebody looks.
+          test "$failed" = "0"

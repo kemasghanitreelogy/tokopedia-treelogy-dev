@@ -5,6 +5,7 @@ import { customIdFor } from '../mekari/invoice.js';
 import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
+import { beatWebhook } from '../mekari/heartbeat.js';
 
 /**
  * What happens between a push arriving and an invoice existing.
@@ -41,7 +42,15 @@ async function readOrder({ channel, id, gid }) {
   return orders.find((o) => o.id === id && o.channel !== 'shopee' && o.channel !== 'shopify') ?? null;
 }
 
-export async function handlePush({ channel, id, gid = null, reason = 'push' }) {
+export async function handlePush(push) {
+  const outcome = await handleVerifiedPush(push);
+  // Recorded on every verified push, whatever it led to: a "skipped" because the order is
+  // not paid yet is as much proof the channel is alive as a "created".
+  await beatWebhook(push.channel, { ...outcome, id: push.id ?? push.gid ?? null });
+  return outcome;
+}
+
+async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) {
   if (!id && !gid) return { status: 'ignored', reason: 'tanpa nomor pesanan' };
   if (!isMekariConfigured()) return { status: 'ignored', reason: 'kredensial Mekari belum diisi' };
 

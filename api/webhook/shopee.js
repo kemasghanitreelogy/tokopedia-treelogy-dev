@@ -1,6 +1,23 @@
 import { readRawBody, verifyShopee } from '../../src/webhooks/verify.js';
 import { handlePush, statusFor } from '../../src/webhooks/handle.js';
 import { loadShopeeConfig } from '../../src/shopee/config.js';
+import { put } from '@vercel/blob';
+
+/**
+ * Keep the last push this endpoint could not verify, so the shape Shopee actually signs
+ * can be read off a real request instead of guessed. The HMAC in the header is not a
+ * secret - it is a digest of the body - and the body is Shopee's own test payload. This
+ * is a diagnostic for pinning the signature and comes out once it is pinned.
+ */
+async function keepRejected(detail) {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!token) return;
+  try {
+    await put('mekari/webhook-diag/shopee-last.json', JSON.stringify({ at: new Date().toISOString(), ...detail }), {
+      access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
+    });
+  } catch { /* a diagnostic must never take the endpoint down */ }
+}
 
 /**
  * Shopee push receiver.
@@ -14,8 +31,28 @@ import { loadShopeeConfig } from '../../src/shopee/config.js';
  */
 
 /** Shopee's push codes; only the order ones are acted on. */
+export const VERIFICATION_PUSH = 0;
 export const ORDER_STATUS_PUSH = 3;
 export const TRACKING_NO_PUSH = 4;
+
+/**
+ * Shopee's registration handshake.
+ *
+ * When a callback URL is set, Shopee first posts `{"code":0,"data":{"verify_info":...}}`
+ * and refuses the registration unless it gets a 2xx back. Its signature on that message
+ * matched none of the documented shapes against any key we hold - captured and
+ * brute-forced offline, 112 combinations - so it is accepted on its content instead: it
+ * names no order and triggers nothing, and the only thing an attacker gains by forging
+ * one is a 200. Real pushes (code 3 and 4) are never accepted this way.
+ */
+const isVerification = (raw) => {
+  try {
+    const push = JSON.parse(raw);
+    return push?.code === VERIFICATION_PUSH && typeof push?.data?.verify_info === 'string';
+  } catch {
+    return false;
+  }
+};
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -31,6 +68,13 @@ export default async function handler(req, res) {
     return res.end(error.message);
   }
 
+  if (isVerification(raw)) {
+    console.log('webhook/shopee: push verifikasi diterima');
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    return res.end('{}');
+  }
+
   const config = loadShopeeConfig();
   // The signed URL is the callback as Shopee knows it, which is the public deployment
   // URL - not whatever host header reached this function behind the proxy.
@@ -41,6 +85,16 @@ export default async function handler(req, res) {
 
   if (!check.ok) {
     console.warn(`webhook/shopee: tanda tangan ditolak - ${check.reason}`);
+    await keepRejected({
+      reason: check.reason,
+      url,
+      method: req.method,
+      headers: req.headers,
+      rawLength: raw.length,
+      rawPreview: raw.slice(0, 2000),
+      reqBodyType: typeof req.body,
+      reqBodyPreview: req.body === undefined ? null : JSON.stringify(req.body).slice(0, 500),
+    });
     res.statusCode = 401;
     return res.end('invalid signature');
   }

@@ -108,3 +108,22 @@ test('every platform has its own path and the registration constants are the con
   assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID', 'ORDERS_CREATE']);
   assert.match(webhookUrl('shopee'), /^https:\/\/.+\/api\/webhook\/shopee$/);
 });
+
+test("Shopee's verification push is recognised by its content and nothing else is", async () => {
+  const { Readable } = await import('node:stream');
+  const handler = (await import('../api/webhook/shopee.js')).default;
+  const call = async (raw, headers = {}) => {
+    const req = Object.assign(Readable.from([Buffer.from(raw)]), { method: 'POST', headers: { host: 'x', ...headers } });
+    let out = ''; const res = { statusCode: 0, setHeader() {}, end(b) { out = b ?? ''; } };
+    await handler(req, res);
+    return [res.statusCode, out];
+  };
+  // The handshake carries no order and is answered 200 even unsigned.
+  const [ok] = await call('{"code":0,"data":{"verify_info":"This is a Verification message.Please respond in the certain format."}}');
+  assert.equal(ok, 200);
+  // A real push shaped like a verification but naming an order must not slip through.
+  const [forged] = await call('{"code":3,"data":{"verify_info":"x","ordersn":"ABC"}}', { authorization: 'deadbeef' });
+  assert.equal(forged, 401);
+  const [noSig] = await call('{"code":0,"data":{}}');
+  assert.equal(noSig, 401, 'code 0 tanpa verify_info bukan handshake');
+});

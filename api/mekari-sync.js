@@ -3,6 +3,8 @@ import { runSync } from '../src/mekari/sync.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
+import { recoverShopee } from '../src/webhooks/recover.js';
+import { beatSweep } from '../src/mekari/heartbeat.js';
 import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/dashboard-auth.js';
 
 /**
@@ -81,6 +83,25 @@ export default async function handler(req, res) {
 
     const result = await runSync({ orders, depositTo, dryRun, limit, deadlineMs: POST_BUDGET_MS });
 
+    // Shopee is the one platform that keeps a queue of pushes it could not deliver, and
+    // three days is how long it keeps them. Draining it here means a Shopee outage on our
+    // side heals on the next sweep without anyone noticing there was one. Its failure is
+    // reported, not fatal - the sweep above has already done the important work.
+    let shopeeRecovery = null;
+    try {
+      shopeeRecovery = await recoverShopee({ dryRun });
+    } catch (error) {
+      shopeeRecovery = { error: error.message };
+    }
+
+    if (!dryRun) {
+      await beatSweep({
+        considered: result.considered, created: result.created, exists: result.exists, failed: result.failed,
+        orders_seen: orders.length, channel_errors: Object.keys(errors),
+        shopee_recovered: shopeeRecovery?.created ?? 0,
+      });
+    }
+
     return json(res, 200, {
       ok: true,
       caller,
@@ -90,6 +111,7 @@ export default async function handler(req, res) {
       orders_seen: orders.length,
       channel_errors: errors,
       prepared,
+      shopee_recovery: shopeeRecovery,
       took_ms: Date.now() - startedAt,
       ...result,
       // The per-order payloads are large and only useful when debugging a mapping.

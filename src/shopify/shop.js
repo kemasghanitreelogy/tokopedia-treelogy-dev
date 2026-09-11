@@ -50,6 +50,7 @@ query TreelogyOrders($cursor: String, $query: String) {
       createdAt
       displayFinancialStatus
       displayFulfillmentStatus
+      paymentGatewayNames
       totalPriceSet { shopMoney { amount currencyCode } }
       ${withCustomer ? 'customer { displayName }' : ''}
       lineItems(first: 50) {
@@ -170,6 +171,8 @@ export function mapOrder(order) {
     carrier: tracking.company ?? '',
     tracking: tracking.number ?? '',
     buyer: order.customer?.displayName ?? '',
+    // How the buyer paid decides the order-code prefix (Xendit vs Shopify Payments).
+    gateways: order.paymentGatewayNames ?? [],
     items: order.lineItems?.nodes?.length ?? 0,
     lines: lines(order),
     finance: financeFromShopify(order),
@@ -186,6 +189,7 @@ query TreelogyOrderByGid($id: ID!) {
     cancelledAt
     displayFinancialStatus
     displayFulfillmentStatus
+    paymentGatewayNames
     totalPriceSet { shopMoney { amount currencyCode } }
     customer { displayName }
     lineItems(first: 50) {

@@ -63,8 +63,8 @@ test('invoice totals goods plus shipping and carries the reference', () => {
   assert.equal(expectedTotal, 505_000);
   assert.equal(verifyInvoice({ sales_invoice: invoice }, expectedTotal), 505_000);
   assert.equal(invoice.person_name, CUSTOMER_NAMES.shopee);
-  assert.equal(invoice.reference_no, '260911QF5PA82R');
-  assert.equal(invoice.transaction_date, invoice.due_date);
+  assert.equal(invoice.reference_no, 'SP-260911QF5PA82R');
+  assert.ok(invoice.due_date > invoice.transaction_date, 'termin Net 14 harus menggeser jatuh tempo');
   assert.equal(invoice.ship_via, 'JNE Reguler');
   assert.equal(invoice.deposit, undefined, 'tanpa deposit_to faktur tetap terbuka');
 });
@@ -154,4 +154,74 @@ test('the read-only brake stops a live post before any request is built', async 
     if (before === undefined) delete process.env.TREELOGY_READONLY;
     else process.env.TREELOGY_READONLY = before;
   }
+});
+
+/* ----------------------------------------------------------- order-code prefixes */
+
+const { orderCode, orderPrefix, shopifyPrefix, termDaysFor, PREFIXES } = await import('../src/mekari/prefix.js');
+
+test('each channel gets the prefix the business already uses for it', () => {
+  assert.equal(orderCode({ channel: 'shopee', id: '260911QF5PA82R' }), 'SP-260911QF5PA82R');
+  assert.equal(orderCode({ channel: 'tokopedia', id: '586012744627029642' }), 'TP-586012744627029642');
+  assert.equal(orderCode({ channel: 'tiktok_shop', id: '586012445975348822' }), 'TT-586012445975348822');
+});
+
+test("Shopify's prefix follows how the buyer paid", () => {
+  // The live shop reports the gateway by display name, and 599 of its last 600 orders
+  // say exactly this - including the "(New)" a merchant can rename away at any time.
+  assert.equal(shopifyPrefix(['Xendit Payment Gateway (New)']), 'WA');
+  assert.equal(shopifyPrefix(['Xendit']), 'WA');
+  assert.equal(shopifyPrefix(['shopify_payments']), 'WX');
+  assert.equal(shopifyPrefix(['Shopify Payments']), 'WX');
+  // A recognised gateway wins over an unrecognised one listed alongside it.
+  assert.equal(shopifyPrefix(['manual', 'Xendit Payment Gateway (New)']), 'WA');
+  // Detection that cannot tell falls back rather than guessing.
+  assert.equal(shopifyPrefix([]), 'SHF');
+  assert.equal(shopifyPrefix(['sesuatu yang lain']), 'SHF');
+  assert.equal(shopifyPrefix(undefined ?? []), 'SHF');
+});
+
+test('the hash in a Shopify order name is dropped, not doubled up', () => {
+  assert.equal(orderCode({ channel: 'shopify', id: '#10848', gateways: ['Xendit Payment Gateway (New)'] }), 'WA-10848');
+  assert.equal(orderCode({ channel: 'shopify', id: '10848', gateways: ['shopify_payments'] }), 'WX-10848');
+});
+
+test('an unknown channel is labelled, never left bare', () => {
+  assert.equal(orderPrefix({ channel: 'entah' }), 'SHF');
+  assert.match(orderCode({ channel: 'entah', id: 'Z1' }), /^SHF-Z1$/);
+});
+
+test('the prefix goes in reference_no, never in the idempotency key', () => {
+  // A Shopify prefix depends on gateway detection. If it leaked into custom_id, a
+  // detection that failed once and succeeded later would post the same sale twice.
+  const base = { ...order({ channel: 'shopify', id: '#10848' }), gateways: ['Xendit Payment Gateway (New)'] };
+  const detected = buildInvoice({ order: base });
+  const failed = buildInvoice({ order: { ...base, gateways: [] } });
+
+  assert.equal(detected.sales_invoice.reference_no, 'WA-10848');
+  assert.equal(failed.sales_invoice.reference_no, 'SHF-10848');
+  assert.equal(detected.sales_invoice.custom_id, failed.sales_invoice.custom_id,
+    'kunci idempotensi berubah saat deteksi gateway gagal');
+});
+
+test('the memo carries the prefixed code too, so a search finds it either way', () => {
+  const { sales_invoice: invoice } = buildInvoice({ order: order() });
+  assert.match(invoice.memo, /SP-260911QF5PA82R/);
+});
+
+test('payment terms are Net 14, except consignment at Net 7', () => {
+  assert.equal(termDaysFor({ channel: 'shopee' }), 14);
+  assert.equal(PREFIXES.CS.termDays, 7);
+  for (const [code, meta] of Object.entries(PREFIXES)) {
+    assert.ok(meta.termDays > 0, `${code} tanpa termin`);
+    assert.ok(meta.label, `${code} tanpa arti`);
+  }
+});
+
+test('due date is the transaction date plus the term, in WIB', () => {
+  const { sales_invoice: invoice } = buildInvoice({
+    order: order({ createdAt: Math.floor(Date.parse('2026-09-11T03:00:00Z') / 1000) }),
+  });
+  assert.equal(invoice.transaction_date, '2026-09-11');
+  assert.equal(invoice.due_date, '2026-09-25');
 });

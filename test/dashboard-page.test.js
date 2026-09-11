@@ -607,3 +607,8 @@ test('the send button appears only when live posting is on and something is queu
     has(renderJurnal({ overview: syncOverview({ orders: [], ledger: { orders: {} } }), live: true, depositTo: null, configured: true, ...common })),
     false, 'antrean kosong tidak butuh tombol');
 });
+
+test('the Jurnal table shows the prefixed order code, not the bare platform id', () => {
+  const html = renderJurnal({ overview: jurnalOverview(), live: false, depositTo: null, configured: true, ...common });
+  assert.match(html, /SP-260909ABC/);
+});

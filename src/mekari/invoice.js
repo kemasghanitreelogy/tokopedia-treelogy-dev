@@ -1,5 +1,6 @@
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
+import { orderCode, termDaysFor } from './prefix.js';
 
 /**
  * Turning an order into a Jurnal sales invoice.
@@ -25,7 +26,15 @@ export const CUSTOMER_NAMES = {
   shopify: 'Shopify',
 };
 
-/** Stable across retries and re-runs, and the handle Jurnal lets us fetch by. */
+/**
+ * Stable across retries and re-runs, and the handle Jurnal lets us fetch by.
+ *
+ * Deliberately NOT the prefixed order code. A Shopify prefix depends on detecting which
+ * gateway took the payment, and a detection that fails once and succeeds the next time
+ * would change the key and post the same sale twice. The key is built only from things
+ * that cannot change: the channel and the platform's own order id. The prefixed code is
+ * what a human reads, and it lives in reference_no.
+ */
 export const customIdFor = (order) => `TRL-${order.channel}-${order.id}`;
 
 const rupiah = (n) => Math.round(Number(n) || 0);
@@ -88,18 +97,21 @@ export function buildInvoice({ order, depositTo = null }) {
 
   const date = jurnalDate(order.createdAt);
   const channel = CHANNELS[order.channel]?.label ?? order.channel;
+  // The business writes every order with its source prefix, so the books do too.
+  const code = orderCode(order);
 
   const invoice = {
     transaction_date: date,
-    due_date: date,
+    // Net 14 for every source except consignment, which is Net 7.
+    due_date: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600),
     person_name: CUSTOMER_NAMES[order.channel] ?? channel,
     custom_id: customIdFor(order),
-    reference_no: String(order.id),
+    reference_no: code,
     transaction_lines_attributes: lines,
     shipping_price: shipping,
     // The buyer's name is masked by the marketplaces, so it belongs in the memo rather
     // than as a contact that could never be reached.
-    memo: [channel, order.id, order.buyer && `pembeli ${order.buyer}`].filter(Boolean).join(' · '),
+    memo: [channel, code, order.buyer && `pembeli ${order.buyer}`].filter(Boolean).join(' · '),
   };
 
   if (order.carrier) invoice.ship_via = order.carrier;

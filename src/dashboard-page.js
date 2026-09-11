@@ -4,6 +4,7 @@ import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
+import { orderCode } from './mekari/prefix.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
@@ -1147,7 +1148,7 @@ export function renderJurnal({
       const state = JURNAL_STATE[r.state];
       return `<tr data-state="${r.state}">
         <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
-        <td class="mono nowrap">${escape(r.order.id)}</td>
+        <td class="mono nowrap">${escape(orderCode(r.order))}</td>
         <td class="nowrap dim">${escape(dateTime(r.order.createdAt))}</td>
         <td class="num mono">${r.total ? escape(rupiah(r.total)) : '<span class="dim">&mdash;</span>'}</td>
         <td><span class="pill pill--${state.tone}">${escape(state.label)}</span></td>
@@ -1199,7 +1200,7 @@ export function renderJurnal({
       ${rows
         ? `<div class="scroll"><table class="dense">
             <thead><tr>
-              <th>Kanal</th><th>Pesanan</th><th>Tanggal</th><th class="num">Nilai</th><th>Status</th><th>Catatan</th>
+              <th>Kanal</th><th>Kode</th><th>Tanggal</th><th class="num">Nilai</th><th>Status</th><th>Catatan</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table></div>

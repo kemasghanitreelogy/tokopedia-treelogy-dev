@@ -1,5 +1,5 @@
 import { collectOrders } from '../src/omni.js';
-import { runSync } from '../src/mekari/sync.js';
+import { runSync, loadSyncLedger } from '../src/mekari/sync.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
@@ -21,7 +21,10 @@ import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/da
  * leave the cron running while the mapping is still being reviewed.
  */
 
-const DEFAULT_WINDOW_DAYS = 2;
+// Seven days, not two: a COD or bank-transfer order is created long before it is paid,
+// and the platforms filter by creation time. A window shorter than the longest plausible
+// gap between the two would never see that order become an invoice.
+const DEFAULT_WINDOW_DAYS = 7;
 // Each posted order is now three paced writes - its buyer's contact, the duplicate
 // probe, the invoice - which is about 2.6 seconds. Twenty of those is under a minute;
 // forty overran the function's 120 seconds on the first live run and was killed with the
@@ -73,7 +76,9 @@ export default async function handler(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const days = Math.min(Math.max(Number(url.searchParams.get('days')) || DEFAULT_WINDOW_DAYS, 1), 30);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || MAX_PER_RUN, 1), MAX_PER_RUN);
-  const depositTo = url.searchParams.get('deposit_to') ?? process.env.MEKARI_DEPOSIT_ACCOUNT ?? null;
+  // From the environment only. Which account a sale is booked as paid into is an
+  // accounting decision, not something a caller with a token gets to change per request.
+  const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
   // Live posting needs the flag AND the absence of the read-only brake. Asking for
   // `dry=0` without the flag is answered with a dry run, never with a surprise write.
@@ -100,7 +105,8 @@ export default async function handler(req, res) {
     // A channel that failed to answer simply has no orders in this run; posting is
     // additive and idempotent, so the next tick picks up whatever was missed. What must
     // not happen is treating "no data" as "nothing to post" in the report.
-    const prepared = dryRun ? null : await ensureReady({ dryRun: false });
+    const ledgerBefore = await loadSyncLedger();
+    const prepared = dryRun ? null : await ensureReady({ dryRun: false, readyAt: ledgerBefore.ready_at ?? null });
     timings.prepare_ms = elapsed() - timings.collect_ms;
 
     const postBudget = Math.max(0, remaining() - RECOVERY_NEEDS_MS);
@@ -125,9 +131,18 @@ export default async function handler(req, res) {
 
     if (!dryRun) {
       // A failed order or an unreadable channel reaches a person; a clean run stays quiet.
-      await notifySyncFailures({ source: 'sapuan otomatis', results: result.results, channelErrors: errors });
+      // A mismatch is a wrong number already in the books; an undone sale whose invoice
+      // has money against it needs a person. Both are reported as failures are.
+      const reportable = [
+        ...result.results.map((r) => (r.status === 'mismatch' ? { ...r, status: 'failed' } : r)),
+        ...(result.undone ?? [])
+          .filter((u) => u.outcome === 'needs_review' || u.outcome === 'failed')
+          .map((u) => ({ status: 'failed', customId: u.customId, error: u.reason })),
+      ];
+      await notifySyncFailures({ source: 'sapuan otomatis', results: reportable, channelErrors: errors });
       await beatSweep({
         considered: result.considered, created: result.created, exists: result.exists, failed: result.failed,
+        mismatch: result.mismatch, voided: result.voided, needs_review: result.needsReview,
         orders_seen: orders.length, channel_errors: Object.keys(errors),
         shopee_recovered: shopeeRecovery?.created ?? 0,
       });
@@ -149,7 +164,8 @@ export default async function handler(req, res) {
       // The per-order payloads are large and only useful when debugging a mapping.
       results: url.searchParams.get('verbose') === '1'
         ? result.results
-        : result.results.filter((r) => r.status === 'failed' || r.status === 'deferred'),
+        : result.results.filter((r) => r.status === 'failed' || r.status === 'deferred' || r.status === 'mismatch'),
+      undone: (result.undone ?? []).filter((u) => u.outcome !== 'dry-run'),
     });
   } catch (error) {
     if (!dryRun) await notifyCrash({ source: 'sapuan otomatis', error });

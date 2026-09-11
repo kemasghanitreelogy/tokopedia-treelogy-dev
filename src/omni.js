@@ -316,7 +316,17 @@ export async function tiktokConfig() {
     tiktokInflight = (async () => {
       const config = await hydrateFromBundle(loadConfig());
       if (config.refreshToken && accessTokenExpired(config)) {
-        await persistTokens(config, await refreshTikTokToken({ config }));
+        try {
+          await persistTokens(config, await refreshTikTokToken({ config }));
+        } catch (error) {
+          // TikTok rotates the refresh token on every refresh. Two instances reaching
+          // expiry together both try; the second holds a token the first just retired.
+          // The first has already written the new pair to Blob, so read it back before
+          // deciding anything is wrong.
+          const again = await hydrateFromBundle(loadConfig());
+          if (!again.accessToken || accessTokenExpired(again)) throw error;
+          Object.assign(config, again);
+        }
       }
       tiktokCached = config;
       return config;

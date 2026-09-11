@@ -188,10 +188,26 @@ export async function ensureProducts({ dryRun = true } = {}) {
   return { created, alreadyThere, existing: wanted.length - missing.length, missing: [] };
 }
 
-/** Everything Jurnal needs to hold before the first invoice can be written. */
-export async function ensureReady({ dryRun = true } = {}) {
+const READY_FOR_MS = 24 * 60 * 60 * 1000;
+let readyUntil = 0;
+
+/**
+ * Everything Jurnal needs to hold before the first invoice can be written.
+ *
+ * Proving it costs six requests - a product listing, a contact listing that answers
+ * nothing, and four contact creates that come back 409 - out of a budget of about forty a
+ * minute, and the answer does not change from one sweep to the next. So a proof is
+ * remembered: for the life of the instance, and across instances through the ledger's
+ * `ready_at`, for a day. A run that fails for a missing product would still fail loudly.
+ */
+export async function ensureReady({ dryRun = true, readyAt = null } = {}) {
+  const now = Date.now();
+  const remembered = readyUntil > now || (readyAt && now - Date.parse(readyAt) < READY_FOR_MS);
+  if (remembered && !dryRun) return { skipped: 'sudah dipastikan dalam 24 jam terakhir' };
+
   const customers = await ensureCustomers({ dryRun });
   const products = await ensureProducts({ dryRun });
+  if (!dryRun) readyUntil = now + READY_FOR_MS;
   return { customers, products };
 }
 

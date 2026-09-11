@@ -62,13 +62,34 @@ export async function loadSyncLedger() {
   }
 }
 
+/**
+ * Save the ledger without erasing what somebody else wrote meanwhile.
+ *
+ * Blob has no compare-and-set, so two writers - a webhook and a sweep, or two webhooks -
+ * each load, add their own order and save, and the later save silently drops the earlier
+ * order. That happened once; the custom_id 409 made it harmless, but every lost entry
+ * costs a request to re-learn. Re-reading just before writing and taking the union
+ * shrinks the window from the whole run to the few milliseconds between read and write.
+ */
 export async function saveSyncLedger(ledger) {
   const token = blobToken();
   if (!token) return;
-  await put(LEDGER_PATHNAME, JSON.stringify({ ...ledger, version: 1, updated_at: new Date().toISOString() }), {
+  const current = await loadSyncLedger().catch(() => null);
+  const merged = {
+    ...(current ?? {}),
+    ...ledger,
+    version: 1,
+    orders: { ...(current?.orders ?? {}), ...(ledger.orders ?? {}) },
+    contacts: [...new Set([...(current?.contacts ?? []), ...(ledger.contacts ?? [])])],
+    updated_at: new Date().toISOString(),
+  };
+  await put(LEDGER_PATHNAME, JSON.stringify(merged), {
     access: 'private', allowOverwrite: true, contentType: 'application/json',
     token, cacheControlMaxAge: 0,
   });
+  // Keep the caller's copy in step so a later save in the same run does not regress it.
+  ledger.orders = merged.orders;
+  ledger.contacts = merged.contacts;
 }
 
 export const LOCK_PATHNAME = 'mekari/sync.lock';
@@ -155,6 +176,16 @@ export function syncOverview({ orders, ledger, depositTo = null }) {
     const customId = customIdFor(order);
     const recorded = ledger.orders?.[customId] ?? null;
 
+    if (recorded?.mismatch) {
+      return { order, customId, state: 'broken', total: recorded.total ?? 0, invoiceId: recorded.invoice_id ?? null,
+        reason: `Jurnal menyimpan Rp${Number(recorded.stored ?? 0).toLocaleString('id-ID')} - periksa faktur` };
+    }
+    if (recorded?.needs_review) {
+      return { order, customId, state: 'broken', total: recorded.total ?? 0, invoiceId: recorded.invoice_id ?? null, reason: recorded.needs_review };
+    }
+    if (recorded?.voided) {
+      return { order, customId, state: 'skipped', total: 0, reason: 'dibatalkan - faktur dihapus' };
+    }
     if (recorded) {
       return { order, customId, state: 'synced', total: recorded.total ?? 0, invoiceId: recorded.invoice_id ?? null, at: recorded.at ?? null };
     }
@@ -225,6 +256,18 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
   try {
     const created = await mekari({ method: 'POST', path: '/public/jurnal/api/v1/sales_invoices', body: payload, deadlineAt });
     const invoice = created?.sales_invoice ?? created;
+    // Jurnal has silently stored a different number than it was sent before - shipping
+    // dropped to zero without is_shipped - and the only way to know is to read back what
+    // it kept. A mismatch is recorded so the order is not re-posted into the same trap,
+    // and reported so a person decides what to do with the invoice that now exists.
+    const stored = Math.round(Number(invoice?.original_amount));
+    if (Number.isFinite(stored) && stored !== expectedTotal) {
+      return {
+        customId, id: order.id, channel: order.channel, status: 'mismatch',
+        invoiceId: invoice?.id, transactionNo: invoice?.transaction_no, total: expectedTotal, stored,
+        error: `Jurnal menyimpan Rp${stored.toLocaleString('id-ID')}, seharusnya Rp${expectedTotal.toLocaleString('id-ID')} (faktur ${invoice?.transaction_no ?? invoice?.id})`,
+      };
+    }
     return {
       customId, id: order.id, channel: order.channel, status: 'created',
       invoiceId: invoice?.id, transactionNo: invoice?.transaction_no, total: expectedTotal,
@@ -236,6 +279,66 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
       return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: error.body?.id ?? null, total: expectedTotal };
     }
     return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: error.message };
+  }
+}
+
+/**
+ * Final states that undo a sale. IN_CANCEL is only a request the seller can still refuse,
+ * and TO_RETURN is a dispute in progress; neither is acted on automatically.
+ */
+export const VOID_STATUSES = new Set(['CANCELLED']);
+
+/** Undone, or in the middle of being undone - either way not something to leave silent. */
+export const UNDONE_STAGES = new Set(['cancelled', 'returned']);
+
+/**
+ * An order that was invoiced and has since been undone.
+ *
+ * Without this, a buyer who cancels after paying leaves a sale in the books forever.
+ * If Jurnal still lets the invoice go - nothing paid against it - it is deleted and the
+ * ledger remembers that it was, so the order is never posted again. If money has been
+ * received against it, deleting would hide a real payment; that one is handed to a
+ * person, once, with the invoice number.
+ */
+export function undoneCandidates(orders, ledger) {
+  return orders.filter((o) => {
+    const entry = ledger.orders?.[customIdFor(o)];
+    return entry && entry.invoice_id && !entry.voided && !entry.needs_review && UNDONE_STAGES.has(o.stage);
+  });
+}
+
+export async function voidInvoice(order, entry, { dryRun = true, deadlineAt = null } = {}) {
+  const customId = customIdFor(order);
+  const base = { customId, id: order.id, channel: order.channel, invoiceId: entry.invoice_id, stage: order.stage, status: order.status };
+
+  const final = VOID_STATUSES.has(order.status) || (order.channel === 'shopify' && order.stage === 'cancelled');
+  if (!final) {
+    return { ...base, outcome: 'needs_review', reason: `${order.status}: pembatalan/retur belum final, faktur dibiarkan` };
+  }
+  if (dryRun) return { ...base, outcome: 'dry-run' };
+  if (isReadOnly()) throw new ReadOnlyError(`hapus faktur ${customId}`);
+
+  let invoice;
+  try {
+    const found = await mekari({ path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
+    invoice = found?.sales_invoice ?? found;
+  } catch (error) {
+    if (error.status === 404) return { ...base, outcome: 'gone', reason: 'faktur sudah tidak ada di Jurnal' };
+    return { ...base, outcome: failureOf(error), reason: error.message };
+  }
+
+  if (invoice.has_payments || Number(invoice.payment_received_amount) > 0 || invoice.deletable === false) {
+    return {
+      ...base, outcome: 'needs_review',
+      reason: `pesanan ${order.status} tapi faktur ${invoice.transaction_no} sudah menerima pembayaran Rp${Math.round(Number(invoice.payment_received_amount || 0)).toLocaleString('id-ID')} - perlu retur/kredit nota manual`,
+    };
+  }
+
+  try {
+    await mekari({ method: 'DELETE', path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
+    return { ...base, outcome: 'voided', transactionNo: invoice.transaction_no, total: Math.round(Number(invoice.original_amount)) };
+  } catch (error) {
+    return { ...base, outcome: failureOf(error), reason: error.message };
   }
 }
 
@@ -280,7 +383,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     const result = await postOrder(order, { depositTo, dryRun, deadlineAt });
     results.push(result);
 
-    if (!dryRun && (result.status === 'created' || result.status === 'exists')) {
+    if (!dryRun && (result.status === 'created' || result.status === 'exists' || result.status === 'mismatch')) {
       ledger.contacts = knownContactNames();
       ledger.orders[result.customId] = {
         invoice_id: result.invoiceId ?? null,
@@ -288,9 +391,34 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
         order_id: order.id,
         total: result.total,
         at: new Date().toISOString(),
+        // A wrong number in the books is recorded so it is not re-posted into the same
+        // trap, and flagged so it stays visible until a person has dealt with it.
+        ...(result.status === 'mismatch' ? { mismatch: true, stored: result.stored } : {}),
       };
       await saveSyncLedger(ledger);
     }
+  }
+
+  // Undone sales, with whatever budget is left. Each costs one read and, if it goes, one
+  // delete; skipping them when time is short is fine because the next run sees the same
+  // orders in the same state.
+  const undone = [];
+  for (const order of undoneCandidates(orders, ledger)) {
+    if (Date.now() > stopAt) break;
+    const entry = ledger.orders[customIdFor(order)];
+    const outcome = await voidInvoice(order, entry, { dryRun, deadlineAt });
+    undone.push(outcome);
+    if (!dryRun && (outcome.outcome === 'voided' || outcome.outcome === 'gone' || outcome.outcome === 'needs_review')) {
+      ledger.orders[outcome.customId] = {
+        ...entry,
+        ...(outcome.outcome === 'needs_review' ? { needs_review: outcome.reason } : { voided: true, voided_at: new Date().toISOString() }),
+      };
+      await saveSyncLedger(ledger);
+    }
+  }
+  if (!dryRun) {
+    ledger.ready_at = new Date().toISOString();
+    await saveSyncLedger(ledger);
   }
 
   const count = (status) => results.filter((r) => r.status === status).length;
@@ -306,9 +434,14 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     created: count('created'),
     exists: count('exists'),
     failed: count('failed'),
+    // Stored in Jurnal with a number we did not send; recorded, flagged, not retried.
+    mismatch: count('mismatch'),
     // Left out of the ledger on purpose; the next run takes them again.
     deferred: count('deferred'),
     results,
+    undone,
+    voided: undone.filter((u) => u.outcome === 'voided').length,
+    needsReview: undone.filter((u) => u.outcome === 'needs_review').length,
     syncedTotal: Object.keys(ledger.orders).length,
   };
 }

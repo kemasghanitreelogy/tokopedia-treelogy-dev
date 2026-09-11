@@ -58,18 +58,28 @@ async function resolveShopeeSessionUncached({ config = loadShopeeConfig() } = {}
   let refreshed = false;
 
   if (shopeeTokenExpired(tokens)) {
-    tokens = await refreshAccessToken(config, {
-      refreshToken: tokens.refreshToken,
-      shopId: tokens.shopId,
-    });
-    refreshed = true;
-    await saveTokenBundle({
-      tokens,
-      nonce: `shopee-${tokens.shopId}`,
-      shop: bundle.shop,
-      pathname: SHOPEE_TOKENS_PATHNAME,
-      token: config.blobToken,
-    });
+    try {
+      tokens = await refreshAccessToken(config, {
+        refreshToken: tokens.refreshToken,
+        shopId: tokens.shopId,
+      });
+      refreshed = true;
+      await saveTokenBundle({
+        tokens,
+        nonce: `shopee-${tokens.shopId}`,
+        shop: bundle.shop,
+        pathname: SHOPEE_TOKENS_PATHNAME,
+        token: config.blobToken,
+      });
+    } catch (error) {
+      // Shopee tokens last four hours and the refresh token rotates every time, so two
+      // instances reaching expiry together is not rare. The loser holds a token the
+      // winner just retired - but the winner has already saved the new pair. Read it back
+      // before calling this a failure.
+      const again = await loadTokenBundle({ pathname: SHOPEE_TOKENS_PATHNAME, token: config.blobToken });
+      if (!again?.tokens?.accessToken || shopeeTokenExpired(again.tokens)) throw error;
+      tokens = again.tokens;
+    }
   }
 
   return {

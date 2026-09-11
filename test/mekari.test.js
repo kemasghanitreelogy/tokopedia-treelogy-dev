@@ -492,3 +492,64 @@ test('the Shopify subscription is paid-only; create is retired, not merely unuse
   assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID']);
   assert.deepEqual(SHOPIFY_RETIRED_TOPICS, ['ORDERS_CREATE']);
 });
+
+/* ------------------------------------------------------- pembatalan & verifikasi */
+
+const { undoneCandidates, voidInvoice, VOID_STATUSES, UNDONE_STAGES, syncOverview: overviewOf } = await import('../src/mekari/sync.js');
+
+test('only an invoiced order that has since been undone is a candidate', () => {
+  const ledger = { orders: {
+    'TRL-shopee-A': { invoice_id: 1 },
+    'TRL-shopee-B': { invoice_id: 2, voided: true },
+    'TRL-shopee-C': { invoice_id: 3, needs_review: 'x' },
+    'TRL-shopee-D': { invoice_id: null },
+  } };
+  const orders = [
+    order({ id: 'A', stage: 'cancelled', status: 'CANCELLED' }),   // yes
+    order({ id: 'B', stage: 'cancelled', status: 'CANCELLED' }),   // already voided
+    order({ id: 'C', stage: 'returned', status: 'TO_RETURN' }),    // already with a person
+    order({ id: 'D', stage: 'cancelled', status: 'CANCELLED' }),   // never had an invoice
+    order({ id: 'E', stage: 'cancelled', status: 'CANCELLED' }),   // never in the ledger
+    order({ id: 'A2', stage: 'completed' }),                        // not undone
+  ];
+  assert.deepEqual(undoneCandidates(orders, ledger).map((o) => o.id), ['A']);
+});
+
+test('a cancellation request or a return in progress is handed to a person, not acted on', async () => {
+  // IN_CANCEL can still be refused by the seller; TO_RETURN is a dispute. Deleting the
+  // invoice on either would be deleting a sale that may yet stand.
+  assert.ok(VOID_STATUSES.has('CANCELLED'));
+  assert.ok(!VOID_STATUSES.has('IN_CANCEL'));
+  assert.deepEqual([...UNDONE_STAGES].sort(), ['cancelled', 'returned']);
+
+  const asked = await voidInvoice(order({ stage: 'cancelled', status: 'IN_CANCEL' }), { invoice_id: 9 }, { dryRun: true });
+  assert.equal(asked.outcome, 'needs_review');
+  const returned = await voidInvoice(order({ stage: 'returned', status: 'TO_RETURN' }), { invoice_id: 9 }, { dryRun: true });
+  assert.equal(returned.outcome, 'needs_review');
+  // A final cancellation would be acted on - and a dry run says so without touching Jurnal.
+  const final = await voidInvoice(order({ stage: 'cancelled', status: 'CANCELLED' }), { invoice_id: 9 }, { dryRun: true });
+  assert.equal(final.outcome, 'dry-run');
+  const shopify = await voidInvoice({ channel: 'shopify', id: '#1', stage: 'cancelled', status: 'VOIDED/UNFULFILLED' }, { invoice_id: 9 }, { dryRun: true });
+  assert.equal(shopify.outcome, 'dry-run');
+});
+
+test('the Jurnal tab shows a wrong number, a voided sale and a review case for what they are', () => {
+  const ledger = { orders: {
+    'TRL-shopee-M': { invoice_id: 1, total: 100, mismatch: true, stored: 85 },
+    'TRL-shopee-V': { invoice_id: 2, total: 100, voided: true },
+    'TRL-shopee-R': { invoice_id: 3, total: 100, needs_review: 'faktur sudah menerima pembayaran' },
+  } };
+  const ov = overviewOf({ orders: [order({ id: 'M' }), order({ id: 'V', stage: 'cancelled' }), order({ id: 'R', stage: 'returned' })], ledger });
+  const by = Object.fromEntries(ov.rows.map((r) => [r.order.id, r]));
+  assert.equal(by.M.state, 'broken'); assert.match(by.M.reason, /85/);
+  assert.equal(by.V.state, 'skipped'); assert.match(by.V.reason, /dihapus/);
+  assert.equal(by.R.state, 'broken'); assert.match(by.R.reason, /pembayaran/);
+  assert.equal(ov.synced, 0, 'tidak satu pun boleh mengaku tersinkron rapi');
+});
+
+test('readiness proven within a day is not proven again', async () => {
+  const { ensureReady } = await import('../src/mekari/setup.js');
+  const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const result = await ensureReady({ dryRun: false, readyAt: fresh });
+  assert.equal(result.skipped, 'sudah dipastikan dalam 24 jam terakhir');
+});

@@ -1,6 +1,6 @@
 import { fetchOrdersByIds } from '../omni.js';
 import { fetchOrderByGid } from '../shopify/shop.js';
-import { runSync, loadSyncLedger, POSTABLE_STAGES } from '../mekari/sync.js';
+import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES, voidInvoice } from '../mekari/sync.js';
 import { customIdFor } from '../mekari/invoice.js';
 import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
@@ -84,7 +84,24 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
 
   const customId = customIdFor(order);
   const known = ledger.orders?.[customId];
-  if (known) return { status: 'exists', customId, invoiceId: known.invoice_id ?? null };
+  if (known) {
+    // Invoiced earlier and now undone: the push is exactly the moment to act on it.
+    if (known.invoice_id && !known.voided && !known.needs_review && UNDONE_STAGES.has(order.stage) && liveEnabled()) {
+      const outcome = await voidInvoice(order, known, { dryRun: false });
+      if (outcome.outcome === 'voided' || outcome.outcome === 'gone' || outcome.outcome === 'needs_review') {
+        ledger.orders[customId] = {
+          ...known,
+          ...(outcome.outcome === 'needs_review' ? { needs_review: outcome.reason } : { voided: true, voided_at: new Date().toISOString() }),
+        };
+        await saveSyncLedger(ledger);
+        if (outcome.outcome === 'needs_review') {
+          await notifySyncFailures({ source: `webhook ${channel}`, results: [{ status: 'failed', customId, error: outcome.reason }] });
+        }
+      }
+      return { status: outcome.outcome === 'voided' ? 'voided' : outcome.outcome, customId, invoiceId: known.invoice_id };
+    }
+    return { status: 'exists', customId, invoiceId: known.invoice_id ?? null };
+  }
 
   // An order that is not paid yet is not an error, it is simply early. The platform will
   // push again when it moves, so this is a success, not something to retry.
@@ -96,7 +113,7 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   }
 
   if (!customersReady) {
-    await ensureReady({ dryRun: false });
+    await ensureReady({ dryRun: false, readyAt: ledger.ready_at ?? null });
     customersReady = true;
   }
 

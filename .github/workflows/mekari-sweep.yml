@@ -40,9 +40,9 @@ jobs:
           for round in 1 2 3 4 5 6; do
             body=$(curl -sS --fail-with-body --max-time 110 \
               -H "Authorization: Bearer ${CRON_SECRET}" \
-              "${BASE_URL}/api/mekari-sync?dry=0&days=2&limit=15")
+              "${BASE_URL}/api/mekari-sync?dry=0&days=7&limit=15")
             echo "--- ronde ${round}"
-            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("ok","live","orders_seen","considered","posted","remaining","created","exists","failed","deferred","ranOutOfTime","skipped","channel_errors","timings","took_ms")}, ensure_ascii=False))'
+            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("ok","live","orders_seen","considered","posted","remaining","created","exists","failed","deferred","mismatch","voided","needs_review","ranOutOfTime","skipped","channel_errors","timings","took_ms")}, ensure_ascii=False))'
             ok=$(echo "$body" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("ok") else "no")')
             test "$ok" = "yes"
             failed=$(echo "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("failed",0))')

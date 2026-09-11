@@ -15,6 +15,7 @@ import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
+import { loadImageManifest } from '../src/mekari/images.js';
 import { notifySyncFailures } from '../src/notify/telegram.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
@@ -44,6 +45,9 @@ const PATH = '/api/dashboard';
 const ORDERS_TTL_MS = 45_000;
 const CATALOG_TTL_MS = 60_000;
 const LEDGER_TTL_MS = 60_000;
+// Pictures change when somebody edits a listing, which is rarely; five minutes is plenty.
+const IMAGES_TTL_MS = 5 * 60_000;
+const imagesByKey = () => cached('images', IMAGES_TTL_MS, () => loadImageManifest().then((m) => m.images ?? {}).catch(() => ({})));
 
 const catalogComplete = (catalog) => Object.keys(catalog.errors ?? {}).length === 0;
 const readCatalogSafely = () =>
@@ -471,6 +475,7 @@ export default async function handler(req, res) {
         catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
         generatedAt: Date.now(), csrf, flash,
         selected: url.searchParams.get('sku') ?? null,
+        images: await imagesByKey(),
       }));
       return;
     }
@@ -486,7 +491,7 @@ export default async function handler(req, res) {
       send(200, renderManual({
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
         source, code: suggestCode(source, used), today: wibDate(Math.floor(Date.now() / 1000)),
-        contacts, existingCodes: used,
+        contacts, existingCodes: used, images: await imagesByKey(),
         live: process.env.MEKARI_SYNC_LIVE === '1',
         depositTo: process.env.MEKARI_DEPOSIT_ACCOUNT || null,
       }));

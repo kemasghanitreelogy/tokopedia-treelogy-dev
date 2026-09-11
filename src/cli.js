@@ -20,6 +20,7 @@ import { isMekariConfigured } from './mekari/client.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, isTelegramConfigured } from './notify/telegram.js';
+import { syncProductImages } from './mekari/images.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -48,6 +49,7 @@ Usage:
   npm run hooks:register      Daftarkan URL webhook (butuh --yes)
   npm run hooks:recover       Ambil push Shopee yang sempat gagal terkirim
   npm run notify:test         Kirim pesan uji ke Telegram
+  npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -831,6 +833,21 @@ async function cmdNotifyTest() {
   return result.sent ? 0 : 1;
 }
 
+async function cmdMekariImages(config, args = []) {
+  const dryRun = !args.includes('--yes');
+  const result = await syncProductImages({ dryRun });
+  console.log(`\n  ${result.withImage} SKU bergambar di Shopify` +
+    `  ·  ${dryRun ? 'akan diunggah' : 'diunggah'} ${dryRun ? result.wouldUpload : result.uploaded}` +
+    `  ·  tidak berubah ${result.unchanged}  ·  belum ada di Jurnal ${result.noJurnalProduct}  ·  gagal ${result.failed}`);
+  for (const r of result.results) {
+    if (r.status === 'unchanged') continue;
+    console.log(`    ${r.status.padEnd(18)} ${r.sku.padEnd(30)} ${r.source ?? ''} ${r.bytes ? Math.round(r.bytes / 1024) + ' KB' : ''} ${r.error ?? ''}`);
+  }
+  if (result.unknown.length) console.log(`\n  SKU Shopify di luar data master: ${result.unknown.join(', ')}`);
+  console.log(dryRun ? `\n${info('dry-run: tidak ada yang diunggah. Jalankan dengan --yes')}\n` : '\n');
+  return result.failed ? 1 : 0;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -854,6 +871,7 @@ const COMMANDS = {
   'hooks:register': cmdHooksRegister,
   'hooks:recover': cmdHooksRecover,
   'notify:test': cmdNotifyTest,
+  'mekari:images': cmdMekariImages,
   doctor: cmdDoctor,
   api: cmdApi,
 };

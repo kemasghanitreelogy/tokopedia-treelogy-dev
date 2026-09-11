@@ -662,3 +662,24 @@ test('the manual form is reachable from the Jurnal tab', () => {
   const html = renderJurnal({ overview: jurnalOverview(), live: false, depositTo: null, configured: true, ...common });
   assert.match(html, /\?view=jurnal&amp;add=1/);
 });
+
+test('a product with a picture shows it on its card and its detail page; one without says so', () => {
+  const images = { 'MRS-002': { url: 'https://cdn.shopify.com/x/p.jpg?v=1', thumb: 'https://cdn.shopify.com/x/p.jpg?v=1&width=240', alt: 'Ritual', source: 'variant' } };
+  const list = renderProducts({ catalog, ledger, ...common, images });
+  assert.match(list, /class="card__img" src="https:\/\/cdn\.shopify\.com\/x\/p\.jpg\?v=1&amp;width=240"/);
+  assert.match(list, /card__img--none/, 'produk tanpa gambar diberi tanda, bukan kotak kosong');
+  const detail = renderProducts({ catalog, ledger, ...common, images, selected: 'MRS-002' });
+  assert.match(detail, /class="pd__img"/);
+  assert.match(detail, /terpasang di Jurnal/);
+  const bare = renderProducts({ catalog, ledger, ...common, images: {}, selected: 'MRS-002' });
+  assert.ok(!/pd__img/.test(bare));
+});
+
+test('the manual form carries thumbnails for the product picker', () => {
+  const html = renderManual({
+    source: 'CS', code: 'CS-260911-001', today: '2026-09-11', contacts: [], existingCodes: [], live: true, depositTo: null,
+    images: { 'OMP-45-001': { thumb: 'https://cdn.shopify.com/x/t.jpg?width=240' } }, ...common,
+  });
+  assert.match(html, /class="ln__pic"/);
+  assert.match(html, /"OMP-45-001":"https:\/\/cdn\.shopify\.com\/x\/t\.jpg\?width=240"/);
+});

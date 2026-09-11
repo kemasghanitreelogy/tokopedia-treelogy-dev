@@ -653,6 +653,20 @@ tbody tr:hover{background:var(--panel-2)}
 .hb--stop{border-color:color-mix(in srgb,var(--bad) 60%,transparent); color:var(--fg)}
 .hb--stop b::before{content:''; display:inline-block; width:.45rem; height:.45rem; border-radius:50%; background:var(--bad); margin-right:.35rem}
 
+/* Product pictures. Fixed boxes so a card never reflows when a picture arrives late, and
+   object-fit keeps a square product shot square whatever Shopify sent. */
+.card__img{display:block; width:100%; aspect-ratio:1; border-radius:9px; object-fit:cover;
+  background:var(--panel-2); border:1px solid var(--line); margin-bottom:.35rem}
+.card__img--none{display:grid; place-items:center; color:var(--dim); font-size:.7rem; letter-spacing:.06em; text-transform:uppercase}
+.pd__hero{display:grid; grid-template-columns:200px minmax(0,1fr); gap:1.1rem; align-items:start; padding:1rem 1rem 0}
+.pd__cap{display:flex; flex-direction:column; gap:.25rem; font-size:.9rem; padding-top:.2rem}
+.pd__img{width:200px; height:200px; border-radius:12px; object-fit:cover; background:var(--panel-2); border:1px solid var(--line)}
+@media (max-width:640px){.pd__hero{grid-template-columns:minmax(0,1fr)} .pd__img{width:100%; height:auto; aspect-ratio:1}}
+.ln__pic{width:38px; height:38px; border-radius:7px; object-fit:cover; background:var(--panel-2); border:1px solid var(--line); flex:none}
+.ln__pic[hidden]{display:none}
+.ln__prod{display:flex; gap:.45rem; align-items:center; min-width:0}
+.ln__prod select{flex:1; min-width:0}
+
 /* ------------------------------------------------- transaksi manual ---------- */
 /* A data-entry form, so it is built for one hand on the keyboard: every field is
    reachable by tab in reading order, the running total never leaves the screen, and the
@@ -1358,7 +1372,7 @@ export function renderJurnal({
  */
 export function renderManual({
   range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
-  live, depositTo, existingCodes = [],
+  live, depositTo, existingCodes = [], images = {},
 }) {
   const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
 
@@ -1387,10 +1401,13 @@ export function renderManual({
 
   const lineRow = (index) => `
     <div class="ln" data-row>
-      <select name="sku" aria-label="Produk baris ${index + 1}">
-        <option value="">Pilih produk&hellip;</option>
-        ${productOptions}
-      </select>
+      <span class="ln__prod">
+        <img class="ln__pic" alt="" width="38" height="38" hidden>
+        <select name="sku" aria-label="Produk baris ${index + 1}">
+          <option value="">Pilih produk&hellip;</option>
+          ${productOptions}
+        </select>
+      </span>
       <input type="number" name="qty" value="1" min="1" step="1" inputmode="numeric" aria-label="Kuantitas">
       <input type="number" name="unitPrice" value="" min="0" step="1" inputmode="numeric" placeholder="Harga" aria-label="Harga satuan">
       <input type="number" name="unitDiscount" value="0" min="0" step="1" inputmode="numeric" aria-label="Diskon satuan">
@@ -1505,6 +1522,13 @@ export function renderManual({
   var shipField = form.querySelector('input[name="shipping"]');
   var go = document.getElementById('mxgo');
   var existing = ${JSON.stringify(existingCodes)};
+  // Thumbnails by SKU, so picking a product shows what it looks like - a check against
+  // choosing the 90-gram powder when the slip says 180.
+  var pictures = ${JSON.stringify(Object.fromEntries(Object.entries(images).map(([k, v]) => [k, v.thumb || v.url || ''])))};
+  function showPicture(row) {
+    var pic = row.querySelector('.ln__pic'); var sku = row.querySelector('select').value;
+    if (pictures[sku]) { pic.src = pictures[sku]; pic.hidden = false; } else { pic.hidden = true; pic.removeAttribute('src'); }
+  }
   // The code is only regenerated while it still looks generated. The moment someone
   // types their own, the source and date stop overwriting it.
   var codeIsOurs = true;
@@ -1613,6 +1637,7 @@ export function renderManual({
     total();
   });
   form.addEventListener('change', function (e) {
+    if (e.target.name === 'sku') showPicture(e.target.closest('[data-row]'));
     if (e.target.name === 'source') {
       customer.placeholder = e.target.dataset.label;
       refreshCode();
@@ -2135,7 +2160,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
  * makes "Moringa Powder, three sizes" visible again, and what lets a bundle be shown
  * against the components it is actually assembled from.
  */
-export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected }) {
+export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {} }) {
   const live = new Map(catalog.skus.map((e) => [e.sku, e]));
   const stockOf = (sku) => {
     const entry = live.get(sku);
@@ -2190,7 +2215,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       stale: Boolean(catalog.stale),
       staleSince: catalog.savedAt ? wibStamp(catalog.savedAt) : null,
       kpis: '',
-      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan }),
+      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan , picture: images[selected] ?? null }),
     });
   }
 
@@ -2277,7 +2302,11 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
           : value === null ? '<span class="dim">&mdash;</span>'
           : `<b>${value}</b>`;
 
+        const picture = images[product.sku];
         return `<a class="card${attention ? ' card--flag' : ''}" href="?view=products&sku=${encodeURIComponent(product.sku)}">
+          ${picture?.thumb
+            ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="240">`
+            : '<span class="card__img card__img--none" aria-hidden="true">tanpa gambar</span>'}
           <span class="card__top">
             <span class="card__name">${escape(product.name)}${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}</span>
             ${isBundle(product) ? '<span class="badge badge--b">bundle</span>' : ''}
@@ -2379,7 +2408,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 }
 
 /** One product: what each channel holds, and the controls to change it. */
-function productDetail({ product, live, ledger, stockOf, csrf, plan }) {
+function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null }) {
   const entry = live.get(product.sku);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const ledgerRow = ledger?.skus?.[product.sku];
@@ -2446,6 +2475,14 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan }) {
     : '';
 
   return `
+    ${picture?.url ? `<div class="pd__hero">
+      <img class="pd__img" src="${escape(picture.thumb || picture.url)}" alt="${escape(picture.alt || product.name)}" width="200" height="200">
+      <div class="pd__cap">
+        <b>${escape(product.name)}</b>${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}
+        <span class="mono dim">${escape(product.sku)}</span>
+        <span class="fld__hint">Gambar dari Shopify (${escape(picture.source === 'variant' ? 'varian' : 'produk')}), juga terpasang di Jurnal.</span>
+      </div>
+    </div>` : ''}
     <p class="sec">${escape(product.name)}${product.variant ? ' &middot; ' + escape(product.variant) : ''}
       <span class="mono dim"> ${escape(product.sku)}</span></p>
     <div class="chs" style="padding:1rem">

@@ -143,7 +143,12 @@ async function takeSlot(interval = MIN_INTERVAL_MS, deadlineAt = null) {
  *   platform killing the run with the ledger half-written; the caller knows how much
  *   time it has left and this is how it says so.
  */
-export async function mekari({ method = 'GET', path, body, config = loadMekariConfig(), deadlineAt = null }) {
+/**
+ * @param {FormData} [form]  multipart body, for the one endpoint that takes a file
+ *   (product image upload). Sent as-is: fetch sets the boundary, and forcing a JSON
+ *   content type over it is what turns a valid upload into a 400.
+ */
+export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null }) {
   if (!isMekariConfigured(config)) throw new MekariError('MEKARI_APP_CLIENT_ID / SECRET belum diisi');
   const canWait = (ms) => deadlineAt === null || Date.now() + ms < deadlineAt;
 
@@ -157,15 +162,12 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
 
     let response;
     try {
+      const headers = { Authorization: header, Date: date, Accept: 'application/json' };
+      if (!form) headers['Content-Type'] = 'application/json';
       response = await fetch(`https://${config.host}${path}`, {
         method,
-        headers: {
-          Authorization: header,
-          Date: date,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers,
+        body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
       });
     } catch (cause) {
       if (attempt === RETRY_DELAYS_MS.length || !canWait(RETRY_DELAYS_MS[attempt])) {

@@ -412,9 +412,37 @@ test('postage is declared shipped, or it silently vanishes', () => {
   assert.equal(withPostage.sales_invoice.is_shipped, true);
   assert.equal(withPostage.expectedTotal, 470_000);
 
-  // An order with no postage must not claim to have been shipped.
-  assert.equal(buildInvoice({ order: order() }).sales_invoice.is_shipped, undefined);
+  // An order with nothing at all to say about delivery must not claim to have shipped.
+  assert.equal(buildInvoice({ order: order({ carrier: '' }) }).sales_invoice.is_shipped, undefined);
+  // ...but a delivery address alone is enough, because Jurnal drops it otherwise.
+  assert.equal(buildInvoice({ order: order({ carrier: '', shipTo: 'Bali, ID' }) }).sales_invoice.is_shipped, true);
 
   withPostage.sales_invoice.is_shipped = false;
   assert.throws(() => verifyInvoice(withPostage, withPostage.expectedTotal), /is_shipped/);
+});
+
+test('buyer details are sent only when the platform actually disclosed them', () => {
+  // An empty field in Jurnal is honest; a field filled with a placeholder is not.
+  const bare = buildInvoice({ order: order() }).sales_invoice;
+  assert.equal(bare.email, undefined);
+  assert.equal(bare.shipping_address, undefined);
+  assert.equal(bare.address, undefined);
+
+  const full = buildInvoice({
+    order: order({
+      buyer: 'Edy Gautama',
+      buyerEmail: 'edy@contoh.id',
+      shipTo: 'Jalan Ngurah Rai, Karangasem, Bali, 80811, ID',
+      billTo: 'Jalan Ngurah Rai, Karangasem, Bali, 80811, ID',
+    }),
+  }).sales_invoice;
+  assert.equal(full.person_name, 'Edy Gautama');
+  assert.equal(full.email, 'edy@contoh.id');
+  assert.equal(full.shipping_address, 'Jalan Ngurah Rai, Karangasem, Bali, 80811, ID');
+  assert.equal(full.address, full.shipping_address);
+});
+
+test('a shipping address stands in for a missing billing address', () => {
+  const invoice = buildInvoice({ order: order({ shipTo: 'Bali, ID', billTo: '' }) }).sales_invoice;
+  assert.equal(invoice.address, 'Bali, ID');
 });

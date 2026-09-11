@@ -72,7 +72,7 @@ export default async function handler(req, res) {
     const until = Math.floor(Date.now() / 1000);
     const range = { since: until - days * 24 * 3600, until, preset: null };
 
-    const { orders, errors } = await collectOrders({ range, maxPerPlatform: 400, tracking: false });
+    const { orders, errors } = await collectOrders({ range, maxPerPlatform: 400, tracking: true });
 
     // A channel that failed to answer simply has no orders in this run; posting is
     // additive and idempotent, so the next tick picks up whatever was missed. What must

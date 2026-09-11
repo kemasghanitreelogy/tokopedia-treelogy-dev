@@ -96,3 +96,14 @@ test('Shopify is never a target of a stock or price write', async () => {
   assert.deepEqual(WRITABLE_CHANNELS, ['tiktok', 'shopee']);
   assert.ok(!WRITABLE_CHANNELS.includes('shopify'));
 });
+
+test('an address is joined from the parts the buyer filled in, skipping the blanks', async () => {
+  const { formatAddress } = await import('../src/shopify/shop.js');
+  assert.equal(
+    formatAddress({ address1: 'Luxmore GA7 no 9', address2: null, city: 'BSD', province: 'Banten', zip: '15331', countryCodeV2: 'ID' }),
+    'Luxmore GA7 no 9, BSD, Banten, 15331, ID',
+  );
+  assert.equal(formatAddress(null), '');
+  assert.equal(formatAddress({}), '');
+  assert.equal(formatAddress({ city: '  ', province: 'Bali' }), 'Bali');
+});

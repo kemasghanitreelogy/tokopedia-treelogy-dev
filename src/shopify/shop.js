@@ -35,10 +35,14 @@ query TreelogyProducts($cursor: String) {
 }`;
 
 /**
- * The buyer's name needs `read_customers`, which a token may not carry. It is useful but
- * not essential, so the query is built in two shapes and the richer one is dropped the
- * moment Shopify says the scope is missing - a dashboard without buyer names beats no
- * orders at all.
+ * The buyer's identity comes off the order, not off the customer record.
+ *
+ * `customer { ... }` needs `read_customers`, which this token does not carry - which is
+ * why invoices went into the books named "Shopify" with no email. `email`,
+ * `shippingAddress` and `billingAddress` sit on the order itself and need only
+ * `read_orders`, and they carry the same name, address and address that the buyer typed.
+ * The two-shape fallback below is kept because the query is still built in two variants
+ * elsewhere, but nothing in it needs the customer scope any more.
  */
 const ordersQuery = ({ withCustomer }) => `
 query TreelogyOrders($cursor: String, $query: String) {
@@ -52,7 +56,9 @@ query TreelogyOrders($cursor: String, $query: String) {
       displayFulfillmentStatus
       paymentGatewayNames
       totalPriceSet { shopMoney { amount currencyCode } }
-      ${withCustomer ? 'customer { displayName defaultEmailAddress { emailAddress } }' : ''}
+      email
+      shippingAddress { name address1 address2 city province zip countryCodeV2 phone }
+      billingAddress { name address1 address2 city province zip countryCodeV2 }
       lineItems(first: 50) {
         nodes {
           quantity sku title
@@ -109,6 +115,15 @@ export async function fetchProducts(config = loadShopifyConfig()) {
  * Shopify has two independent statuses - paid and fulfilled - where the marketplaces
  * have one. Collapsing them the same way keeps the omnichannel counts comparable.
  */
+/** One address on one line, skipping whatever the buyer left blank. */
+export function formatAddress(address) {
+  if (!address) return '';
+  return [
+    address.address1, address.address2, address.city, address.province, address.zip,
+    address.countryCodeV2,
+  ].map((part) => String(part ?? '').trim()).filter(Boolean).join(', ');
+}
+
 export function shopifyStage(order) {
   const paid = order.displayFinancialStatus;
   const shipped = order.displayFulfillmentStatus;
@@ -170,10 +185,13 @@ export function mapOrder(order) {
     currency: order.totalPriceSet?.shopMoney?.currencyCode ?? 'IDR',
     carrier: tracking.company ?? '',
     tracking: tracking.number ?? '',
-    buyer: order.customer?.displayName ?? '',
-    // Only Shopify knows who the buyer actually is; the marketplaces mask it and never
-    // send an address at all.
-    buyerEmail: order.customer?.defaultEmailAddress?.emailAddress ?? '',
+    // Only Shopify discloses the buyer in full; the marketplaces mask name, address and
+    // phone, and Shopee masks all of it.
+    buyer: order.shippingAddress?.name || order.billingAddress?.name || '',
+    buyerEmail: order.email ?? '',
+    buyerPhone: order.shippingAddress?.phone ?? '',
+    shipTo: formatAddress(order.shippingAddress),
+    billTo: formatAddress(order.billingAddress),
     // How the buyer paid decides the order-code prefix (Xendit vs Shopify Payments).
     gateways: order.paymentGatewayNames ?? [],
     items: order.lineItems?.nodes?.length ?? 0,
@@ -194,7 +212,9 @@ query TreelogyOrderByGid($id: ID!) {
     displayFulfillmentStatus
     paymentGatewayNames
     totalPriceSet { shopMoney { amount currencyCode } }
-    customer { displayName defaultEmailAddress { emailAddress } }
+    email
+    shippingAddress { name address1 address2 city province zip countryCodeV2 phone }
+    billingAddress { name address1 address2 city province zip countryCodeV2 }
     lineItems(first: 50) {
       nodes {
         quantity sku title
@@ -207,7 +227,7 @@ query TreelogyOrderByGid($id: ID!) {
   }
 }`;
 
-const ORDER_BY_GID_QUERY_NO_CUSTOMER = ORDER_BY_GID_QUERY.replace('customer { displayName defaultEmailAddress { emailAddress } }', '');
+const ORDER_BY_GID_QUERY_NO_CUSTOMER = ORDER_BY_GID_QUERY;
 
 /**
  * Read exactly one order.

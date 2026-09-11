@@ -165,6 +165,14 @@ export function mapTikTokOrder(o) {
     carrier: o.shipping_provider ?? '',
     tracking: o.tracking_number ?? '',
     buyer: o.recipient_address?.name ?? '',
+    // TikTok masks the buyer: the name arrives as "N*** W***astuti", the street as
+    // asterisks, the phone partly hidden. Province and city come through intact, and the
+    // email is a relay address that really does reach the buyer - so what can be carried
+    // is carried, and what is masked stays masked rather than being invented.
+    buyerEmail: o.buyer_email ?? '',
+    buyerPhone: o.recipient_address?.phone_number ?? '',
+    shipTo: o.recipient_address?.full_address ?? '',
+    billTo: '',
     items: (o.line_items ?? []).length,
     lines: tiktokLines(o.line_items),
     finance: financeFromTikTok(o),
@@ -208,6 +216,12 @@ export function mapShopeeOrder(o) {
     carrier: o.shipping_carrier ?? '',
     tracking: '',
     buyer: o.buyer_username ?? '',
+    // Shopee masks the whole address - every field comes back as "****" - so there is
+    // nothing to carry here beyond the username.
+    buyerEmail: '',
+    buyerPhone: '',
+    shipTo: '',
+    billTo: '',
     items: (o.item_list ?? []).length,
     lines: shopeeLines(o.item_list),
     finance: financeFromShopee(o),

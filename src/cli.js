@@ -651,7 +651,9 @@ function describeApiError(error) {
 /** Orders for the Mekari commands, over whatever window was asked for. */
 async function mekariOrders(args) {
   const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
-  const { orders, errors } = await collectOrders({ range: resolveRange({ preset }), tracking: false });
+  // Tracking numbers cost an extra Shopee call per batch, and they are worth it: the
+  // invoice carries the waybill, which is how a delivery dispute gets settled later.
+  const { orders, errors } = await collectOrders({ range: resolveRange({ preset }), tracking: true });
   // Posting is additive, so a dead channel only delays its own orders - but say so, never
   // let a missing channel read as "nothing to post".
   for (const [channel, message] of Object.entries(errors)) {

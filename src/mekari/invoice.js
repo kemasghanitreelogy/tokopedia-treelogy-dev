@@ -162,20 +162,26 @@ export function buildInvoice({ order, depositTo = null }) {
     reference_no: code,
     transaction_lines_attributes: lines,
     shipping_price: shipping,
-    // Without this Jurnal silently stores shipping_price as zero and the invoice comes
-    // out short by exactly the postage - five invoices were booked that way before it
-    // was caught. Only set when there is postage to charge, so an invoice with none does
-    // not claim to have been shipped.
-    ...(shipping > 0 ? { is_shipped: true } : {}),
     // The buyer's name is masked by the marketplaces, so it belongs in the memo rather
     // than as a contact that could never be reached.
     memo: [channel, code, order.note].filter(Boolean).join(' · '),
   };
 
-  // Only Shopify supplies one, and only when the token carries read_customers.
+  // Each of these is sent only when the platform actually disclosed it. An empty field
+  // in Jurnal is honest; a field filled with a placeholder is not.
   if (order.buyerEmail) invoice.email = order.buyerEmail;
+  if (order.shipTo) invoice.shipping_address = order.shipTo;
+  if (order.billTo || order.shipTo) invoice.address = order.billTo || order.shipTo;
   if (order.carrier) invoice.ship_via = order.carrier;
   if (order.tracking) invoice.tracking_no = order.tracking;
+
+  // Jurnal gates its whole shipping block behind this flag: without it both
+  // `shipping_price` and `shipping_address` are silently stored as empty, and the invoice
+  // comes out short by the postage with no address on it. Set whenever there is anything
+  // about the delivery to record, rather than only when there is postage to charge.
+  if (shipping > 0 || invoice.shipping_address || invoice.ship_via || invoice.tracking_no) {
+    invoice.is_shipped = true;
+  }
 
   // Marking the invoice paid on deposit keeps receivables clean: a marketplace order is
   // settled before it ever ships, so leaving it open would overstate what is owed.
@@ -205,8 +211,8 @@ export function verifyInvoice(payload, expectedTotal) {
   // Postage that is charged but not declared shipped is stored as zero by Jurnal, so the
   // invoice would be short. Catching it here is the difference between a refusal and a
   // wrong number in the accounts.
-  if (shipping > 0 && invoice.is_shipped !== true) {
-    throw new InvoiceError(`ongkir ${shipping} tidak akan tersimpan tanpa is_shipped`);
+  if ((shipping > 0 || invoice.shipping_address) && invoice.is_shipped !== true) {
+    throw new InvoiceError('ongkir dan alamat tidak akan tersimpan tanpa is_shipped');
   }
   if (lines.some((l) => l.discount !== undefined)) {
     throw new InvoiceError('diskon per baris dibaca Jurnal sebagai persen - harus dilipat ke rate');

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  renderDashboard, renderPicklist, renderLabels, renderProducts, renderProcess, renderStock, renderLogin,
+  renderDashboard, renderPicklist, renderLabels, renderProducts, renderProcess, renderStock, renderJurnal, renderLogin,
 } from '../src/dashboard-page.js';
+import { syncOverview } from '../src/mekari/sync.js';
 import { summarize } from '../src/omni.js';
 import { buildPicklist } from '../src/picklist.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -31,6 +32,16 @@ const ledger = { version: 1, skus: { A: { qty: 5 }, 'MRS-002': { qty: 74 } } };
 const plan = { changes: [], review: [], blocked: [], unchanged: [], unmanaged: [], missing: [] };
 const common = { range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf: 'tok' };
 
+const booked = {
+  ...order,
+  finance: { lines: [{ sku: 'A', name: 'Produk A', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 0 },
+};
+const jurnalOverview = (over = {}) => syncOverview({
+  orders: [booked, { ...booked, id: 'BATAL', stage: 'cancelled' }],
+  ledger: { orders: {} },
+  ...over,
+});
+
 const pages = () => [
   ['orders', renderDashboard({ orders: [order], summary: summarize([order]), ...common })],
   ['picklist', renderPicklist({ picklist: buildPicklist([order]), ...common })],
@@ -38,6 +49,8 @@ const pages = () => [
   ['products', renderProducts({ catalog, ledger, ...common })],
   ['product-detail', renderProducts({ catalog, ledger, selected: 'MRS-002', ...common })],
   ['stock', renderStock({ catalog, ledger, plan, ...common })],
+  ['process', renderProcess({ orders: [order], ...common })],
+  ['jurnal', renderJurnal({ overview: jurnalOverview(), live: false, depositTo: null, configured: true, ...common })],
   ['login', renderLogin({})],
 ];
 
@@ -558,4 +571,39 @@ test('an order with no courier yet says so rather than showing a blank', () => {
   });
   assert.ok(html.includes('kurir belum ditentukan'), 'an empty courier should be stated, not implied');
   assert.match(html, /data-carrier="Belum ditentukan"/);
+});
+
+test('the Jurnal view separates what is booked from what is only queued', () => {
+  const overview = jurnalOverview();
+  assert.equal(overview.queued, 1);
+  assert.equal(overview.queuedValue, 100_000);
+  assert.equal(overview.skipped, 1, 'pesanan batal tidak boleh masuk antrean');
+
+  const html = renderJurnal({ overview, live: false, depositTo: null, configured: true, ...common });
+  assert.match(html, /Antre/);
+  assert.match(html, /Dilewati/);
+  // Nothing may be posted while the brake is on, so no submit button is offered either.
+  assert.match(html, /belum aktif/);
+  assert.ok(!/name="action" value="mekari_sync"/.test(html), 'rem menyala tapi tombol kirim tetap muncul');
+});
+
+test('an order already in the ledger reads as booked, not as queued again', () => {
+  const overview = syncOverview({
+    orders: [booked],
+    ledger: { orders: { 'TRL-shopee-260909ABC': { invoice_id: 77, total: 100_000, at: '2026-09-10T00:00:00Z' } } },
+  });
+  assert.equal(overview.synced, 1);
+  assert.equal(overview.queued, 0);
+  assert.match(renderJurnal({ overview, live: true, depositTo: 'Cash', configured: true, ...common }), /faktur 77/);
+});
+
+test('the send button appears only when live posting is on and something is queued', () => {
+  const has = (html) => /name="action" value="mekari_sync"/.test(html);
+  const overview = jurnalOverview();
+  assert.equal(has(renderJurnal({ overview, live: true, depositTo: 'Cash', configured: true, ...common })), true);
+  assert.equal(has(renderJurnal({ overview, live: true, depositTo: null, configured: false, ...common })), false,
+    'tanpa kredensial tidak boleh ada tombol kirim');
+  assert.equal(
+    has(renderJurnal({ overview: syncOverview({ orders: [], ledger: { orders: {} } }), live: true, depositTo: null, configured: true, ...common })),
+    false, 'antrean kosong tidak butuh tombol');
 });

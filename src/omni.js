@@ -137,6 +137,98 @@ function shopeeLines(itemList = []) {
   return [...bySku.values()];
 }
 
+/**
+ * The money an invoice needs, separated the way accounting needs it.
+ *
+ * The decision recorded for this integration is to book the gross selling price and keep
+ * platform costs out of revenue. That makes one distinction load-bearing: a discount the
+ * SELLER funds reduces what the seller earns, while a voucher the PLATFORM funds does
+ * not - the platform reimburses it. Treating the second as a discount would understate
+ * revenue on every subsidised order.
+ */
+function financeFromTikTok(order) {
+  const lines = (order.line_items ?? []).map((li) => ({
+    sku: li.seller_sku || li.sku_id || '',
+    name: li.product_name ?? '',
+    variant: li.sku_name ?? '',
+    qty: 1, // TikTok repeats a line per unit and carries no quantity field.
+    unitPrice: toNumber(li.original_price),
+    unitDiscount: toNumber(li.seller_discount),
+  }));
+  return {
+    lines: foldLines(lines),
+    // Delivery on a marketplace is collected by the platform and paid to the courier;
+    // Shopee's settlement proves it nets to zero for the seller (actual_shipping_fee
+    // 24,000 against shopee_shipping_rebate 24,000). Booking it as revenue would
+    // overstate turnover by the freight, so it is excluded. Verified: goods-only totals
+    // match `order_selling_price` exactly on every sampled order.
+    shipping: 0,
+    shippingPassThrough: toNumber(order.payment?.shipping_fee),
+    currency: order.payment?.currency ?? 'IDR',
+  };
+}
+
+function financeFromShopee(order) {
+  const lines = (order.item_list ?? []).map((item) => ({
+    sku: item.model_sku || item.item_sku || '',
+    name: item.item_name ?? '',
+    variant: item.model_name ?? '',
+    qty: Number(item.model_quantity_purchased) || 0,
+    unitPrice: toNumber(item.model_original_price),
+    unitDiscount: Math.max(0, toNumber(item.model_original_price) - toNumber(item.model_discounted_price)),
+  }));
+  return {
+    lines: foldLines(lines),
+    shipping: 0, // pass-through, as above
+    shippingPassThrough: toNumber(order.estimated_shipping_fee),
+    currency: order.currency ?? 'IDR',
+  };
+}
+
+export function financeFromShopify(order) {
+  const lines = (order.lineItems?.nodes ?? []).map((li) => {
+    const qty = Number(li.quantity) || 0;
+    const unit = toNumber(li.originalUnitPriceSet?.shopMoney?.amount);
+    // Shopify allocates order-level discounts down to the lines, so the per-line total
+    // discount is the honest figure - an order-level number would double-count.
+    const discountTotal = toNumber(li.totalDiscountSet?.shopMoney?.amount);
+    return {
+      sku: li.sku || li.title || '',
+      name: li.title ?? '',
+      variant: '',
+      qty,
+      unitPrice: unit,
+      unitDiscount: qty > 0 ? Math.round(discountTotal / qty) : 0,
+    };
+  });
+  return {
+    // Shopify is the seller's own store: the shipping charge is set by the seller and
+    // received by the seller, so unlike the marketplaces it is genuine revenue.
+    lines: foldLines(lines),
+    shipping: toNumber(order.shippingLine?.originalPriceSet?.shopMoney?.amount),
+    currency: order.totalPriceSet?.shopMoney?.currencyCode ?? 'IDR',
+  };
+}
+
+/** Identical SKUs at the same price become one line with a quantity. */
+function foldLines(lines) {
+  const bySku = new Map();
+  for (const line of lines) {
+    if (line.qty <= 0) continue;
+    const key = `${line.sku}|${line.unitPrice}|${line.unitDiscount}`;
+    const existing = bySku.get(key);
+    if (existing) existing.qty += line.qty;
+    else bySku.set(key, { ...line });
+  }
+  return [...bySku.values()];
+}
+
+/** What the invoice should total: goods after seller discounts, plus delivery. */
+export function financeTotal(finance) {
+  const goods = finance.lines.reduce((n, l) => n + (l.unitPrice - l.unitDiscount) * l.qty, 0);
+  return goods + finance.shipping;
+}
+
 const toNumber = (value) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -186,6 +278,7 @@ async function fetchTikTokOrders({ config, since, until, max }) {
       buyer: o.recipient_address?.name ?? '',
       items: (o.line_items ?? []).length,
       lines: tiktokLines(o.line_items),
+      finance: financeFromTikTok(o),
       // Shipping documents are issued per package, not per order.
       packageId: (o.packages ?? [])[0]?.id ?? '',
     }));
@@ -234,6 +327,7 @@ async function fetchShopeeOrders({ since, until, max, tracking = true }) {
       buyer: o.buyer_username ?? '',
       items: (o.item_list ?? []).length,
       lines: shopeeLines(o.item_list),
+      finance: financeFromShopee(o),
       packageNumber: o.package_list?.[0]?.package_number ?? '',
     }));
 

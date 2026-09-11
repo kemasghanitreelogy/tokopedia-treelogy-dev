@@ -1,5 +1,5 @@
 import { collectOrders, summarize } from '../src/omni.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -9,6 +9,9 @@ import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
 import { planSync, applySync, applyPrice, writeAudit } from '../src/stock-sync.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
+import { runSync, loadSyncLedger, syncOverview } from '../src/mekari/sync.js';
+import { ensureCustomers } from '../src/mekari/setup.js';
+import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
 import {
   COOKIE_NAME, isConfigured, credentialsMatch, tokenMatches, parseCookies,
@@ -202,6 +205,34 @@ async function handleWrite(form, ip) {
     };
   }
 
+  if (action === 'mekari_sync') {
+    if (!isMekariConfigured()) throw new Error('kredensial Mekari belum diisi');
+    if (process.env.MEKARI_SYNC_LIVE !== '1') {
+      throw new Error('sinkronisasi masih dikunci - setel MEKARI_SYNC_LIVE=1 dulu');
+    }
+
+    // Orders are re-read rather than trusted from the form: the page only ever carries a
+    // count, so nothing a browser sends can decide what gets booked.
+    const range = resolveRange({ preset: '7d' });
+    const { orders } = await collectOrders({ range, tracking: false });
+    const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
+
+    await ensureCustomers({ dryRun: false });
+    const result = await runSync({ orders, depositTo, dryRun: false, limit: 200, deadlineMs: 90_000 });
+    invalidate('jurnal');
+
+    if (result.skipped) return { view: 'jurnal', message: 'Sinkronisasi lain sedang berjalan' };
+    const failed = result.results.filter((r) => r.status === 'failed');
+    console.log(`dashboard: mekari_sync ${result.created} created, ${result.exists} existing, ${result.failed} failed`);
+    return {
+      view: 'jurnal',
+      message: failed.length === 0
+        ? `${result.created} faktur dibuat di Jurnal${result.exists ? `, ${result.exists} sudah ada` : ''}` +
+          (result.ranOutOfTime ? `, ${result.remaining} sisa akan dikirim otomatis` : '')
+        : `${result.created} berhasil, ${failed.length} gagal - ${failed[0].customId}: ${failed[0].error}`,
+    };
+  }
+
   throw new Error(`aksi tidak dikenal: ${action}`);
 }
 
@@ -379,7 +410,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    const wantsTracking = view !== 'picklist';
+    const wantsTracking = view !== 'picklist' && view !== 'jurnal';
     // Keyed by the range's identity, not its computed bounds: a rolling preset recomputes
     // `since`/`until` from Date.now() on every request, so timestamps would make the key
     // unique each time and the cache would never hit.
@@ -402,6 +433,19 @@ export default async function handler(req, res) {
     if (view === 'process') {
       console.log(`dashboard/process: ${data.orders.length} orders in range`);
       send(200, renderProcess({ ...data, csrf, flash }));
+      return;
+    }
+
+    if (view === 'jurnal') {
+      const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })));
+      const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
+      const overview = syncOverview({ orders: data.orders, ledger, depositTo });
+      console.log(`dashboard/jurnal: ${overview.synced} synced, ${overview.queued} queued, ${overview.broken} broken`);
+      send(200, renderJurnal({
+        ...data, overview, csrf, flash, depositTo,
+        live: process.env.MEKARI_SYNC_LIVE === '1',
+        configured: isMekariConfigured(),
+      }));
       return;
     }
 

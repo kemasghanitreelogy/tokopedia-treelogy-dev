@@ -14,6 +14,9 @@ import { buildPicklist } from './picklist.js';
 import { readCatalog } from './inventory.js';
 import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './ledger.js';
 import { planSync, applySync, describePlan } from './stock-sync.js';
+import { runSync, loadSyncLedger } from './mekari/sync.js';
+import { ensureCustomers, findDepositAccount } from './mekari/setup.js';
+import { isMekariConfigured } from './mekari/client.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -35,6 +38,9 @@ Usage:
   npm run stock:plan          Rencana sinkronisasi (dry-run, tidak menulis apa pun)
   npm run stock:apply         Terapkan rencana ke marketplace (butuh --yes)
   npm run shopify             Cek koneksi Shopify (toko, produk, pesanan)
+  npm run mekari:setup        Siapkan pelanggan per channel di Jurnal (butuh --yes)
+  npm run mekari:plan         Rencana faktur ke Jurnal (dry-run, tidak menulis)
+  npm run mekari:sync         Kirim faktur ke Jurnal (butuh --yes)
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -637,6 +643,100 @@ function describeApiError(error) {
   return parts.join(' | ');
 }
 
+/** Orders for the Mekari commands, over whatever window was asked for. */
+async function mekariOrders(args) {
+  const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
+  const { orders, errors } = await collectOrders({ range: resolveRange({ preset }), tracking: false });
+  // Posting is additive, so a dead channel only delays its own orders - but say so, never
+  // let a missing channel read as "nothing to post".
+  for (const [channel, message] of Object.entries(errors)) {
+    console.log(warn(`${channel} gagal dibaca: ${message} - pesanannya dilewati run ini`));
+  }
+  return orders;
+}
+
+const depositArg = (args) =>
+  args.find((a) => a.startsWith('--deposit='))?.slice('--deposit='.length)
+  ?? process.env.MEKARI_DEPOSIT_ACCOUNT
+  ?? null;
+
+function printSyncResult(result) {
+  const failed = result.results.filter((r) => r.status === 'failed');
+  const total = result.results.reduce((n, r) => n + (r.total ?? 0), 0);
+
+  console.log(`\n  ${result.considered} pesanan diproses` +
+    `  ·  dibuat ${result.created}  ·  sudah ada ${result.exists}  ·  gagal ${result.failed}`);
+  console.log(`  nilai  Rp${total.toLocaleString('id-ID')}\n`);
+
+  for (const r of failed) console.log(fail(`${r.customId}: ${r.error}`));
+  return failed.length === 0 ? 0 : 1;
+}
+
+async function cmdMekariSetup(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+
+  const preview = await ensureCustomers({ dryRun: true });
+  console.log(`\n  sudah ada : ${preview.existing.join(', ') || '-'}`);
+  console.log(`  akan dibuat: ${preview.missing.join(', ') || '-'}\n`);
+
+  const deposit = depositArg(args);
+  if (deposit) {
+    const account = await findDepositAccount(deposit);
+    console.log(account ? ok(`akun deposit "${deposit}" ditemukan`) : fail(`akun deposit "${deposit}" tidak ada di Jurnal`));
+    if (!account) return 1;
+  }
+
+  if (preview.missing.length === 0) { console.log(`\n${ok('tidak ada yang perlu dibuat')}\n`); return 0; }
+  if (!args.includes('--yes')) { console.log(`\n${warn('belum dibuat. Ulangi dengan --yes')}\n`); return 1; }
+
+  const result = await ensureCustomers({ dryRun: false });
+  console.log(`\n${ok(`pelanggan dibuat: ${result.created.join(', ')}`)}\n`);
+  return 0;
+}
+
+async function cmdMekariPlan(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+
+  const orders = await mekariOrders(args);
+  const result = await runSync({ orders, depositTo: depositArg(args), dryRun: true, limit: 1000 });
+  const code = printSyncResult(result);
+  console.log(info('dry-run: tidak ada yang ditulis. Kirim dengan `npm run mekari:sync -- --yes`') + '\n');
+  return code;
+}
+
+async function cmdMekariSync(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+
+  const orders = await mekariOrders(args);
+  const depositTo = depositArg(args);
+
+  const preview = await runSync({ orders, depositTo, dryRun: true, limit: 1000 });
+  printSyncResult(preview);
+
+  if (preview.considered === 0) { console.log(`${ok('semua pesanan sudah ada di Jurnal')}\n`); return 0; }
+  if (!args.includes('--yes')) { console.log(`${warn('belum dikirim. Ulangi dengan --yes untuk menulis ke Jurnal')}\n`); return 1; }
+
+  // The customers have to exist before the first invoice can name one.
+  await ensureCustomers({ dryRun: false });
+
+  const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
+  const result = await runSync({ orders, depositTo, dryRun: false, limit });
+  if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
+  return printSyncResult(result);
+}
+
+async function cmdMekariStatus() {
+  const ledger = await loadSyncLedger();
+  const rows = Object.entries(ledger.orders ?? {});
+  const total = rows.reduce((n, [, v]) => n + (v.total ?? 0), 0);
+  console.log(`\n  ${rows.length} faktur tercatat  ·  Rp${total.toLocaleString('id-ID')}\n`);
+  for (const [customId, row] of rows.slice(-10)) {
+    console.log(`  ${customId.padEnd(34)} faktur ${String(row.invoice_id ?? '-').padEnd(12)} ${row.at ?? ''}`);
+  }
+  console.log('');
+  return 0;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -652,6 +752,10 @@ const COMMANDS = {
   'stock:seed': cmdStockSeed,
   'stock:plan': cmdStockPlan,
   'stock:apply': cmdStockApply,
+  'mekari:setup': cmdMekariSetup,
+  'mekari:plan': cmdMekariPlan,
+  'mekari:sync': cmdMekariSync,
+  'mekari:status': cmdMekariStatus,
   doctor: cmdDoctor,
   api: cmdApi,
 };

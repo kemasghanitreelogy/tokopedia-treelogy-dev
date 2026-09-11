@@ -1,5 +1,6 @@
 import { shopifyGraphql, paginate } from './client.js';
 import { loadShopifyConfig } from './config.js';
+import { financeFromShopify } from '../omni.js';
 
 /**
  * Products and orders, shaped to match the other channels.
@@ -52,8 +53,13 @@ query TreelogyOrders($cursor: String, $query: String) {
       totalPriceSet { shopMoney { amount currencyCode } }
       ${withCustomer ? 'customer { displayName }' : ''}
       lineItems(first: 50) {
-        nodes { quantity sku title }
+        nodes {
+          quantity sku title
+          originalUnitPriceSet { shopMoney { amount } }
+          totalDiscountSet { shopMoney { amount } }
+        }
       }
+      shippingLine { originalPriceSet { shopMoney { amount } } }
       fulfillments(first: 5) {
         trackingInfo { number company }
       }
@@ -162,6 +168,7 @@ export async function fetchOrders({ since, until, max = 800, config = loadShopif
       buyer: order.customer?.displayName ?? '',
       items: order.lineItems?.nodes?.length ?? 0,
       lines: lines(order),
+      finance: financeFromShopify(order),
     };
   });
 }

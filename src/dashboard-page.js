@@ -66,7 +66,7 @@ const svg = (name, cls = '') =>
 
 export const VIEWS = {
   orders: 'Pesanan', process: 'Proses', picklist: 'Picklist', labels: 'Label',
-  stock: 'Stok', products: 'Produk',
+  stock: 'Stok', products: 'Produk', jurnal: 'Jurnal',
 };
 
 function viewNav(current, rangeQuery) {
@@ -1120,6 +1120,93 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
 /** Stock view: the ledger is the master, and every deviation is named. */
 
 
+
+const JURNAL_STATE = {
+  synced: { label: 'Tersinkron', tone: 'good' },
+  queued: { label: 'Antre', tone: 'warn' },
+  skipped: { label: 'Dilewati', tone: 'done' },
+  broken: { label: 'Perlu ditinjau', tone: 'bad' },
+};
+
+/**
+ * Jurnal view: what is already in the books, and what is waiting to go in.
+ *
+ * Accounting is the one place where an optimistic display does real harm, so a row says
+ * "tersinkron" only when the ledger holds an invoice id for it. Everything else is
+ * explicitly queued, deliberately skipped, or flagged - there is no fourth, quieter
+ * state where an order simply disappears.
+ */
+export function renderJurnal({
+  overview, range, errors, shopeeShop, generatedAt, csrf, flash, live, depositTo, configured,
+}) {
+  const order = { synced: 0, queued: 1, broken: 2, skipped: 3 };
+  const rows = [...overview.rows]
+    .sort((a, b) => (order[a.state] - order[b.state]) || (b.order.createdAt - a.order.createdAt))
+    .map((r) => {
+      const meta = CHANNELS[r.order.channel];
+      const state = JURNAL_STATE[r.state];
+      return `<tr data-state="${r.state}">
+        <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
+        <td class="mono nowrap">${escape(r.order.id)}</td>
+        <td class="nowrap dim">${escape(dateTime(r.order.createdAt))}</td>
+        <td class="num mono">${r.total ? escape(rupiah(r.total)) : '<span class="dim">&mdash;</span>'}</td>
+        <td><span class="pill pill--${state.tone}">${escape(state.label)}</span></td>
+        <td class="dim">${escape(r.reason ?? (r.invoiceId ? `faktur ${r.invoiceId}` : ''))}</td>
+      </tr>`;
+    })
+    .join('');
+
+  // The button is offered only when pressing it would actually work: the POST refuses
+  // while MEKARI_SYNC_LIVE is off, and a control that always errors is worse than none.
+  const canPost = configured && live && overview.queued > 0;
+
+  return shell({
+    title: 'Mekari Jurnal',
+    range,
+    errors,
+    shopeeShop,
+    generatedAt,
+    view: 'jurnal',
+    flash,
+    kpis: `
+      <div class="strip">
+        ${stat('Tersinkron', String(overview.synced))}
+        ${stat('Nilai tersinkron', rupiah(overview.syncedValue))}
+        ${stat('Antre', String(overview.queued), overview.queued > 0 ? 'flag' : 'ok')}
+        ${stat('Nilai antre', rupiah(overview.queuedValue))}
+        ${overview.broken > 0 ? stat('Perlu ditinjau', String(overview.broken), 'stop') : ''}
+        <span class="strip__grow"></span>
+        <span class="note">${overview.ledgerTotal} faktur tercatat seluruhnya${
+          depositTo ? ` &middot; lunas ke ${escape(depositTo)}` : ' &middot; faktur dibiarkan terbuka'}</span>
+      </div>`,
+    body: `
+      ${configured ? '' : '<div class="alert">' + svg('warn') + '<span>Kredensial Mekari belum diisi, jadi tidak ada yang bisa dikirim.</span></div>'}
+      <div class="alert ${live ? 'alert--ok' : 'alert--soft'}">
+        ${svg(live ? 'check' : 'warn')}
+        <span>${live
+          ? 'Sinkronisasi otomatis <b>aktif</b> &mdash; pesanan berbayar dikirim ke Jurnal tiap 15 menit.'
+          : 'Sinkronisasi otomatis <b>belum aktif</b>. Setel <span class="mono">MEKARI_SYNC_LIVE=1</span> untuk menyalakannya; sampai itu semua jalur hanya membaca.'}</span>
+      </div>
+      ${canPost ? `<form method="post" data-confirm="Kirim ${overview.queued} faktur senilai ${escape(rupiah(overview.queuedValue))} ke Mekari Jurnal?">
+        <input type="hidden" name="csrf" value="${escape(csrf)}">
+        <input type="hidden" name="view" value="jurnal">
+        <input type="hidden" name="action" value="mekari_sync">
+        <div class="apply">
+          <button type="submit">Kirim ${overview.queued} faktur sekarang</button>
+          <span class="note">Faktur yang sudah ada tidak akan dibuat dua kali.</span>
+        </div>
+      </form>` : ''}
+      ${rows
+        ? `<div class="scroll"><table class="dense">
+            <thead><tr>
+              <th>Kanal</th><th>Pesanan</th><th>Tanggal</th><th class="num">Nilai</th><th>Status</th><th>Catatan</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+          <div class="foot"><span>${overview.rows.length} pesanan pada rentang ini</span></div>`
+        : '<p class="empty">Tidak ada pesanan pada rentang ini.</p>'}`,
+  });
+}
 
 /**
  * Label view: pick the parcels to print, get one PDF sized for the thermal printer.

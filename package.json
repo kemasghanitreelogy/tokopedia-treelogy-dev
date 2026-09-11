@@ -37,6 +37,10 @@
     "shopee:shop": "node bin/shopee.mjs shop",
     "shopee:orders": "node bin/shopee.mjs orders",
     "shopee:items": "node bin/shopee.mjs items",
+    "mekari:setup": "node bin/tts.mjs mekari:setup",
+    "mekari:plan": "node bin/tts.mjs mekari:plan",
+    "mekari:sync": "node bin/tts.mjs mekari:sync",
+    "mekari:status": "node bin/tts.mjs mekari:status",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

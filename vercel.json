@@ -11,6 +11,9 @@
     "api/dashboard.js": {
       "maxDuration": 120
     },
+    "api/mekari-sync.js": {
+      "maxDuration": 120
+    },
     "api/**/*.js": {
       "maxDuration": 30
     }
@@ -32,6 +35,12 @@
           "value": "no-referrer"
         }
       ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/mekari-sync",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

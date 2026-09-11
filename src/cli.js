@@ -15,7 +15,7 @@ import { readCatalog } from './inventory.js';
 import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './ledger.js';
 import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
-import { ensureCustomers, findDepositAccount } from './mekari/setup.js';
+import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from './mekari/setup.js';
 import { isMekariConfigured } from './mekari/client.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
@@ -680,9 +680,15 @@ function printSyncResult(result) {
 async function cmdMekariSetup(config, args = []) {
   if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
 
-  const preview = await ensureCustomers({ dryRun: true });
-  console.log(`\n  sudah ada : ${preview.existing.join(', ') || '-'}`);
-  console.log(`  akan dibuat: ${preview.missing.join(', ') || '-'}\n`);
+  const preview = await ensureReady({ dryRun: true });
+  console.log(`\n  pelanggan terbaca   : ${preview.customers.existing.join(', ') || '-'}`);
+  console.log(`  pelanggan akan dibuat: ${preview.customers.missing.join(', ') || '-'}`);
+  console.log(`  produk terbaca      : ${preview.products.existing}`);
+  console.log(`  produk akan dibuat  : ${preview.products.missing.length}${
+    preview.products.missing.length ? ` (${preview.products.missing.slice(0, 6).join(', ')}${preview.products.missing.length > 6 ? ', ...' : ''})` : ''}`);
+  // "akan dibuat" is a guess, not a promise: Jurnal's contact list does not report what it
+  // holds, so anything already there comes back as a 409 and is counted as existing.
+  console.log(`  ${'(yang ternyata sudah ada akan dilewati, bukan digandakan)'}\n`);
 
   const deposit = depositArg(args);
   if (deposit) {
@@ -691,11 +697,13 @@ async function cmdMekariSetup(config, args = []) {
     if (!account) return 1;
   }
 
-  if (preview.missing.length === 0) { console.log(`\n${ok('tidak ada yang perlu dibuat')}\n`); return 0; }
-  if (!args.includes('--yes')) { console.log(`\n${warn('belum dibuat. Ulangi dengan --yes')}\n`); return 1; }
+  const todo = preview.customers.missing.length + preview.products.missing.length;
+  if (todo === 0) { console.log(`${ok('tidak ada yang perlu dibuat')}\n`); return 0; }
+  if (!args.includes('--yes')) { console.log(`${warn('belum dibuat. Ulangi dengan --yes')}\n`); return 1; }
 
-  const result = await ensureCustomers({ dryRun: false });
-  console.log(`\n${ok(`pelanggan dibuat: ${result.created.join(', ')}`)}\n`);
+  const result = await ensureReady({ dryRun: false });
+  console.log(`${ok(`pelanggan dibuat: ${result.customers.created.join(', ') || '-'}`)}`);
+  console.log(`${ok(`produk dibuat: ${result.products.created.length}, sudah ada: ${result.products.alreadyThere?.length ?? 0}`)}\n`);
   return 0;
 }
 
@@ -721,8 +729,9 @@ async function cmdMekariSync(config, args = []) {
   if (preview.considered === 0) { console.log(`${ok('semua pesanan sudah ada di Jurnal')}\n`); return 0; }
   if (!args.includes('--yes')) { console.log(`${warn('belum dikirim. Ulangi dengan --yes untuk menulis ke Jurnal')}\n`); return 1; }
 
-  // The customers have to exist before the first invoice can name one.
-  await ensureCustomers({ dryRun: false });
+  // Customers and products both have to exist before an invoice can name them; Jurnal
+  // rejects the whole invoice otherwise.
+  await ensureReady({ dryRun: false });
 
   const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
   const result = await runSync({ orders, depositTo, dryRun: false, limit });

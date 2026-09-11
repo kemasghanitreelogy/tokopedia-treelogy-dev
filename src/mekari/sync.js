@@ -1,6 +1,6 @@
 import { put, get } from '@vercel/blob';
 import { mekari, isMekariConfigured, MekariError } from './client.js';
-import { buildInvoice, verifyInvoice, customIdFor, CUSTOMER_NAMES } from './invoice.js';
+import { buildInvoice, verifyInvoice, customIdFor, customerFor, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact } from './setup.js';
 import { loadConfig } from '../config.js';
@@ -106,7 +106,10 @@ export async function findExisting(order) {
     const invoice = found?.sales_invoice ?? found;
     return invoice?.id ? invoice : null;
   } catch (error) {
+    // Jurnal answers "no such invoice" with 422 and a message, not with 404. Reading that
+    // as a real error was what made every duplicate check fail on the first live run.
     if (error.status === 404) return null;
+    if (error.status === 422 && /not found/i.test(JSON.stringify(error.body ?? ''))) return null;
     throw error;
   }
 }
@@ -194,6 +197,14 @@ export async function postOrder(order, { depositTo = null, dryRun = true } = {})
     }
   } catch (error) {
     return { customId, id: order.id, channel: order.channel, status: 'failed', error: `cek duplikat gagal: ${error.message}` };
+  }
+
+  // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now
+  // names its own buyer, so the contact is made to exist first.
+  try {
+    await ensureContact(customerFor(order));
+  } catch (error) {
+    return { customId, id: order.id, channel: order.channel, status: 'failed', error: `kontak gagal: ${error.message}` };
   }
 
   try {

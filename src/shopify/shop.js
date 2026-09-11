@@ -52,7 +52,7 @@ query TreelogyOrders($cursor: String, $query: String) {
       displayFulfillmentStatus
       paymentGatewayNames
       totalPriceSet { shopMoney { amount currencyCode } }
-      ${withCustomer ? 'customer { displayName }' : ''}
+      ${withCustomer ? 'customer { displayName defaultEmailAddress { emailAddress } }' : ''}
       lineItems(first: 50) {
         nodes {
           quantity sku title
@@ -171,6 +171,9 @@ export function mapOrder(order) {
     carrier: tracking.company ?? '',
     tracking: tracking.number ?? '',
     buyer: order.customer?.displayName ?? '',
+    // Only Shopify knows who the buyer actually is; the marketplaces mask it and never
+    // send an address at all.
+    buyerEmail: order.customer?.defaultEmailAddress?.emailAddress ?? '',
     // How the buyer paid decides the order-code prefix (Xendit vs Shopify Payments).
     gateways: order.paymentGatewayNames ?? [],
     items: order.lineItems?.nodes?.length ?? 0,
@@ -191,7 +194,7 @@ query TreelogyOrderByGid($id: ID!) {
     displayFulfillmentStatus
     paymentGatewayNames
     totalPriceSet { shopMoney { amount currencyCode } }
-    customer { displayName }
+    customer { displayName defaultEmailAddress { emailAddress } }
     lineItems(first: 50) {
       nodes {
         quantity sku title
@@ -204,7 +207,7 @@ query TreelogyOrderByGid($id: ID!) {
   }
 }`;
 
-const ORDER_BY_GID_QUERY_NO_CUSTOMER = ORDER_BY_GID_QUERY.replace('customer { displayName }', '');
+const ORDER_BY_GID_QUERY_NO_CUSTOMER = ORDER_BY_GID_QUERY.replace('customer { displayName defaultEmailAddress { emailAddress } }', '');
 
 /**
  * Read exactly one order.

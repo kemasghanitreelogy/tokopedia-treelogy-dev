@@ -14,7 +14,7 @@ import { buildManualOrder, suggestCode } from '../src/mekari/manual.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
-import { ensureCustomers } from '../src/mekari/setup.js';
+import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
 import {
@@ -221,7 +221,7 @@ async function handleWrite(form, ip) {
     const { orders } = await collectOrders({ range, tracking: false });
     const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
-    await ensureCustomers({ dryRun: false });
+    await ensureReady({ dryRun: false });
     const result = await runSync({ orders, depositTo, dryRun: false, limit: 200, deadlineMs: 90_000 });
     invalidate('jurnal');
 

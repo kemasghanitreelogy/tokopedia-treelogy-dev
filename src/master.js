@@ -48,6 +48,12 @@ export const PRODUCTS = [
   { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set' },
   { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set' },
   { sku: 'The-Inside-&-Out30', name: 'Inside Out Moringa Protocol', variant: '30 hari', category: 'set' },
+  { sku: 'The-Inside-&-Out60', name: 'Inside Out Moringa Protocol', variant: '60 hari', category: 'set' },
+  // Named from its SKU: it sold 33 times in the last 30 days but is no longer listed on
+  // any channel, so the only description of it left is the code itself. Its orders carried
+  // the parent listing's title ("Inside Out Moringa Protocol"), which would make it
+  // indistinguishable from the 30- and 60-day entries above.
+  { sku: 'The-Movement-&-Relief', name: 'The Movement & Relief', category: 'set' },
   { sku: 'The-Discovery-Pack', name: 'The Discovery Pack', variant: 'listing Shopee', category: 'set' },
 
   // --- Free gift

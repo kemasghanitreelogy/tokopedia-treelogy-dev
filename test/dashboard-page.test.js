@@ -35,7 +35,7 @@ const common = { range, errors: {}, shopeeShop: null, generatedAt: Date.now(), c
 
 const booked = {
   ...order,
-  finance: { lines: [{ sku: 'A', name: 'Produk A', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 0 },
+  finance: { lines: [{ sku: 'OMP-45-001', name: 'Produk A', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 0 },
 };
 const jurnalOverview = (over = {}) => syncOverview({
   orders: [booked, { ...booked, id: 'BATAL', stage: 'cancelled' }],

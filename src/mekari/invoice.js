@@ -18,7 +18,13 @@ import { orderCode, orderPrefix, termDaysFor, PREFIXES } from './prefix.js';
  *   timing    an invoice is raised once the order is paid.
  */
 
-/** One customer per channel: marketplace buyers are anonymous, the channel is not. */
+/**
+ * The fallback customer, used only when an order names no buyer at all.
+ *
+ * Every invoice is raised against the person who actually bought - that is what makes it
+ * match the order - but a marketplace occasionally sends nothing usable, and an invoice
+ * still has to name somebody.
+ */
 export const CUSTOMER_NAMES = {
   tokopedia: 'Tokopedia',
   tiktok_shop: 'TikTok Shop',
@@ -39,6 +45,20 @@ export const customIdFor = (order) => `TRL-${order.channel}-${order.id}`;
 
 const rupiah = (n) => Math.round(Number(n) || 0);
 
+/**
+ * Who the invoice is raised against.
+ *
+ * Shopify gives a real name and address. The marketplaces mask theirs - Tokopedia and
+ * TikTok send "N*** W***astuti", Shopee sends a username - so the contact created for
+ * them is only as good as what they disclose. Two buyers whose masked names collide will
+ * share a contact; that is a property of the data, not of this code, and the order code
+ * in the memo still tells the two invoices apart.
+ */
+export function customerFor(order) {
+  const named = String(order.customer ?? order.buyer ?? '').trim();
+  return named || CUSTOMER_NAMES[order.channel] || (CHANNELS[order.channel]?.label ?? order.channel);
+}
+
 /** Jurnal takes dates as YYYY-MM-DD; the books follow the seller's own day, so WIB. */
 export function jurnalDate(epochSeconds) {
   return new Date((epochSeconds + 7 * 3600) * 1000).toISOString().slice(0, 10);
@@ -55,6 +75,23 @@ export function productNameFor(line) {
   const product = findProduct(line.sku);
   if (product) return product.variant ? `${product.name} - ${product.variant}` : product.name;
   return line.name || line.sku || 'Produk tanpa nama';
+}
+
+/**
+ * The code Jurnal matches the line against.
+ *
+ * Matched on code rather than name because a name can be edited inside Jurnal, and the
+ * day someone tidies one up every later invoice for it would be rejected. The master
+ * catalogue resolves a channel's own SKU onto ours, so two channels spelling the same
+ * product differently still land on one Jurnal product.
+ */
+export function productCodeFor(line) {
+  const product = findProduct(line.sku);
+  if (product) return product.sku;
+  // Jurnal rejects a whole invoice whose line names a product it does not hold, so an
+  // unmappable SKU is stopped here, where it reads as one order to look at, rather than
+  // at the API, where it reads as an unexplained 422.
+  throw new InvoiceError(`SKU ${line.sku || '(kosong)'} tidak ada di data master`);
 }
 
 export class InvoiceError extends Error {
@@ -83,15 +120,25 @@ export function buildInvoice({ order, depositTo = null }) {
     if (!Number.isInteger(line.qty) || line.qty <= 0) {
       throw new InvoiceError(`${order.id}: kuantitas tidak valid pada ${line.sku}`);
     }
+    // Jurnal reads a line's `discount` as a PERCENTAGE, not an amount - proved twice
+    // against the live account, which rejected a Rp125,000 discount with "Discount cannot
+    // exceed the total item amount" even with discount_type_name: Value. So the seller's
+    // discount is folded into the rate, which makes the total provably exact, and the
+    // amount it came off is kept in the description so nothing is lost.
+    const name = productNameFor(line);
     return {
       quantity: line.qty,
-      rate,
-      discount,
-      product_name: productNameFor(line),
+      rate: rate - discount,
+      product_code: productCodeFor(line),
+      // The readable name travels as the line description, so the invoice still reads
+      // properly without making the name the thing Jurnal has to match on.
+      description: discount > 0
+        ? `${name} (disk. ${discount.toLocaleString('id-ID')} dari ${rate.toLocaleString('id-ID')})`
+        : name,
     };
   });
 
-  const goods = lines.reduce((n, l) => n + (l.rate - l.discount) * l.quantity, 0);
+  const goods = lines.reduce((n, l) => n + l.rate * l.quantity, 0);
   const shipping = rupiah(finance.shipping);
   if (shipping < 0) throw new InvoiceError(`${order.id}: ongkir negatif`);
 
@@ -106,19 +153,27 @@ export function buildInvoice({ order, depositTo = null }) {
     transaction_date: date,
     // Net 14 for every source except consignment, which is Net 7.
     due_date: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600),
-    // A marketplace buyer is anonymous, so the channel is the customer. Someone typing in
-    // a consignment or a wholesale order knows exactly who bought, so they say.
-    person_name: order.customer || CUSTOMER_NAMES[order.channel] || channel,
+    person_name: customerFor(order),
+    // Jurnal needs a term it already holds, or the invoice shows as "Custom" with no
+    // term at all. Net 14 and Net 7 were created to match the order-code table; the
+    // due date is still sent so the two can never disagree.
+    term_name: `Net ${termDaysFor(order)}`,
     custom_id: customIdFor(order),
     reference_no: code,
     transaction_lines_attributes: lines,
     shipping_price: shipping,
+    // Without this Jurnal silently stores shipping_price as zero and the invoice comes
+    // out short by exactly the postage - five invoices were booked that way before it
+    // was caught. Only set when there is postage to charge, so an invoice with none does
+    // not claim to have been shipped.
+    ...(shipping > 0 ? { is_shipped: true } : {}),
     // The buyer's name is masked by the marketplaces, so it belongs in the memo rather
     // than as a contact that could never be reached.
-    memo: [channel, code, order.buyer && `pembeli ${order.buyer}`, order.note]
-      .filter(Boolean).join(' · '),
+    memo: [channel, code, order.note].filter(Boolean).join(' · '),
   };
 
+  // Only Shopify supplies one, and only when the token carries read_customers.
+  if (order.buyerEmail) invoice.email = order.buyerEmail;
   if (order.carrier) invoice.ship_via = order.carrier;
   if (order.tracking) invoice.tracking_no = order.tracking;
 
@@ -139,11 +194,22 @@ export function buildInvoice({ order, depositTo = null }) {
  * a wrong number in accounting is worse than no number at all.
  */
 export function verifyInvoice(payload, expectedTotal) {
-  const lines = payload.sales_invoice.transaction_lines_attributes;
-  const goods = lines.reduce((n, l) => n + (l.rate - l.discount) * l.quantity, 0);
-  const total = goods + (payload.sales_invoice.shipping_price ?? 0);
+  const invoice = payload.sales_invoice;
+  const lines = invoice.transaction_lines_attributes;
+  const goods = lines.reduce((n, l) => n + l.rate * l.quantity, 0);
+  const shipping = invoice.shipping_price ?? 0;
+  const total = goods + shipping;
   if (total !== expectedTotal) {
     throw new InvoiceError(`total faktur ${total} tidak sama dengan ${expectedTotal}`);
+  }
+  // Postage that is charged but not declared shipped is stored as zero by Jurnal, so the
+  // invoice would be short. Catching it here is the difference between a refusal and a
+  // wrong number in the accounts.
+  if (shipping > 0 && invoice.is_shipped !== true) {
+    throw new InvoiceError(`ongkir ${shipping} tidak akan tersimpan tanpa is_shipped`);
+  }
+  if (lines.some((l) => l.discount !== undefined)) {
+    throw new InvoiceError('diskon per baris dibaca Jurnal sebagai persen - harus dilipat ke rate');
   }
   if (payload.sales_invoice.deposit !== undefined && payload.sales_invoice.deposit !== total) {
     throw new InvoiceError(`deposit ${payload.sales_invoice.deposit} tidak sama dengan total ${total}`);

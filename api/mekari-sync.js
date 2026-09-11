@@ -1,6 +1,6 @@
 import { collectOrders } from '../src/omni.js';
 import { runSync } from '../src/mekari/sync.js';
-import { ensureCustomers } from '../src/mekari/setup.js';
+import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
 import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/dashboard-auth.js';
@@ -77,7 +77,7 @@ export default async function handler(req, res) {
     // A channel that failed to answer simply has no orders in this run; posting is
     // additive and idempotent, so the next tick picks up whatever was missed. What must
     // not happen is treating "no data" as "nothing to post" in the report.
-    const customers = dryRun ? null : await ensureCustomers({ dryRun: false });
+    const prepared = dryRun ? null : await ensureReady({ dryRun: false });
 
     const result = await runSync({ orders, depositTo, dryRun, limit, deadlineMs: POST_BUDGET_MS });
 
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
       window_days: days,
       orders_seen: orders.length,
       channel_errors: errors,
-      customers,
+      prepared,
       took_ms: Date.now() - startedAt,
       ...result,
       // The per-order payloads are large and only useful when debugging a mapping.

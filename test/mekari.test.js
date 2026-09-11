@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import { signRequest, httpDate } from '../src/mekari/client.js';
 import {
-  buildInvoice, verifyInvoice, customIdFor, jurnalDate, productNameFor, InvoiceError, CUSTOMER_NAMES,
+  buildInvoice, verifyInvoice, customIdFor, jurnalDate, productNameFor, productCodeFor,
+  InvoiceError, CUSTOMER_NAMES,
 } from '../src/mekari/invoice.js';
 import { postable, postOrder, POSTABLE_STAGES } from '../src/mekari/sync.js';
 
@@ -14,7 +15,7 @@ const order = (over = {}) => ({
   createdAt: 1_757_500_000,
   buyer: 'nurizaamelia',
   carrier: 'JNE Reguler',
-  finance: { lines: [{ sku: 'MSO-30', name: 'Moringa Seed Oil 30ml', qty: 1, unitPrice: 505_000, unitDiscount: 0 }], shipping: 0 },
+  finance: { lines: [{ sku: 'OMO-30-001', name: 'Moringa Seed Oil 30ml', qty: 1, unitPrice: 505_000, unitDiscount: 0 }], shipping: 0 },
   ...over,
 });
 
@@ -62,7 +63,8 @@ test('invoice totals goods plus shipping and carries the reference', () => {
   const { sales_invoice: invoice, expectedTotal } = buildInvoice({ order: order() });
   assert.equal(expectedTotal, 505_000);
   assert.equal(verifyInvoice({ sales_invoice: invoice }, expectedTotal), 505_000);
-  assert.equal(invoice.person_name, CUSTOMER_NAMES.shopee);
+  assert.equal(invoice.person_name, 'nurizaamelia', 'faktur atas nama pembelinya');
+  assert.equal(invoice.term_name, 'Net 14');
   assert.equal(invoice.reference_no, 'SP-260911QF5PA82R');
   assert.ok(invoice.due_date > invoice.transaction_date, 'termin Net 14 harus menggeser jatuh tempo');
   assert.equal(invoice.ship_via, 'JNE Reguler');
@@ -71,14 +73,14 @@ test('invoice totals goods plus shipping and carries the reference', () => {
 
 test('a seller-funded discount reduces the line, quantity multiplies it', () => {
   const { sales_invoice: invoice, expectedTotal } = buildInvoice({
-    order: order({ finance: { lines: [{ sku: 'MSO-30', qty: 3, unitPrice: 100_000, unitDiscount: 10_000 }], shipping: 15_000 } }),
+    order: order({ finance: { lines: [{ sku: 'OMO-30-001', qty: 3, unitPrice: 100_000, unitDiscount: 10_000 }], shipping: 15_000 } }),
   });
   assert.equal(expectedTotal, 3 * 90_000 + 15_000);
   assert.equal(verifyInvoice({ sales_invoice: invoice }, expectedTotal), 285_000);
 });
 
 test('deposit_to marks the invoice paid for the exact total', () => {
-  const built = buildInvoice({ order: order({ finance: { lines: [{ sku: 'X', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 9_000 } }), depositTo: 'Cash' });
+  const built = buildInvoice({ order: order({ finance: { lines: [{ sku: 'OMC-90-001', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 9_000 } }), depositTo: 'Cash' });
   assert.equal(built.sales_invoice.deposit, 109_000);
   assert.equal(built.sales_invoice.deposit_to_name, 'Cash');
   assert.equal(verifyInvoice(built, built.expectedTotal), 109_000);
@@ -99,11 +101,11 @@ test('verification rejects a deposit that disagrees with the total', () => {
 test('malformed money never becomes an invoice', () => {
   const bad = [
     { lines: [], shipping: 0 },
-    { lines: [{ sku: 'A', qty: 0, unitPrice: 1000, unitDiscount: 0 }], shipping: 0 },
-    { lines: [{ sku: 'A', qty: 1.5, unitPrice: 1000, unitDiscount: 0 }], shipping: 0 },
-    { lines: [{ sku: 'A', qty: 1, unitPrice: -1, unitDiscount: 0 }], shipping: 0 },
-    { lines: [{ sku: 'A', qty: 1, unitPrice: 1000, unitDiscount: 2000 }], shipping: 0 },
-    { lines: [{ sku: 'A', qty: 1, unitPrice: 1000, unitDiscount: 0 }], shipping: -5 },
+    { lines: [{ sku: 'OMP-45-001', qty: 0, unitPrice: 1000, unitDiscount: 0 }], shipping: 0 },
+    { lines: [{ sku: 'OMP-45-001', qty: 1.5, unitPrice: 1000, unitDiscount: 0 }], shipping: 0 },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: -1, unitDiscount: 0 }], shipping: 0 },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: 1000, unitDiscount: 2000 }], shipping: 0 },
+    { lines: [{ sku: 'OMP-45-001', qty: 1, unitPrice: 1000, unitDiscount: 0 }], shipping: -5 },
   ];
   for (const finance of bad) {
     assert.throws(() => buildInvoice({ order: order({ finance }) }), InvoiceError, JSON.stringify(finance));
@@ -207,6 +209,29 @@ test('the prefix goes in reference_no, never in the idempotency key', () => {
 test('the memo carries the prefixed code too, so a search finds it either way', () => {
   const { sales_invoice: invoice } = buildInvoice({ order: order() });
   assert.match(invoice.memo, /SP-260911QF5PA82R/);
+});
+
+test('the invoice is raised against the buyer, falling back to the channel', () => {
+  assert.equal(buildInvoice({ order: order() }).sales_invoice.person_name, 'nurizaamelia');
+  // A marketplace that discloses nothing usable still has to name somebody.
+  assert.equal(buildInvoice({ order: order({ buyer: '' }) }).sales_invoice.person_name, CUSTOMER_NAMES.shopee);
+  assert.equal(buildInvoice({ order: order({ buyer: '   ' }) }).sales_invoice.person_name, CUSTOMER_NAMES.shopee);
+});
+
+test('an email is sent only when there is one, never as an empty field', () => {
+  assert.equal(buildInvoice({ order: order() }).sales_invoice.email, undefined);
+  assert.equal(
+    buildInvoice({ order: order({ buyerEmail: 'budi@contoh.id' }) }).sales_invoice.email,
+    'budi@contoh.id',
+  );
+});
+
+test('the term names one Jurnal actually holds, and agrees with the due date', () => {
+  // Sending a due date with no matching term makes Jurnal show the invoice as "Custom"
+  // with no term at all, which is what the books showed before this was added.
+  const online = buildInvoice({ order: order() }).sales_invoice;
+  assert.equal(online.term_name, 'Net 14');
+  assert.equal(online.due_date, jurnalDate(order().createdAt + 14 * 24 * 3600));
 });
 
 test('payment terms are Net 14, except consignment at Net 7', () => {
@@ -333,3 +358,63 @@ test('the form is offered exactly the five offline sources and real SKUs', () =>
 function findProductForTest(sku) {
   return SELLABLE.some((p) => p.sku === sku);
 }
+
+test('a line is matched on SKU, and an unknown SKU is stopped before the API sees it', () => {
+  const { sales_invoice: invoice } = buildInvoice({ order: order() });
+  const line = invoice.transaction_lines_attributes[0];
+  // Matched on code, not name: a name edited inside Jurnal must not break later invoices.
+  assert.equal(line.product_code, 'OMO-30-001');
+  assert.equal(line.description, 'Moringa Seed Oil - 30 ml');
+  assert.equal(line.product_name, undefined);
+
+  // Jurnal rejects the whole invoice for an unknown product with an unexplained 422, so
+  // it has to fail here instead, where it reads as one order to look at.
+  assert.throws(
+    () => buildInvoice({ order: order({ finance: { lines: [{ sku: 'tidak-ada', qty: 1, unitPrice: 1000, unitDiscount: 0 }], shipping: 0 } }) }),
+    /tidak ada di data master/,
+  );
+});
+
+test('every SKU that has ever sold is in the master catalogue', () => {
+  // Two were missing and cost 86 orders their invoices before this was checked.
+  for (const sku of ['The-Inside-&-Out30', 'The-Inside-&-Out60', 'The-Movement-&-Relief']) {
+    assert.ok(productCodeFor({ sku }), sku);
+  }
+});
+
+
+test('a line discount is folded into the rate, never sent as a field', () => {
+  // Jurnal reads a line `discount` as a percentage. Sending Rp125,000 is rejected with
+  // "Discount cannot exceed the total item amount" - confirmed twice against the live
+  // account - and anything it did accept would be wrong by orders of magnitude.
+  const built = buildInvoice({
+    order: order({ finance: { lines: [{ sku: 'OMC-180-001', qty: 2, unitPrice: 970_000, unitDiscount: 125_000 }], shipping: 0 } }),
+  });
+  const line = built.sales_invoice.transaction_lines_attributes[0];
+  assert.equal(line.discount, undefined, 'diskon per baris tidak boleh dikirim');
+  assert.equal(line.rate, 845_000);
+  assert.equal(built.expectedTotal, 1_690_000);
+  assert.match(line.description, /disk\. 125\.000 dari 970\.000/, 'diskonnya tetap tercatat');
+});
+
+test('verification refuses a payload that still carries a line discount', () => {
+  const built = buildInvoice({ order: order() });
+  built.sales_invoice.transaction_lines_attributes[0].discount = 1;
+  assert.throws(() => verifyInvoice(built, built.expectedTotal), /persen/);
+});
+
+test('postage is declared shipped, or it silently vanishes', () => {
+  // Jurnal stores shipping_price as zero unless is_shipped is true. Five invoices went
+  // into the books short by exactly the postage before this was caught.
+  const withPostage = buildInvoice({
+    order: order({ finance: { lines: [{ sku: 'OMC-90-001', qty: 1, unitPrice: 455_000, unitDiscount: 0 }], shipping: 15_000 } }),
+  });
+  assert.equal(withPostage.sales_invoice.is_shipped, true);
+  assert.equal(withPostage.expectedTotal, 470_000);
+
+  // An order with no postage must not claim to have been shipped.
+  assert.equal(buildInvoice({ order: order() }).sales_invoice.is_shipped, undefined);
+
+  withPostage.sales_invoice.is_shipped = false;
+  assert.throws(() => verifyInvoice(withPostage, withPostage.expectedTotal), /is_shipped/);
+});

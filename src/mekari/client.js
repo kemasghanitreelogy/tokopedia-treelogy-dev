@@ -52,8 +52,37 @@ export function signRequest({ method, path, date, clientId, clientSecret }) {
   };
 }
 
-const RETRY_DELAYS_MS = [400, 1000, 2400];
+// Jurnal rate-limits harder than a first read of the docs suggests, and it answers with a
+// bare 429 rather than a helpful body. Backoff runs into the tens of seconds because the
+// alternative - giving up - means a sale that is not in the books.
+const RETRY_DELAYS_MS = [1000, 3000, 8000, 20_000, 45_000, 90_000];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A floor on how close together two calls may be.
+ *
+ * Posting a day of orders is a burst of a hundred-odd requests, and a burst is exactly
+ * what a rate limiter exists to stop. Spacing them costs a few seconds over a whole run
+ * and removes the retry storm entirely - much cheaper than backing off after the fact.
+ */
+export const MIN_INTERVAL_MS = Number(process.env.MEKARI_MIN_INTERVAL_MS) || 350;
+/**
+ * Writes are paced far harder than reads.
+ *
+ * Measured against the live account: creating products at ~3/second got 19 through before
+ * a 429 that five retries could not outlast. Reads never tripped it. Backfilling a month
+ * is a one-off that can afford to take an hour; tripping the limiter halfway through and
+ * having to work out what landed cannot.
+ */
+export const MIN_WRITE_INTERVAL_MS = Number(process.env.MEKARI_MIN_WRITE_INTERVAL_MS) || 1100;
+let nextSlot = 0;
+
+async function takeSlot(interval = MIN_INTERVAL_MS) {
+  const now = Date.now();
+  const wait = Math.max(0, nextSlot - now);
+  nextSlot = Math.max(now, nextSlot) + interval;
+  if (wait > 0) await sleep(wait);
+}
 
 /**
  * @param {{method?: string, path: string, body?: object, config?: object}} request
@@ -63,6 +92,7 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
   if (!isMekariConfigured(config)) throw new MekariError('MEKARI_APP_CLIENT_ID / SECRET belum diisi');
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    await takeSlot(method === 'GET' ? MIN_INTERVAL_MS : MIN_WRITE_INTERVAL_MS);
     // The date is re-signed on every attempt; replaying a stale one would fail auth.
     const date = httpDate();
     const { header } = signRequest({
@@ -97,7 +127,9 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
 
     // 5xx and 429 are transient. A 4xx is an answer - retrying it would only duplicate work.
     if ((response.status >= 500 || response.status === 429) && attempt < RETRY_DELAYS_MS.length) {
-      await sleep(RETRY_DELAYS_MS[attempt]);
+      // Honour the server's own number when it gives one; ours is only a guess.
+      const advised = Number(response.headers.get('retry-after')) * 1000;
+      await sleep(Number.isFinite(advised) && advised > 0 ? advised : RETRY_DELAYS_MS[attempt]);
       continue;
     }
 

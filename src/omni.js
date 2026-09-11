@@ -146,6 +146,33 @@ function shopeeLines(itemList = []) {
  * not - the platform reimburses it. Treating the second as a discount would understate
  * revenue on every subsidised order.
  */
+/**
+ * One TikTok Shop order detail in the shape every channel shares.
+ *
+ * Shared by the range read and the by-id read on purpose. They used to map separately and
+ * the by-id one carried no `finance`, which meant a webhook could never have posted an
+ * invoice - every push would have died on "rincian keuangan tidak tersedia".
+ */
+export function mapTikTokOrder(o) {
+  return {
+    channel: o.commerce_platform === 'TIKTOK_SHOP' ? 'tiktok_shop' : 'tokopedia',
+    id: o.id,
+    createdAt: Number(o.create_time),
+    status: o.status,
+    stage: stageOf(o.status),
+    total: toNumber(o.payment?.total_amount),
+    currency: o.payment?.currency ?? 'IDR',
+    carrier: o.shipping_provider ?? '',
+    tracking: o.tracking_number ?? '',
+    buyer: o.recipient_address?.name ?? '',
+    items: (o.line_items ?? []).length,
+    lines: tiktokLines(o.line_items),
+    finance: financeFromTikTok(o),
+    // Shipping documents are issued per package, not per order.
+    packageId: (o.packages ?? [])[0]?.id ?? '',
+  };
+}
+
 function financeFromTikTok(order) {
   const lines = (order.line_items ?? []).map((li) => ({
     sku: li.seller_sku || li.sku_id || '',
@@ -165,6 +192,26 @@ function financeFromTikTok(order) {
     shipping: 0,
     shippingPassThrough: toNumber(order.payment?.shipping_fee),
     currency: order.payment?.currency ?? 'IDR',
+  };
+}
+
+/** One Shopee order detail in the shared shape; see mapTikTokOrder for why it is shared. */
+export function mapShopeeOrder(o) {
+  return {
+    channel: 'shopee',
+    id: o.order_sn,
+    createdAt: Number(o.create_time),
+    status: o.order_status,
+    stage: stageOf(o.order_status),
+    total: toNumber(o.total_amount),
+    currency: o.currency ?? 'IDR',
+    carrier: o.shipping_carrier ?? '',
+    tracking: '',
+    buyer: o.buyer_username ?? '',
+    items: (o.item_list ?? []).length,
+    lines: shopeeLines(o.item_list),
+    finance: financeFromShopee(o),
+    packageNumber: o.package_list?.[0]?.package_number ?? '',
   };
 }
 
@@ -265,23 +312,7 @@ async function fetchTikTokOrders({ config, since, until, max }) {
 
   const orders = detailed
     .filter((o) => Number(o.create_time) >= since && Number(o.create_time) <= until)
-    .map((o) => ({
-      channel: o.commerce_platform === 'TIKTOK_SHOP' ? 'tiktok_shop' : 'tokopedia',
-      id: o.id,
-      createdAt: Number(o.create_time),
-      status: o.status,
-      stage: stageOf(o.status),
-      total: toNumber(o.payment?.total_amount),
-      currency: o.payment?.currency ?? 'IDR',
-      carrier: o.shipping_provider ?? '',
-      tracking: o.tracking_number ?? '',
-      buyer: o.recipient_address?.name ?? '',
-      items: (o.line_items ?? []).length,
-      lines: tiktokLines(o.line_items),
-      finance: financeFromTikTok(o),
-      // Shipping documents are issued per package, not per order.
-      packageId: (o.packages ?? [])[0]?.id ?? '',
-    }));
+    .map(mapTikTokOrder);
 
   return { orders, truncated: summaries.length > max };
 }
@@ -314,22 +345,7 @@ async function fetchShopeeOrders({ since, until, max, tracking = true }) {
 
   const orders = detailed
     .filter((o) => Number(o.create_time) >= since && Number(o.create_time) <= until)
-    .map((o) => ({
-      channel: 'shopee',
-      id: o.order_sn,
-      createdAt: Number(o.create_time),
-      status: o.order_status,
-      stage: stageOf(o.order_status),
-      total: toNumber(o.total_amount),
-      currency: o.currency ?? 'IDR',
-      carrier: o.shipping_carrier ?? '',
-      tracking: '',
-      buyer: o.buyer_username ?? '',
-      items: (o.item_list ?? []).length,
-      lines: shopeeLines(o.item_list),
-      finance: financeFromShopee(o),
-      packageNumber: o.package_list?.[0]?.package_number ?? '',
-    }));
+    .map(mapShopeeOrder);
 
   if (tracking) await attachShopeeTracking(config, auth, orders);
 
@@ -400,17 +416,7 @@ export async function fetchOrdersByIds(selection) {
       const pages = await mapLimit(batches(tiktokIds, 50), DETAIL_CONCURRENCY, (chunk) =>
         getOrderDetail({ config, ids: chunk }).then((r) => r.orders),
       );
-      return pages.flat().map((o) => ({
-        channel: o.commerce_platform === 'TIKTOK_SHOP' ? 'tiktok_shop' : 'tokopedia',
-        id: o.id,
-        createdAt: Number(o.create_time),
-        status: o.status,
-        stage: stageOf(o.status),
-        carrier: o.shipping_provider ?? '',
-        tracking: o.tracking_number ?? '',
-        buyer: o.recipient_address?.name ?? '',
-        packageId: (o.packages ?? [])[0]?.id ?? '',
-      }));
+      return pages.flat().map(mapTikTokOrder);
     })(),
     (async () => {
       if (shopeeIds.length === 0) return [];
@@ -418,20 +424,13 @@ export async function fetchOrdersByIds(selection) {
       const pages = await mapLimit(batches(shopeeIds, 50), DETAIL_CONCURRENCY, (chunk) =>
         callShopApi(config, '/api/v2/order/get_order_detail', auth, {
           order_sn_list: chunk.join(','),
-          response_optional_fields: 'order_status,shipping_carrier,buyer_username,create_time,package_list',
+          // item_list and total_amount are what the invoice is built from; asking for
+          // less here is what made a by-id read unable to produce one.
+          response_optional_fields:
+            'order_status,shipping_carrier,buyer_username,create_time,package_list,item_list,total_amount',
         }).then((r) => r.response.order_list ?? []),
       );
-      return pages.flat().map((o) => ({
-        channel: 'shopee',
-        id: o.order_sn,
-        createdAt: Number(o.create_time),
-        status: o.order_status,
-        stage: stageOf(o.order_status),
-        carrier: o.shipping_carrier ?? '',
-        tracking: '',
-        buyer: o.buyer_username ?? '',
-        packageNumber: o.package_list?.[0]?.package_number ?? '',
-      }));
+      return pages.flat().map(mapShopeeOrder);
     })(),
     (async () => {
       if (shopifyIds.length === 0 || !isShopifyConfigured()) return [];

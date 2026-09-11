@@ -2,7 +2,7 @@ import { fetchOrdersByIds } from '../omni.js';
 import { fetchOrderByGid } from '../shopify/shop.js';
 import { runSync, loadSyncLedger, POSTABLE_STAGES } from '../mekari/sync.js';
 import { customIdFor } from '../mekari/invoice.js';
-import { ensureCustomers } from '../mekari/setup.js';
+import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
 
@@ -73,7 +73,7 @@ export async function handlePush({ channel, id, gid = null, reason = 'push' }) {
   }
 
   if (!customersReady) {
-    await ensureCustomers({ dryRun: false });
+    await ensureReady({ dryRun: false });
     customersReady = true;
   }
 

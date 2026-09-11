@@ -8,7 +8,8 @@
     "node": ">=18"
   },
   "bin": {
-    "tts": "./bin/tts.mjs"
+    "tts": "./bin/tts.mjs",
+    "shopee": "./bin/shopee.mjs"
   },
   "scripts": {
     "tts": "node bin/tts.mjs",
@@ -19,11 +20,27 @@
     "shops": "node bin/tts.mjs shops",
     "orders": "node bin/tts.mjs orders",
     "track": "node bin/tts.mjs track",
+    "omni": "node bin/tts.mjs omni",
+    "pick": "node bin/tts.mjs pick",
+    "stock": "node bin/tts.mjs stock",
+    "stock:seed": "node bin/tts.mjs stock:seed",
+    "stock:plan": "node bin/tts.mjs stock:plan",
+    "stock:apply": "node bin/tts.mjs stock:apply",
+    "shopify": "node bin/tts.mjs shopify",
     "doctor": "node bin/tts.mjs doctor",
     "api": "node bin/tts.mjs api",
+    "shopee": "node bin/shopee.mjs",
+    "shopee:doctor": "node bin/shopee.mjs doctor",
+    "shopee:url": "node bin/shopee.mjs url",
+    "shopee:pull": "node bin/shopee.mjs pull",
+    "shopee:refresh": "node bin/shopee.mjs refresh",
+    "shopee:shop": "node bin/shopee.mjs shop",
+    "shopee:orders": "node bin/shopee.mjs orders",
+    "shopee:items": "node bin/shopee.mjs items",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@vercel/blob": "^2.8.0"
+    "@vercel/blob": "^2.8.0",
+    "pdf-lib": "^1.17.1"
   }
 }

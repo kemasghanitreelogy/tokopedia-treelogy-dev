@@ -9,6 +9,8 @@ import { put, get } from '@vercel/blob';
  */
 
 export const TOKENS_PATHNAME = 'tts/tokens.json';
+/** Shopee bundles live beside the TikTok ones in the same private store. */
+export const SHOPEE_TOKENS_PATHNAME = 'shopee/tokens.json';
 
 export class BlobNotConfiguredError extends Error {
   constructor() {
@@ -27,8 +29,8 @@ function resolveToken(explicit) {
   return token;
 }
 
-/** @param {{tokens: object, nonce: string, shop?: object, token?: string}} bundle */
-export async function saveTokenBundle({ tokens, nonce, shop = null, token }) {
+/** @param {{tokens: object, nonce: string, shop?: object, token?: string, pathname?: string}} bundle */
+export async function saveTokenBundle({ tokens, nonce, shop = null, token, pathname = TOKENS_PATHNAME }) {
   const blobToken = resolveToken(token);
   const bundle = {
     version: 1,
@@ -37,7 +39,7 @@ export async function saveTokenBundle({ tokens, nonce, shop = null, token }) {
     tokens,
     shop,
   };
-  await put(TOKENS_PATHNAME, JSON.stringify(bundle, null, 2), {
+  await put(pathname, JSON.stringify(bundle, null, 2), {
     access: 'private',
     allowOverwrite: true,
     contentType: 'application/json',
@@ -48,9 +50,9 @@ export async function saveTokenBundle({ tokens, nonce, shop = null, token }) {
   return bundle;
 }
 
-export async function loadTokenBundle({ token } = {}) {
+export async function loadTokenBundle({ token, pathname = TOKENS_PATHNAME } = {}) {
   const blobToken = resolveToken(token);
-  const result = await get(TOKENS_PATHNAME, {
+  const result = await get(pathname, {
     access: 'private',
     useCache: false,
     token: blobToken,
@@ -61,6 +63,6 @@ export async function loadTokenBundle({ token } = {}) {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`Stored token bundle at ${TOKENS_PATHNAME} is not valid JSON`);
+    throw new Error(`Stored token bundle at ${pathname} is not valid JSON`);
   }
 }

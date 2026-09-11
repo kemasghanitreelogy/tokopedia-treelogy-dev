@@ -8,6 +8,12 @@ import { loadTokenBundle, saveTokenBundle, BlobNotConfiguredError } from './toke
 import { openBrowser } from './open-browser.js';
 import { mask, ok, fail, warn, info, humanTime } from './format.js';
 import { signRequest } from './sign.js';
+import { collectOrders, summarize, CHANNELS, STAGES } from './omni.js';
+import { resolveRange } from './range.js';
+import { buildPicklist } from './picklist.js';
+import { readCatalog } from './inventory.js';
+import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './ledger.js';
+import { planSync, applySync, describePlan } from './stock-sync.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -21,6 +27,14 @@ Usage:
   npm run shops               List authorized shops and save shop_cipher
   npm run orders [status]     Recent orders with status, carrier and tracking number
   npm run track <order_id>    Carrier timeline plus package detail for one order
+  npm run omni [range]        Omnichannel summary. range: today | 7d | 14d | 30d
+                              or two dates: npm run omni -- 2026-08-15 2026-09-08
+  npm run pick [range]        Picklist gudang: SKU yang harus diambil hari ini
+  npm run stock               Stok per SKU di semua kanal + selisih vs ledger
+  npm run stock:seed          Isi ledger master dari stok kanal saat ini
+  npm run stock:plan          Rencana sinkronisasi (dry-run, tidak menulis apa pun)
+  npm run stock:apply         Terapkan rencana ke marketplace (butuh --yes)
+  npm run shopify             Cek koneksi Shopify (toko, produk, pesanan)
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -67,6 +81,206 @@ function reportBundle(config, bundle) {
   } else {
     console.log(warn('the callback stored no shop - run `npm run shops`'));
   }
+}
+
+const STAGE_LABEL = {
+  unpaid: 'belum bayar', to_ship: 'siap kirim', shipping: 'dikirim',
+  delivered: 'terkirim', completed: 'selesai', cancelled: 'batal', returned: 'retur',
+};
+
+const rupiah = (n) => 'Rp' + Math.round(n).toLocaleString('id-ID');
+
+/** Terminal twin of the hosted dashboard - same numbers, no browser. */
+async function cmdOmni(config, args = []) {
+  // `omni today`, `omni 30d`, or `omni 2026-08-15 2026-09-08`.
+  const dates = args.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
+  const range = resolveRange(
+    dates.length === 2 ? { from: dates[0], to: dates[1] } : { preset: args[0] },
+  );
+
+  const data = await collectOrders({ range });
+  const { all, byChannel } = summarize(data.orders);
+
+  for (const [channel, message] of Object.entries(data.errors)) {
+    console.log(warn(`${channel} tidak terbaca - ${message}`));
+  }
+  if (data.truncated.length > 0) {
+    console.log(warn(`dipotong di ${data.maxPerPlatform} pesanan untuk ${data.truncated.join(' dan ')}`));
+  }
+
+  console.log(`\n  ${range.label}  (${range.from} s/d ${range.to})`);
+  console.log(`  ${String(all.count).padStart(5)} pesanan   ${rupiah(all.revenue)}`);
+  console.log(`  ${String(all.actionable).padStart(5)} perlu tindakan (belum bayar + siap kirim)\n`);
+
+  const width = Math.max(...Object.values(CHANNELS).map((c) => c.label.length));
+  for (const [id, meta] of Object.entries(CHANNELS)) {
+    const bucket = byChannel[id];
+    const stages = STAGES.filter((s) => bucket.stages[s] > 0)
+      .map((s) => `${STAGE_LABEL[s]} ${bucket.stages[s]}`)
+      .join(', ');
+    console.log(`  ${meta.label.padEnd(width)}  ${String(bucket.count).padStart(4)}  ${rupiah(bucket.revenue).padStart(14)}`);
+    if (stages) console.log(`  ${' '.repeat(width)}        ${stages}`);
+  }
+  console.log();
+  return 0;
+}
+
+/** Read-only connection check for the Shopify half. */
+async function cmdShopify() {
+  const { loadShopifyConfig, isShopifyConfigured } = await import('./shopify/config.js');
+  const { fetchShop, fetchProducts, fetchOrders } = await import('./shopify/shop.js');
+  const sc = loadShopifyConfig();
+
+  console.log(`\n  domain : ${sc.domain || '(belum diisi)'}`);
+  console.log(`  token  : ${mask(sc.token, 6)}`);
+  console.log(`  versi  : ${sc.apiVersion}\n`);
+
+  if (!isShopifyConfigured(sc)) {
+    console.log(fail('SHOPIFY_SHOP_DOMAIN belum diisi'));
+    console.log('        Isi dengan nama toko, contoh: SHOPIFY_SHOP_DOMAIN=namatoko');
+    return 1;
+  }
+
+  const shop = await fetchShop(sc);
+  console.log(ok(`terhubung ke ${shop.name} (${shop.myshopifyDomain}, ${shop.currencyCode})`));
+
+  const products = await fetchProducts(sc);
+  console.log(ok(`${products.length} varian ber-SKU`));
+  for (const p of products.slice(0, 5)) {
+    console.log(`        ${p.sku.padEnd(24)} stok ${String(p.qty).padStart(5)}  ${rupiah(p.price)}`);
+  }
+
+  const to = Math.floor(Date.now() / 1000);
+  const orders = await fetchOrders({ since: to - 7 * 86400, until: to, config: sc });
+  console.log(ok(`${orders.length} pesanan dalam 7 hari`));
+  const tally = {};
+  for (const o of orders) tally[o.stage] = (tally[o.stage] ?? 0) + 1;
+  for (const [stage, n] of Object.entries(tally)) console.log(`        ${STAGE_LABEL[stage] ?? stage}: ${n}`);
+  console.log();
+  return 0;
+}
+
+async function cmdPick(config, args = []) {
+  const dates = args.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
+  const range = resolveRange(dates.length === 2 ? { from: dates[0], to: dates[1] } : { preset: args[0] });
+  const data = await collectOrders({ range });
+  const pl = buildPicklist(data.orders);
+
+  console.log(`\n  Picklist - ${range.label}`);
+  console.log(`  ${pl.orderCount} pesanan siap kirim, ${pl.unitCount} unit, ${pl.skuCount} SKU\n`);
+  if (pl.items.length === 0) {
+    console.log(info('tidak ada yang perlu dipetik'));
+    return 0;
+  }
+  console.log('  SKU'.padEnd(28) + 'QTY'.padStart(5) + '   TOKPED  TIKTOK  SHOPEE   PRODUK');
+  for (const i of pl.items) {
+    console.log(
+      '  ' + i.sku.padEnd(26) + String(i.qty).padStart(5) +
+      String(i.byChannel.tokopedia).padStart(9) + String(i.byChannel.tiktok_shop).padStart(8) +
+      String(i.byChannel.shopee).padStart(8) + '   ' + (i.name || '').slice(0, 34),
+    );
+  }
+  console.log();
+  return 0;
+}
+
+/** Read-only cross-channel stock view, including how far each channel is from the ledger. */
+async function cmdStock(config) {
+  const [catalog, ledger] = await Promise.all([readCatalog(), loadLedger().catch(() => null)]);
+  for (const [channel, message] of Object.entries(catalog.errors)) {
+    console.log(warn(`${channel} tidak terbaca - ${message}`));
+  }
+  if (!ledger) console.log(warn('ledger belum ada - jalankan `npm run stock:seed`'));
+
+  console.log('\n  SKU'.padEnd(28) + 'LEDGER'.padStart(7) + 'TIKTOK'.padStart(8) + 'SHOPEE'.padStart(8) + '   catatan');
+  for (const entry of catalog.skus) {
+    const master = ledger ? masterQty(ledger, entry.sku) : null;
+    const tt = entry.tiktok?.qty ?? null;
+    const sp = entry.shopee?.qty ?? null;
+    if (tt === null && sp === null) continue;
+
+    const notes = [];
+    if (master === null) notes.push('di luar ledger');
+    if (tt !== null && sp !== null && tt !== sp) notes.push('kanal beda');
+    if (entry.tiktok?.conflict || entry.shopee?.conflict) notes.push('listing ganda beda stok');
+
+    console.log(
+      '  ' + entry.sku.padEnd(26) + String(master ?? '-').padStart(7) +
+      String(tt ?? '-').padStart(8) + String(sp ?? '-').padStart(8) +
+      (notes.length ? '   ' + notes.join(', ') : ''),
+    );
+  }
+  console.log();
+  return 0;
+}
+
+async function cmdStockSeed(config) {
+  const catalog = await readCatalog();
+  if (Object.keys(catalog.errors).length > 0) {
+    throw new Error(`tidak menyemai ledger dari katalog yang tidak lengkap: ${JSON.stringify(catalog.errors)}`);
+  }
+  const existing = (await loadLedger().catch(() => null)) ?? emptyLedger();
+  const { ledger, seeded, conflicts } = seedLedger(catalog, existing);
+  await saveLedger(ledger);
+
+  console.log(ok(`${seeded.length} SKU ditambahkan ke ledger (${Object.keys(ledger.skus).length} total)`));
+  for (const c of conflicts) {
+    console.log(warn(`${c.sku}: tiktok ${c.tiktok} vs shopee ${c.shopee} - dipakai ${c.chosen} (terendah), perlu ditinjau`));
+  }
+  return 0;
+}
+
+async function planCurrent() {
+  const [catalog, ledger] = await Promise.all([readCatalog(), loadLedger()]);
+  if (!ledger) throw new Error('ledger belum ada - jalankan `npm run stock:seed`');
+  if (Object.keys(catalog.errors).length > 0) {
+    throw new Error(`katalog tidak lengkap, membatalkan: ${JSON.stringify(catalog.errors)}`);
+  }
+  return { plan: planSync({ ledger, catalog }), catalog, ledger };
+}
+
+function printPlan(plan) {
+  console.log(`\n  ${describePlan(plan)}\n`);
+  const show = (rows, label) => {
+    for (const r of rows) {
+      console.log(`  ${label} ${r.sku.padEnd(24)} ${r.channel.padEnd(7)} ${String(r.from).padStart(5)} -> ${String(r.to).padEnd(5)} ${r.reason ?? ''}`);
+    }
+  };
+  show(plan.changes, 'ubah  ');
+  show(plan.review, 'TINJAU');
+  show(plan.blocked, 'BLOKIR');
+  if (plan.unmanaged.length > 0) console.log(`\n  ${plan.unmanaged.length} SKU di luar ledger (tidak disentuh)`);
+  if (plan.missing.length > 0) console.log(`  ${plan.missing.length} SKU di ledger tanpa listing hidup: ${plan.missing.join(', ')}`);
+}
+
+async function cmdStockPlan(config) {
+  const { plan } = await planCurrent();
+  printPlan(plan);
+  console.log(`\n${info('dry-run: tidak ada yang ditulis. Terapkan dengan `npm run stock:apply -- --yes`')}\n`);
+  return 0;
+}
+
+async function cmdStockApply(config, args = []) {
+  const { plan } = await planCurrent();
+  printPlan(plan);
+
+  if (plan.changes.length === 0) {
+    console.log(`\n${info('tidak ada yang perlu ditulis')}\n`);
+    return 0;
+  }
+  if (!args.includes('--yes')) {
+    console.log(`\n${warn('belum diterapkan. Ulangi dengan --yes untuk menulis ke marketplace')}\n`);
+    return 1;
+  }
+
+  const result = await applySync(plan, { dryRun: false });
+  console.log();
+  for (const r of result.results) {
+    const line = `${r.sku.padEnd(24)} ${r.channel.padEnd(7)} ${r.from} -> ${r.to}`;
+    console.log(r.status === 'ok' ? ok(line) : fail(`${line}  ${r.error ?? ''}`));
+  }
+  console.log(`\n  ${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted}\n`);
+  return result.failed > 0 ? 1 : 0;
 }
 
 async function cmdAuthorize(config, args = []) {
@@ -431,6 +645,13 @@ const COMMANDS = {
   shops: cmdShops,
   orders: cmdOrders,
   track: cmdTrack,
+  omni: cmdOmni,
+  pick: cmdPick,
+  shopify: cmdShopify,
+  stock: cmdStock,
+  'stock:seed': cmdStockSeed,
+  'stock:plan': cmdStockPlan,
+  'stock:apply': cmdStockApply,
   doctor: cmdDoctor,
   api: cmdApi,
 };

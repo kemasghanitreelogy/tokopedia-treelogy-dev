@@ -13,17 +13,28 @@ const ORDER_DETAIL_PATH = '/order/202507/orders';
 const TRACKING_PATH = (orderId) => `/fulfillment/202309/orders/${orderId}/tracking`;
 const PACKAGE_PATH = (packageId) => `/fulfillment/202309/packages/${packageId}`;
 
-/** Newest orders first. `status` filters server-side when given. */
-export async function searchOrders({ config, pageSize = 20, status = null, pageToken = null }) {
+/**
+ * Newest orders first. `status` filters server-side when given, and so does the
+ * create_time window - verified against the live API, which honours create_time_ge /
+ * create_time_lt rather than making the client page back and discard.
+ */
+export async function searchOrders({
+  config, pageSize = 20, status = null, pageToken = null, createTimeGe = null, createTimeLt = null,
+}) {
   const query = { page_size: String(pageSize), sort_field: 'create_time', sort_order: 'DESC' };
   if (pageToken) query.page_token = pageToken;
+
+  const body = {};
+  if (status) body.order_status = status;
+  if (createTimeGe) body.create_time_ge = createTimeGe;
+  if (createTimeLt) body.create_time_lt = createTimeLt;
 
   const { data, requestId } = await callApi({
     config,
     method: 'POST',
     path: ORDER_SEARCH_PATH,
     query,
-    body: status ? { order_status: status } : {},
+    body,
   });
   return { orders: data.orders ?? [], nextPageToken: data.next_page_token ?? null, requestId };
 }

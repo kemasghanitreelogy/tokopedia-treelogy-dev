@@ -1,8 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": [
+    "sin1"
+  ],
   "outputDirectory": "public",
   "functions": {
-    "api/*.js": {
+    "api/labels.js": {
+      "maxDuration": 180
+    },
+    "api/dashboard.js": {
+      "maxDuration": 120
+    },
+    "api/**/*.js": {
       "maxDuration": 30
     }
   },
@@ -10,9 +19,18 @@
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "no-referrer" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
+        }
       ]
     }
   ]

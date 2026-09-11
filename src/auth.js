@@ -1,5 +1,6 @@
 import { AUTHORIZE_URL, TOKOPEDIA_AUTHORIZE_URL } from './config.js';
 import { updateEnv } from './env-file.js';
+import { saveTokenBundle, loadTokenBundle } from './token-store.js';
 
 const TOKEN_GET_PATH = '/api/v2/token/get';
 const TOKEN_REFRESH_PATH = '/api/v2/token/refresh';
@@ -103,7 +104,20 @@ export async function refreshAccessToken({ config }) {
 }
 
 /** Persist a token payload into .env and mirror it onto the in-memory config. */
-export function persistTokens(config, tokens) {
+/**
+ * Remember a new token pair everywhere it is read from.
+ *
+ * The shared Blob bundle is the source of truth: it is what the deployment reads, and it
+ * is the only copy that survives a redeploy. The local .env is a convenience for the CLI
+ * and is written when it can be - on Vercel the filesystem is read-only and there is no
+ * .env to update, which must not fail the refresh that just succeeded.
+ *
+ * TikTok rotates the refresh token on every refresh, so whichever copy is not written
+ * here is dead the moment this returns. That is how production came to hold a token
+ * TikTok had already invalidated: the CLI refreshed into .env, the deployment kept a
+ * frozen copy of an older .env, and the two chains diverged.
+ */
+export async function persistTokens(config, tokens, { blobToken = config.blobToken } = {}) {
   const updates = {
     ACCESS_TOKEN: tokens.accessToken,
     REFRESH_TOKEN: tokens.refreshToken,
@@ -113,12 +127,64 @@ export function persistTokens(config, tokens) {
   if (tokens.openId) updates.OPEN_ID = tokens.openId;
   if (tokens.sellerName) updates.SELLER_NAME = tokens.sellerName;
 
-  updateEnv(config.envPath, updates);
-
   config.accessToken = tokens.accessToken;
   config.refreshToken = tokens.refreshToken;
   config.accessTokenExpireAt = tokens.accessTokenExpireAt;
   config.refreshTokenExpireAt = tokens.refreshTokenExpireAt;
   if (tokens.openId) config.openId = tokens.openId;
   if (tokens.sellerName) config.sellerName = tokens.sellerName;
+
+  try {
+    if (config.envPath) updateEnv(config.envPath, updates);
+  } catch {
+    // Read-only filesystem, or no .env: the deployment does not keep one.
+  }
+
+  if (blobToken) {
+    await saveTokenBundle({
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        accessTokenExpireAt: tokens.accessTokenExpireAt,
+        refreshTokenExpireAt: tokens.refreshTokenExpireAt,
+        openId: tokens.openId ?? config.openId ?? '',
+        sellerName: tokens.sellerName ?? config.sellerName ?? '',
+      },
+      nonce: 'refresh',
+      shop: config.shopCipher ? { id: config.shopId, cipher: config.shopCipher, name: config.shopName } : null,
+      token: blobToken,
+    });
+  }
+}
+
+/**
+ * Bring a config up to date with the shared bundle.
+ *
+ * Blob wins over whatever .env holds, because Blob is where every refresh - from the CLI,
+ * the dashboard or a webhook - lands. A bundle that has none of the tokens is ignored so
+ * a fresh checkout with a .env can still work before anything was ever saved.
+ */
+export async function hydrateFromBundle(config, { blobToken = config.blobToken } = {}) {
+  if (!blobToken) return config;
+  let bundle;
+  try {
+    bundle = await loadTokenBundle({ token: blobToken });
+  } catch {
+    return config;
+  }
+  const tokens = bundle?.tokens;
+  if (!tokens?.refreshToken) return config;
+
+  config.accessToken = tokens.accessToken ?? '';
+  config.refreshToken = tokens.refreshToken;
+  config.accessTokenExpireAt = Number(tokens.accessTokenExpireAt) || 0;
+  config.refreshTokenExpireAt = Number(tokens.refreshTokenExpireAt) || 0;
+  if (tokens.openId) config.openId = tokens.openId;
+  if (tokens.sellerName) config.sellerName = tokens.sellerName;
+  if (bundle.shop?.cipher) {
+    config.shopId = String(bundle.shop.id ?? config.shopId ?? '');
+    config.shopCipher = bundle.shop.cipher;
+    config.shopName = bundle.shop.name ?? config.shopName;
+  }
+  return config;
 }

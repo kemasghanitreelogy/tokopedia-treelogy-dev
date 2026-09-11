@@ -1,0 +1,15 @@
+# Secrets never ride inside a deployment. Production reads them from the environment
+# Vercel injects; tokens that rotate live in the private Blob store. Before this file
+# existed, .env was uploaded with every deploy - and a frozen copy of a rotating token is
+# exactly how production ended up presenting one TikTok had already invalidated.
+.env
+.env.*
+!.env.example
+
+# Not needed at runtime.
+test/
+scratch/
+*.docx
+mekarijurnal.json
+.github/
+README*.md

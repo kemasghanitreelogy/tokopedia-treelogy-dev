@@ -70,15 +70,16 @@ function printShops(shops) {
 }
 
 /** Write a bundle fetched from Blob into .env and the in-memory config. */
-function applyBundle(config, bundle) {
-  persistTokens(config, {
+async function applyBundle(config, bundle) {
+  // Pulled from Blob, so only .env needs writing - not Blob again.
+  await persistTokens(config, {
     accessToken: bundle.tokens?.accessToken ?? '',
     refreshToken: bundle.tokens?.refreshToken ?? '',
     accessTokenExpireAt: bundle.tokens?.accessTokenExpireAt ?? 0,
     refreshTokenExpireAt: bundle.tokens?.refreshTokenExpireAt ?? 0,
     openId: bundle.tokens?.openId ?? '',
     sellerName: bundle.tokens?.sellerName ?? '',
-  });
+  }, { blobToken: null });
   if (bundle.shop) persistShop(config, bundle.shop);
 }
 
@@ -334,7 +335,7 @@ async function cmdAuthorize(config, args = []) {
     const bundle = await loadTokenBundle({ token: config.blobToken });
     if (bundle && Date.parse(bundle.saved_at) > startedAt) {
       console.log(`\n${info('callback completed')}`);
-      applyBundle(config, bundle);
+      await applyBundle(config, bundle);
       reportBundle(config, bundle);
       return 0;
     }
@@ -353,7 +354,7 @@ async function cmdPull(config) {
     return 1;
   }
   console.log(`\nBundle saved at ${bundle.saved_at}`);
-  applyBundle(config, bundle);
+  await applyBundle(config, bundle);
   reportBundle(config, bundle);
   return 0;
 }
@@ -374,23 +375,11 @@ async function cmdUrl(config) {
 
 async function cmdRefresh(config) {
   requireAppCredentials(config);
+  // persistTokens writes .env and the shared Blob bundle together, so the deployment can
+  // never fall back to a stale token.
   const tokens = await refreshAccessToken({ config });
-  persistTokens(config, tokens);
-
-  // Keep the shared bundle in step so the deployment never falls back to a stale token.
-  if (config.blobToken) {
-    await saveTokenBundle({
-      tokens,
-      nonce: 'refresh',
-      shop: config.shopCipher
-        ? { id: config.shopId, cipher: config.shopCipher, name: config.shopName }
-        : null,
-      token: config.blobToken,
-    });
-    console.log(ok('refreshed and synced to Vercel Blob'));
-  } else {
-    console.log(ok('access token refreshed locally'));
-  }
+  await persistTokens(config, tokens);
+  console.log(ok(config.blobToken ? 'refreshed and synced to Vercel Blob' : 'access token refreshed locally'));
   console.log(`        access expires : ${humanTime(tokens.accessTokenExpireAt)}`);
   console.log(`        refresh expires: ${humanTime(tokens.refreshTokenExpireAt)}`);
 }

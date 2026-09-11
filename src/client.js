@@ -99,7 +99,7 @@ export async function callApi({
   };
 
   if (allowRefresh && config.refreshToken && accessTokenExpired(config)) {
-    persistTokens(config, await refreshAccessToken({ config }));
+    await persistTokens(config, await refreshAccessToken({ config }));
   }
 
   let { payload, httpStatus } = await sendOnce({
@@ -111,7 +111,7 @@ export async function callApi({
   });
 
   if (TOKEN_INVALID_CODES.has(payload.code) && allowRefresh && config.refreshToken) {
-    persistTokens(config, await refreshAccessToken({ config }));
+    await persistTokens(config, await refreshAccessToken({ config }));
     ({ payload, httpStatus } = await sendOnce({
       config,
       method,

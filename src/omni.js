@@ -1,6 +1,6 @@
 import { loadConfig } from './config.js';
 import { searchOrders, getOrderDetail } from './orders.js';
-import { refreshAccessToken as refreshTikTokToken, persistTokens } from './auth.js';
+import { refreshAccessToken as refreshTikTokToken, persistTokens, hydrateFromBundle } from './auth.js';
 import { accessTokenExpired } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi, getOrderList } from './shopee/client.js';
@@ -296,13 +296,33 @@ const toNumber = (value) => {
 };
 
 /** TikTok Shop tokens outlive a dashboard request, but refresh anyway when they are due. */
+/**
+ * The TikTok Shop config the way the deployment must see it: tokens from the shared Blob
+ * bundle, refreshed when stale, refresh written straight back. One resolution in flight
+ * per process so two callers racing cannot each refresh - the refresh token rotates, and
+ * the second refresh would invalidate the first.
+ */
+let tiktokInflight = null;
+let tiktokCached = null;
+
+export function invalidateTikTokConfig() {
+  tiktokInflight = null;
+  tiktokCached = null;
+}
+
 export async function tiktokConfig() {
-  const config = loadConfig();
-  if (config.refreshToken && accessTokenExpired(config)) {
-    const tokens = await refreshTikTokToken({ config });
-    persistTokens(config, tokens);
+  if (tiktokCached && !accessTokenExpired(tiktokCached)) return tiktokCached;
+  if (!tiktokInflight) {
+    tiktokInflight = (async () => {
+      const config = await hydrateFromBundle(loadConfig());
+      if (config.refreshToken && accessTokenExpired(config)) {
+        await persistTokens(config, await refreshTikTokToken({ config }));
+      }
+      tiktokCached = config;
+      return config;
+    })().finally(() => { tiktokInflight = null; });
   }
-  return config;
+  return tiktokInflight;
 }
 
 /** The window is applied server-side, so every page returned is already in range. */

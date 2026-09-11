@@ -672,7 +672,8 @@ test('a product with a picture shows it on its card and its detail page; one wit
   assert.match(detail, /class="pd__img"/);
   assert.match(detail, /terpasang di Jurnal/);
   const bare = renderProducts({ catalog, ledger, ...common, images: {}, selected: 'MRS-002' });
-  assert.ok(!/pd__img/.test(bare));
+  // The stylesheet mentions the class on every page; only the element counts.
+  assert.ok(!/class="pd__img"/.test(bare));
 });
 
 test('the manual form carries thumbnails for the product picker', () => {

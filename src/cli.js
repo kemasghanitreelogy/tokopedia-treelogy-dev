@@ -659,12 +659,15 @@ const depositArg = (args) =>
   ?? null;
 
 function printSyncResult(result) {
-  const failed = result.results.filter((r) => r.status === 'failed');
+  const failed = result.results.filter((r) => r.status === 'failed' || r.status === 'mismatch');
   const total = result.results.reduce((n, r) => n + (r.total ?? 0), 0);
 
   console.log(`\n  ${result.considered} pesanan diproses` +
     `  ·  dibuat ${result.created}  ·  sudah ada ${result.exists}  ·  gagal ${result.failed}` +
-    (result.deferred ? `  ·  tertunda ${result.deferred} (dicoba lagi run berikutnya)` : ''));
+    (result.deferred ? `  ·  tertunda ${result.deferred} (dicoba lagi run berikutnya)` : '') +
+    (result.mismatch ? `  ·  NILAI SELISIH ${result.mismatch}` : '') +
+    (result.voided ? `  ·  dibatalkan dihapus ${result.voided}` : '') +
+    (result.needsReview ? `  ·  perlu ditinjau ${result.needsReview}` : ''));
   console.log(`  nilai  Rp${total.toLocaleString('id-ID')}\n`);
 
   for (const r of failed) console.log(fail(`${r.customId}: ${r.error}`));

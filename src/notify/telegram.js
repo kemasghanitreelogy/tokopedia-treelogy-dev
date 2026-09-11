@@ -113,7 +113,8 @@ export function formatFailures({ source, failures = [], channelErrors = {} }) {
 
 /** Report a sync's failures, if it had any. Silent otherwise. */
 export async function notifySyncFailures({ source, results = [], channelErrors = {} }, options = {}) {
-  const failures = results.filter((r) => r.status === 'failed');
+  // A mismatch is a wrong number already in the books; it outranks a plain failure.
+  const failures = results.filter((r) => r.status === 'failed' || r.status === 'mismatch');
   if (failures.length === 0 && Object.keys(channelErrors).length === 0) return { sent: false, reason: 'tidak ada kegagalan' };
   const html = formatFailures({ source, failures, channelErrors });
   // Keyed on the reasons, not the order ids, so the same outage does not re-alert every

@@ -63,8 +63,12 @@ export async function recoverShopee({ dryRun = true, maxBatches = 10 } = {}) {
       seen.push({ id, code: message.code, status: outcome.status });
     }
 
-    // Confirming is itself a write; a dry run reads the queue and leaves it intact.
-    if (!dryRun && page.last_message_id) {
+    // Confirming is itself a write; a dry run reads the queue and leaves it intact. A
+    // page with a deferred order in it is left unconfirmed too: "not now" means Shopee
+    // should hand it to us again, and its queue is the mechanism for exactly that. A real
+    // failure is confirmed - re-delivering a 422 for three days changes nothing.
+    const deferred = seen.some((s) => String(s.status).startsWith('deferred'));
+    if (!dryRun && page.last_message_id && !deferred) {
       if (isReadOnly()) break;
       await shopeePush('/api/v2/push/confirm_consumed_lost_push_message', {
         method: 'POST', body: { last_message_id: page.last_message_id },
@@ -76,5 +80,5 @@ export async function recoverShopee({ dryRun = true, maxBatches = 10 } = {}) {
   }
 
   const count = (status) => seen.filter((s) => s.status === status).length;
-  return { dryRun, messages: seen.length, created: count('created'), exists: count('exists'), failed: count('failed'), seen };
+  return { dryRun, messages: seen.length, created: count('created'), exists: count('exists'), failed: count('failed'), deferred: count('deferred'), seen };
 }

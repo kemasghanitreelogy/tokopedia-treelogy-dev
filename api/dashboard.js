@@ -223,20 +223,25 @@ async function handleWrite(form, ip) {
     const { orders } = await collectOrders({ range, tracking: false });
     const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
-    await ensureReady({ dryRun: false });
-    const result = await runSync({ orders, depositTo, dryRun: false, limit: 200, deadlineMs: 90_000 });
+    const ledgerNow = await loadSyncLedger();
+    await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
+    // Sized to Jurnal's quota, like the sweep; whatever does not fit is picked up by the
+    // next scheduled sweep, and the message says so rather than implying it was all sent.
+    const result = await runSync({ orders, depositTo, dryRun: false, limit: 15, deadlineMs: 80_000 });
     invalidate('jurnal');
 
     if (result.skipped) return { view: 'jurnal', message: 'Sinkronisasi lain sedang berjalan' };
-    const failed = result.results.filter((r) => r.status === 'failed');
+    const failed = result.results.filter((r) => r.status === 'failed' || r.status === 'mismatch');
     await notifySyncFailures({ source: 'tombol Kirim di dashboard', results: result.results });
-    console.log(`dashboard: mekari_sync ${result.created} created, ${result.exists} existing, ${result.failed} failed`);
+    console.log(`dashboard: mekari_sync ${result.created} created, ${result.exists} existing, ${result.failed} failed, ${result.deferred} deferred`);
+    const later = result.remaining + result.deferred;
     return {
       view: 'jurnal',
       message: failed.length === 0
         ? `${result.created} faktur dibuat di Jurnal${result.exists ? `, ${result.exists} sudah ada` : ''}` +
-          (result.ranOutOfTime ? `, ${result.remaining} sisa akan dikirim otomatis` : '')
-        : `${result.created} berhasil, ${failed.length} gagal - ${failed[0].customId}: ${failed[0].error}`,
+          (result.voided ? `, ${result.voided} dibatalkan dihapus` : '') +
+          (later > 0 ? `, ${later} sisanya dikirim sapuan otomatis berikutnya` : '')
+        : `${result.created} berhasil, ${failed.length} bermasalah - ${failed[0].customId}: ${failed[0].error}`,
     };
   }
 

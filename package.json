@@ -44,6 +44,7 @@
     "hooks": "node bin/tts.mjs hooks",
     "hooks:register": "node bin/tts.mjs hooks:register",
     "hooks:recover": "node bin/tts.mjs hooks:recover",
+    "notify:test": "node bin/tts.mjs notify:test",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

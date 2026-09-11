@@ -6,6 +6,7 @@ import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
 import { beatWebhook } from '../mekari/heartbeat.js';
+import { notifySyncFailures } from '../notify/telegram.js';
 
 /**
  * What happens between a push arriving and an invoice existing.
@@ -43,10 +44,20 @@ async function readOrder({ channel, id, gid }) {
 }
 
 export async function handlePush(push) {
-  const outcome = await handleVerifiedPush(push);
+  let outcome;
+  try {
+    outcome = await handleVerifiedPush(push);
+  } catch (error) {
+    // A crash here would answer the platform with a 500 and nothing else; say so.
+    await notifySyncFailures({ source: `webhook ${push.channel}`, results: [{ status: 'failed', customId: push.id ?? push.gid, error: error.message }] });
+    throw error;
+  }
   // Recorded on every verified push, whatever it led to: a "skipped" because the order is
   // not paid yet is as much proof the channel is alive as a "created".
   await beatWebhook(push.channel, { ...outcome, id: push.id ?? push.gid ?? null });
+  if (outcome.status === 'failed') {
+    await notifySyncFailures({ source: `webhook ${push.channel}`, results: [outcome] });
+  }
   return outcome;
 }
 

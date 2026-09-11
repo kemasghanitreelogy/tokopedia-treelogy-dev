@@ -15,6 +15,7 @@ import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
+import { notifySyncFailures } from '../src/notify/telegram.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
@@ -228,6 +229,7 @@ async function handleWrite(form, ip) {
 
     if (result.skipped) return { view: 'jurnal', message: 'Sinkronisasi lain sedang berjalan' };
     const failed = result.results.filter((r) => r.status === 'failed');
+    await notifySyncFailures({ source: 'tombol Kirim di dashboard', results: result.results });
     console.log(`dashboard: mekari_sync ${result.created} created, ${result.exists} existing, ${result.failed} failed`);
     return {
       view: 'jurnal',
@@ -276,7 +278,10 @@ async function handleWrite(form, ip) {
     }
 
     const result = await postManual({ order, depositTo, dryRun: false });
-    if (result.status === 'failed') throw new Error(`${order.id}: ${result.error}`);
+    if (result.status === 'failed') {
+      await notifySyncFailures({ source: 'transaksi manual', results: [result] });
+      throw new Error(`${order.id}: ${result.error}`);
+    }
     invalidate('jurnal');
     console.log(`dashboard: manual_invoice ${order.id} -> ${result.status}`);
 

@@ -1,0 +1,133 @@
+import { readEnv } from '../env-file.js';
+import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
+
+/**
+ * Telling a person when the books did not get written.
+ *
+ * Every other safety net here is silent: the sweep retries, the ledger refuses
+ * duplicates, the dashboard shows a red chip if somebody happens to open it. None of that
+ * reaches anyone at 11pm when Jurnal starts returning 422s. This does. It is deliberately
+ * narrow - failures only, never "34 invoices posted fine" - because an alert channel that
+ * carries good news is one people mute.
+ *
+ * Nothing here may ever break the thing it is reporting on: every call swallows its own
+ * errors, and an unconfigured bot is simply silence.
+ */
+
+export function loadTelegramConfig() {
+  const file = readEnv(ENV_PATH);
+  const local = readEnv(ENV_LOCAL_PATH);
+  const get = (key) => process.env[key] ?? local[key] ?? file[key] ?? '';
+  return {
+    token: get('TELEGRAM_BOT') || get('TELEGRAM_BOT_TOKEN'),
+    chatId: get('TELEGRAM_CHAT_ID'),
+  };
+}
+
+export const isTelegramConfigured = (config = loadTelegramConfig()) => Boolean(config.token && config.chatId);
+
+/** Telegram's HTML mode needs these three escaped and nothing else. */
+export const escapeHtml = (text) => String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const MAX_LENGTH = 3800; // Telegram caps a message at 4096; leave room for the footer.
+
+/**
+ * Same failure, same hour, one message.
+ *
+ * A Jurnal outage makes every order in a sweep fail the same way, and a sweep runs four
+ * times an hour. Without this the phone buzzes eighty times about one problem. Keyed on
+ * the message's own fingerprint so two different failures still both get through.
+ */
+const recentlySent = new Map();
+const DEDUPE_MS = 60 * 60 * 1000;
+
+function alreadySent(key, now = Date.now()) {
+  for (const [k, at] of recentlySent) if (now - at > DEDUPE_MS) recentlySent.delete(k);
+  if (recentlySent.has(key)) return true;
+  recentlySent.set(key, now);
+  return false;
+}
+
+export function resetDedupe() {
+  recentlySent.clear();
+}
+
+/**
+ * @param {string} html  message body, already escaped where it carries user data
+ * @param {{key?: string, fetchImpl?: typeof fetch}} options
+ * @returns {Promise<{sent: boolean, reason?: string}>}
+ */
+export async function sendTelegram(html, { key = html, fetchImpl = fetch, config = loadTelegramConfig() } = {}) {
+  if (process.env.NODE_TEST_CONTEXT && fetchImpl === fetch) return { sent: false, reason: 'test' };
+  if (!isTelegramConfigured(config)) return { sent: false, reason: 'belum dikonfigurasi' };
+  if (alreadySent(key)) return { sent: false, reason: 'sudah dikirim dalam satu jam terakhir' };
+
+  const text = html.length > MAX_LENGTH ? `${html.slice(0, MAX_LENGTH)}\n…(dipotong)` : html;
+  try {
+    const response = await fetchImpl(`https://api.telegram.org/bot${config.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: config.chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      console.warn(`telegram: gagal kirim - ${payload.description ?? response.status}`);
+      return { sent: false, reason: payload.description ?? `HTTP ${response.status}` };
+    }
+    return { sent: true };
+  } catch (error) {
+    console.warn(`telegram: tidak terjangkau - ${error.message}`);
+    return { sent: false, reason: error.message };
+  }
+}
+
+const DASHBOARD = 'https://tokopedia-treelogy-dev.vercel.app/api/dashboard?view=jurnal';
+
+/**
+ * One message for a batch of failed invoices, grouped by what went wrong.
+ *
+ * Reads as a list of problems, not a list of orders: twenty orders that all hit "product
+ * not available" is one problem with twenty examples, and the person reading it needs to
+ * know which of the two it is.
+ */
+export function formatFailures({ source, failures = [], channelErrors = {} }) {
+  const byReason = new Map();
+  for (const f of failures) {
+    const reason = String(f.error ?? 'tanpa alasan').replace(/\s+/g, ' ').slice(0, 160);
+    if (!byReason.has(reason)) byReason.set(reason, []);
+    byReason.get(reason).push(f.customId ?? f.id ?? '?');
+  }
+
+  const lines = [`<b>⚠️ Sinkronisasi Jurnal gagal</b> — ${escapeHtml(source)}`];
+  if (failures.length > 0) lines.push(`${failures.length} faktur tidak masuk:`);
+  for (const [reason, ids] of byReason) {
+    const shown = ids.slice(0, 8).map((id) => `<code>${escapeHtml(id)}</code>`).join(', ');
+    lines.push(`• ${escapeHtml(reason)}\n  ${shown}${ids.length > 8 ? ` +${ids.length - 8} lagi` : ''}`);
+  }
+  for (const [channel, message] of Object.entries(channelErrors)) {
+    lines.push(`• Kanal <b>${escapeHtml(channel)}</b> tidak bisa dibaca: ${escapeHtml(String(message).slice(0, 160))}`);
+  }
+  lines.push(`\n<a href="${DASHBOARD}">Buka tab Jurnal</a>`);
+  return lines.join('\n');
+}
+
+/** Report a sync's failures, if it had any. Silent otherwise. */
+export async function notifySyncFailures({ source, results = [], channelErrors = {} }, options = {}) {
+  const failures = results.filter((r) => r.status === 'failed');
+  if (failures.length === 0 && Object.keys(channelErrors).length === 0) return { sent: false, reason: 'tidak ada kegagalan' };
+  const html = formatFailures({ source, failures, channelErrors });
+  // Keyed on the reasons, not the order ids, so the same outage does not re-alert every
+  // sweep as new orders join it.
+  const key = `${source}|${[...new Set(failures.map((f) => f.error))].sort().join('|')}|${Object.keys(channelErrors).sort().join(',')}`;
+  return sendTelegram(html, { ...options, key });
+}
+
+/** Something broke before any order was even attempted - the run itself died. */
+export async function notifyCrash({ source, error }, options = {}) {
+  const html = [
+    `<b>🛑 Sinkronisasi Jurnal berhenti</b> — ${escapeHtml(source)}`,
+    `<code>${escapeHtml(String(error?.message ?? error).slice(0, 600))}</code>`,
+    `\n<a href="${DASHBOARD}">Buka tab Jurnal</a>`,
+  ].join('\n');
+  return sendTelegram(html, { ...options, key: `crash|${source}|${String(error?.message ?? error).slice(0, 80)}` });
+}

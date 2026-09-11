@@ -5,6 +5,7 @@ import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
 import { recoverShopee } from '../src/webhooks/recover.js';
 import { beatSweep } from '../src/mekari/heartbeat.js';
+import { notifySyncFailures, notifyCrash } from '../src/notify/telegram.js';
 import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/dashboard-auth.js';
 
 /**
@@ -100,6 +101,8 @@ export default async function handler(req, res) {
     }
 
     if (!dryRun) {
+      // A failed order or an unreadable channel reaches a person; a clean run stays quiet.
+      await notifySyncFailures({ source: 'sapuan otomatis', results: result.results, channelErrors: errors });
       await beatSweep({
         considered: result.considered, created: result.created, exists: result.exists, failed: result.failed,
         orders_seen: orders.length, channel_errors: Object.keys(errors),
@@ -125,6 +128,7 @@ export default async function handler(req, res) {
         : result.results.filter((r) => r.status === 'failed'),
     });
   } catch (error) {
+    if (!dryRun) await notifyCrash({ source: 'sapuan otomatis', error });
     return json(res, 500, { ok: false, error: error.message, took_ms: Date.now() - startedAt });
   }
 }

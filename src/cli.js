@@ -19,6 +19,7 @@ import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from
 import { isMekariConfigured } from './mekari/client.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
+import { sendTelegram, notifySyncFailures, isTelegramConfigured } from './notify/telegram.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -46,6 +47,7 @@ Usage:
   npm run hooks               Status webhook ketiga platform
   npm run hooks:register      Daftarkan URL webhook (butuh --yes)
   npm run hooks:recover       Ambil push Shopee yang sempat gagal terkirim
+  npm run notify:test         Kirim pesan uji ke Telegram
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -727,6 +729,7 @@ async function cmdMekariSync(config, args = []) {
   const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
   const result = await runSync({ orders, depositTo, dryRun: false, limit });
   if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
+  await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
   return printSyncResult(result);
 }
 
@@ -811,6 +814,19 @@ async function cmdHooksRecover(config, args = []) {
   return 0;
 }
 
+async function cmdNotifyTest() {
+  if (!isTelegramConfigured()) {
+    console.log(fail('TELEGRAM_BOT dan TELEGRAM_CHAT_ID belum lengkap di env'));
+    return 1;
+  }
+  const result = await sendTelegram(
+    '<b>✅ Uji notifikasi Treelogy</b>\nKalau pesan ini sampai, kegagalan sinkronisasi ke Jurnal akan dilaporkan ke sini.',
+    { key: `uji-${Date.now()}` },
+  );
+  console.log(result.sent ? ok('pesan uji terkirim') : fail(`gagal: ${result.reason}`));
+  return result.sent ? 0 : 1;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -833,6 +849,7 @@ const COMMANDS = {
   hooks: cmdHooks,
   'hooks:register': cmdHooksRegister,
   'hooks:recover': cmdHooksRecover,
+  'notify:test': cmdNotifyTest,
   doctor: cmdDoctor,
   api: cmdApi,
 };

@@ -23,7 +23,9 @@ concurrency:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # Six rounds of up to ~80s each with a 60s quota pause between them is ~14 minutes; the
+    # job's own limit has to clear that, or GitHub kills a healthy sweep and calls it red.
+    timeout-minutes: 20
     steps:
       - name: Sapu pesanan yang terlewat ke Jurnal
         env:

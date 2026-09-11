@@ -21,16 +21,22 @@ import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/da
  * leave the cron running while the mapping is still being reviewed.
  */
 
-const DEFAULT_WINDOW_DAYS = 3;
+const DEFAULT_WINDOW_DAYS = 2;
 // Each posted order is now three paced writes - its buyer's contact, the duplicate
 // probe, the invoice - which is about 2.6 seconds. Twenty of those is under a minute;
 // forty overran the function's 120 seconds on the first live run and was killed with the
 // last few invoices unrecorded. A sweep every fifteen minutes clears twenty at a time
 // faster than a busy day produces them.
-const MAX_PER_RUN = 20;
-// Stop posting well before the platform limit so a run ends on a written ledger rather
-// than on a kill signal mid-request; the collect and the Shopee drain need room too.
-const POST_BUDGET_MS = 55_000;
+const MAX_PER_RUN = 12;
+/**
+ * The whole handler must be done inside Vercel's 120 seconds, or the platform kills it
+ * with no response, no log line and no Telegram - which is exactly how the first run from
+ * GitHub ended. So the budget is not a fixed number for the posting loop: it is whatever
+ * is left after the collect, and each later stage is skipped rather than started when the
+ * remainder is too small to finish it.
+ */
+const TOTAL_BUDGET_MS = 85_000;
+const RECOVERY_NEEDS_MS = 12_000;
 
 /** Cron calls carry CRON_SECRET; a person calls it with their dashboard session. */
 function authorized(req) {
@@ -74,31 +80,46 @@ export default async function handler(req, res) {
   const dryRun = !(liveAllowed && wantsLive);
 
   const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
+  const remaining = () => TOTAL_BUDGET_MS - elapsed();
+  const timings = {};
   try {
     // An explicit window rather than a preset: the poll interval is measured in minutes,
     // so the range has to be expressible in arbitrary days, not just the dashboard's set.
     const until = Math.floor(Date.now() / 1000);
     const range = { since: until - days * 24 * 3600, until, preset: null };
 
-    const { orders, errors } = await collectOrders({ range, maxPerPlatform: 400, tracking: true });
+    // No tracking numbers here: the Shopee tracking lookups were the single biggest cost
+    // in the collect, and the code-4 push adds the waybill to the order the moment it is
+    // assigned - the sweep's job is to make sure the invoice exists, not to decorate it.
+    const { orders, errors } = await collectOrders({ range, maxPerPlatform: 300, tracking: false });
+    timings.collect_ms = elapsed();
 
     // A channel that failed to answer simply has no orders in this run; posting is
     // additive and idempotent, so the next tick picks up whatever was missed. What must
     // not happen is treating "no data" as "nothing to post" in the report.
     const prepared = dryRun ? null : await ensureReady({ dryRun: false });
+    timings.prepare_ms = elapsed() - timings.collect_ms;
 
-    const result = await runSync({ orders, depositTo, dryRun, limit, deadlineMs: POST_BUDGET_MS });
+    const postBudget = Math.max(0, remaining() - RECOVERY_NEEDS_MS);
+    const result = await runSync({ orders, depositTo, dryRun, limit, deadlineMs: postBudget });
+    timings.post_ms = elapsed() - timings.collect_ms - timings.prepare_ms;
 
     // Shopee is the one platform that keeps a queue of pushes it could not deliver, and
     // three days is how long it keeps them. Draining it here means a Shopee outage on our
     // side heals on the next sweep without anyone noticing there was one. Its failure is
     // reported, not fatal - the sweep above has already done the important work.
     let shopeeRecovery = null;
-    try {
-      shopeeRecovery = await recoverShopee({ dryRun });
-    } catch (error) {
-      shopeeRecovery = { error: error.message };
+    if (remaining() > RECOVERY_NEEDS_MS / 2) {
+      try {
+        shopeeRecovery = await recoverShopee({ dryRun, maxBatches: 2 });
+      } catch (error) {
+        shopeeRecovery = { error: error.message };
+      }
+    } else {
+      shopeeRecovery = { skipped: 'tenggat habis' };
     }
+    timings.recover_ms = elapsed() - timings.collect_ms - timings.prepare_ms - timings.post_ms;
 
     if (!dryRun) {
       // A failed order or an unreadable channel reaches a person; a clean run stays quiet.
@@ -120,6 +141,7 @@ export default async function handler(req, res) {
       channel_errors: errors,
       prepared,
       shopee_recovery: shopeeRecovery,
+      timings,
       took_ms: Date.now() - startedAt,
       ...result,
       // The per-order payloads are large and only useful when debugging a mapping.

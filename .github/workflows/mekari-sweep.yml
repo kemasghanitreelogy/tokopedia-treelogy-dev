@@ -31,15 +31,40 @@ jobs:
           BASE_URL: https://tokopedia-treelogy-dev.vercel.app
         run: |
           set -euo pipefail
+          # Several short calls rather than one long one: Vercel kills a function at 120
+          # seconds with no response and no log line, so each call takes a small batch and
+          # says how many are left; the loop stops when nothing is, or after four rounds.
           # dry=0 asks for a live run; the endpoint still refuses unless MEKARI_SYNC_LIVE=1
           # is set on the deployment, so this flag alone can never write.
-          body=$(curl -sS --fail-with-body --max-time 150 \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            "${BASE_URL}/api/mekari-sync?dry=0&days=3&limit=20")
-          echo "$body" | head -c 4000
-          echo
-          ok=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if d.get("ok") else "no")')
-          failed=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("failed",0))')
-          test "$ok" = "yes"
+          total_failed=0
+          for round in 1 2 3 4; do
+            body=$(curl -sS --fail-with-body --max-time 110 \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "${BASE_URL}/api/mekari-sync?dry=0&days=2&limit=12")
+            echo "--- ronde ${round}"
+            echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:d.get(k) for k in ("ok","live","orders_seen","considered","posted","remaining","created","exists","failed","ranOutOfTime","skipped","channel_errors","timings","took_ms")}, ensure_ascii=False))'
+            ok=$(echo "$body" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("ok") else "no")')
+            test "$ok" = "yes"
+            failed=$(echo "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("failed",0))')
+            total_failed=$((total_failed + failed))
+            more=$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if (d.get("remaining") or 0) > 0 or d.get("ranOutOfTime") else "no")')
+            test "$more" = "yes" || break
+          done
           # A failed order is reported, not swallowed: the job goes red so somebody looks.
-          test "$failed" = "0"
+          test "$total_failed" = "0"
+
+      - name: Lapor ke Telegram kalau sapuan gagal
+        if: failure()
+        env:
+          TELEGRAM_BOT: ${{ secrets.TELEGRAM_BOT }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The endpoint cannot report a run the platform killed; this is the one alarm
+          # that fires anyway.
+          test -n "$TELEGRAM_BOT" && test -n "$TELEGRAM_CHAT_ID" || exit 0
+          curl -sS --max-time 20 "https://api.telegram.org/bot${TELEGRAM_BOT}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=<b>🛑 Sapuan Jurnal (GitHub) gagal</b>%0AEndpoint tidak menjawab 2xx atau ada faktur yang gagal.%0A<a href=\"${RUN_URL}\">Lihat log run</a>" >/dev/null || true

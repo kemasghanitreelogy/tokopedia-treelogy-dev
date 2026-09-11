@@ -100,9 +100,9 @@ export async function releaseLock() {
 }
 
 /** Does Jurnal already hold this order? Asked by custom_id, which it accepts as an id. */
-export async function findExisting(order) {
+export async function findExisting(order, { deadlineAt = null } = {}) {
   try {
-    const found = await mekari({ path: `/public/jurnal/api/v1/sales_invoices/${encodeURIComponent(customIdFor(order))}` });
+    const found = await mekari({ path: `/public/jurnal/api/v1/sales_invoices/${encodeURIComponent(customIdFor(order))}`, deadlineAt });
     const invoice = found?.sales_invoice ?? found;
     return invoice?.id ? invoice : null;
   } catch (error) {
@@ -168,7 +168,7 @@ export function syncOverview({ orders, ledger, depositTo = null }) {
  * Post one order. Returns what happened rather than throwing, so a single bad order
  * cannot stop the rest of the run.
  */
-export async function postOrder(order, { depositTo = null, dryRun = true } = {}) {
+export async function postOrder(order, { depositTo = null, dryRun = true, deadlineAt = null } = {}) {
   const customId = customIdFor(order);
   let payload;
   let expectedTotal;
@@ -191,7 +191,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true } = {})
   // Ask before writing: cheaper than a duplicate, and the only protection if the local
   // ledger was lost.
   try {
-    const existing = await findExisting(order);
+    const existing = await findExisting(order, { deadlineAt });
     if (existing) {
       return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: existing.id, total: expectedTotal };
     }
@@ -202,13 +202,13 @@ export async function postOrder(order, { depositTo = null, dryRun = true } = {})
   // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now
   // names its own buyer, so the contact is made to exist first.
   try {
-    await ensureContact(customerFor(order));
+    await ensureContact(customerFor(order), { deadlineAt });
   } catch (error) {
     return { customId, id: order.id, channel: order.channel, status: 'failed', error: `kontak gagal: ${error.message}` };
   }
 
   try {
-    const created = await mekari({ method: 'POST', path: '/public/jurnal/api/v1/sales_invoices', body: payload });
+    const created = await mekari({ method: 'POST', path: '/public/jurnal/api/v1/sales_invoices', body: payload, deadlineAt });
     const invoice = created?.sales_invoice ?? created;
     return {
       customId, id: order.id, channel: order.channel, status: 'created',
@@ -246,6 +246,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
   const queue = postable(orders, ledger).slice(0, limit);
   const results = [];
   const stopAt = deadlineMs ? Date.now() + deadlineMs : Infinity;
+  const deadlineAt = Number.isFinite(stopAt) ? stopAt : null;
   let ranOutOfTime = false;
 
   for (const order of queue) {
@@ -253,7 +254,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     // next run picks up exactly where this one left off. Being killed mid-POST is not
     // free, so leave room rather than racing the platform timeout.
     if (Date.now() > stopAt) { ranOutOfTime = true; break; }
-    const result = await postOrder(order, { depositTo, dryRun });
+    const result = await postOrder(order, { depositTo, dryRun, deadlineAt });
     results.push(result);
 
     if (!dryRun && (result.status === 'created' || result.status === 'exists')) {

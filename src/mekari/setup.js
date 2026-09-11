@@ -201,7 +201,7 @@ export async function ensureReady({ dryRun = true } = {}) {
  * before writing matters more here than for the four fixed channels: two contacts with
  * the same display name would quietly split that customer's history in two.
  */
-export async function ensureContact(name) {
+export async function ensureContact(name, { deadlineAt = null } = {}) {
   const wanted = String(name ?? '').trim();
   if (!wanted) throw new Error('nama pelanggan kosong');
   if (knownContacts.has(wanted)) return { name: wanted, created: false };
@@ -211,6 +211,7 @@ export async function ensureContact(name) {
     await mekari({
       method: 'POST',
       path: CONTACTS_PATH,
+      deadlineAt,
       body: {
         person: {
           display_name: wanted,

@@ -88,8 +88,15 @@ async function takeSlot(interval = MIN_INTERVAL_MS) {
  * @param {{method?: string, path: string, body?: object, config?: object}} request
  * `path` must include the query string: it is part of what gets signed.
  */
-export async function mekari({ method = 'GET', path, body, config = loadMekariConfig() }) {
+/**
+ * @param {number|null} deadlineAt  epoch ms after which no retry may be started. Inside a
+ *   serverless function a 429 backoff of tens of seconds is not patience, it is the
+ *   platform killing the run with the ledger half-written; the caller knows how much
+ *   time it has left and this is how it says so.
+ */
+export async function mekari({ method = 'GET', path, body, config = loadMekariConfig(), deadlineAt = null }) {
   if (!isMekariConfigured(config)) throw new MekariError('MEKARI_APP_CLIENT_ID / SECRET belum diisi');
+  const canWait = (ms) => deadlineAt === null || Date.now() + ms < deadlineAt;
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     await takeSlot(method === 'GET' ? MIN_INTERVAL_MS : MIN_WRITE_INTERVAL_MS);
@@ -112,7 +119,9 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (cause) {
-      if (attempt === RETRY_DELAYS_MS.length) throw new MekariError(`tidak terjangkau: ${cause.message}`);
+      if (attempt === RETRY_DELAYS_MS.length || !canWait(RETRY_DELAYS_MS[attempt])) {
+        throw new MekariError(`tidak terjangkau: ${cause.message}`);
+      }
       await sleep(RETRY_DELAYS_MS[attempt]);
       continue;
     }
@@ -129,8 +138,12 @@ export async function mekari({ method = 'GET', path, body, config = loadMekariCo
     if ((response.status >= 500 || response.status === 429) && attempt < RETRY_DELAYS_MS.length) {
       // Honour the server's own number when it gives one; ours is only a guess.
       const advised = Number(response.headers.get('retry-after')) * 1000;
-      await sleep(Number.isFinite(advised) && advised > 0 ? advised : RETRY_DELAYS_MS[attempt]);
-      continue;
+      const delay = Number.isFinite(advised) && advised > 0 ? advised : RETRY_DELAYS_MS[attempt];
+      if (canWait(delay)) {
+        await sleep(delay);
+        continue;
+      }
+      throw new MekariError(`${method} ${path} -> HTTP ${response.status}, tenggat habis sebelum bisa dicoba lagi`, { status: response.status, body: payload });
     }
 
     if (!response.ok) {

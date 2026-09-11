@@ -235,7 +235,7 @@ const toNumber = (value) => {
 };
 
 /** TikTok Shop tokens outlive a dashboard request, but refresh anyway when they are due. */
-async function tiktokConfig() {
+export async function tiktokConfig() {
   const config = loadConfig();
   if (config.refreshToken && accessTokenExpired(config)) {
     const tokens = await refreshTikTokToken({ config });

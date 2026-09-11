@@ -41,6 +41,9 @@
     "mekari:plan": "node bin/tts.mjs mekari:plan",
     "mekari:sync": "node bin/tts.mjs mekari:sync",
     "mekari:status": "node bin/tts.mjs mekari:status",
+    "hooks": "node bin/tts.mjs hooks",
+    "hooks:register": "node bin/tts.mjs hooks:register",
+    "hooks:recover": "node bin/tts.mjs hooks:recover",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

@@ -17,6 +17,8 @@ import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { ensureCustomers, findDepositAccount } from './mekari/setup.js';
 import { isMekariConfigured } from './mekari/client.js';
+import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
+import { recoverShopee } from './webhooks/recover.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -41,6 +43,9 @@ Usage:
   npm run mekari:setup        Siapkan pelanggan per channel di Jurnal (butuh --yes)
   npm run mekari:plan         Rencana faktur ke Jurnal (dry-run, tidak menulis)
   npm run mekari:sync         Kirim faktur ke Jurnal (butuh --yes)
+  npm run hooks               Status webhook ketiga platform
+  npm run hooks:register      Daftarkan URL webhook (butuh --yes)
+  npm run hooks:recover       Ambil push Shopee yang sempat gagal terkirim
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -737,6 +742,75 @@ async function cmdMekariStatus() {
   return 0;
 }
 
+function printHookStatus(status, config) {
+  console.log(`\n  URL dasar: ${baseUrl(config)}\n`);
+
+  const shopee = status.shopee;
+  if (shopee.error) console.log(fail(`Shopee    ${shopee.error}`));
+  else if (!shopee.callbackUrl) console.log(warn('Shopee    belum ada callback_url'));
+  else {
+    const matches = shopee.callbackUrl === webhookUrl('shopee', config);
+    console.log((matches ? ok : warn)(`Shopee    ${shopee.callbackUrl}`));
+    console.log(`          push aktif: ${shopee.enabled.join(', ') || '(tidak ada)'}`);
+  }
+
+  const tiktok = status.tiktok;
+  if (tiktok.error) console.log(fail(`TikTok    ${tiktok.error}`));
+  else if (tiktok.total === 0) console.log(warn('TikTok    belum ada langganan'));
+  else for (const w of tiktok.webhooks) console.log(ok(`TikTok    ${w.event_type ?? '?'} -> ${w.address ?? '?'}`));
+
+  const shopify = status.shopify;
+  if (shopify.error) console.log(fail(`Shopify   ${shopify.error}`));
+  else if (shopify.total === 0) console.log(warn('Shopify   belum ada langganan'));
+  else for (const w of shopify.webhooks) console.log(ok(`Shopify   ${w.topic} -> ${w.uri}`));
+
+  console.log('');
+}
+
+async function cmdHooks(config) {
+  printHookStatus(await webhookStatus(), config);
+  console.log(info('daftarkan dengan `npm run hooks:register -- --yes`') + '\n');
+  return 0;
+}
+
+async function cmdHooksRegister(config, args = []) {
+  const status = await webhookStatus();
+  printHookStatus(status, config);
+
+  const only = args.find((a) => /^--(shopee|tiktok|shopify)$/.test(a))?.slice(2) ?? null;
+  const targets = (only ? [only] : ['shopee', 'tiktok', 'shopify'])
+    .map((name) => `${name} -> ${webhookUrl(name, config)}`);
+  console.log(`  akan didaftarkan:\n${targets.map((t) => `    ${t}`).join('\n')}\n`);
+
+  if (!args.includes('--yes')) { console.log(`${warn('belum didaftarkan. Ulangi dengan --yes')}\n`); return 1; }
+
+  const run = async (name, fn) => {
+    if (only && only !== name) return;
+    try {
+      const result = await fn();
+      console.log(ok(`${name}: ${JSON.stringify(result)}`));
+    } catch (error) {
+      console.log(fail(`${name}: ${error.message}`));
+    }
+  };
+
+  await run('shopee', registerShopee);
+  await run('tiktok', registerTikTok);
+  await run('shopify', registerShopify);
+  console.log('');
+  return 0;
+}
+
+async function cmdHooksRecover(config, args = []) {
+  const dryRun = !args.includes('--yes');
+  const result = await recoverShopee({ dryRun });
+  console.log(`\n  ${result.messages} pesan tertunda` +
+    (dryRun ? '' : `  ·  dibuat ${result.created}  ·  sudah ada ${result.exists}  ·  gagal ${result.failed}`));
+  for (const s of result.seen.slice(0, 20)) console.log(`    ${s.id.padEnd(22)} code ${s.code}  ${s.status}`);
+  console.log(dryRun ? `\n${info('dry-run: antrean Shopee tidak dikosongkan. Proses dengan --yes')}\n` : '\n');
+  return 0;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -756,6 +830,9 @@ const COMMANDS = {
   'mekari:plan': cmdMekariPlan,
   'mekari:sync': cmdMekariSync,
   'mekari:status': cmdMekariStatus,
+  hooks: cmdHooks,
+  'hooks:register': cmdHooksRegister,
+  'hooks:recover': cmdHooksRecover,
   doctor: cmdDoctor,
   api: cmdApi,
 };

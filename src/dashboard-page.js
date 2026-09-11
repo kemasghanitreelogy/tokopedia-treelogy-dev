@@ -1184,8 +1184,8 @@ export function renderJurnal({
       <div class="alert ${live ? 'alert--ok' : 'alert--soft'}">
         ${svg(live ? 'check' : 'warn')}
         <span>${live
-          ? 'Sinkronisasi otomatis <b>aktif</b> &mdash; pesanan berbayar dikirim ke Jurnal tiap 15 menit.'
-          : 'Sinkronisasi otomatis <b>belum aktif</b>. Setel <span class="mono">MEKARI_SYNC_LIVE=1</span> untuk menyalakannya; sampai itu semua jalur hanya membaca.'}</span>
+          ? 'Sinkronisasi <b>real-time aktif</b> &mdash; tiap pesanan berbayar didorong platform ke Jurnal saat itu juga. Daftar di bawah adalah jaring pengaman: apa pun yang terlewat muncul sebagai <b>antre</b>.'
+          : 'Sinkronisasi <b>belum aktif</b>. Setel <span class="mono">MEKARI_SYNC_LIVE=1</span> untuk menyalakannya; sampai itu webhook tetap diterima tapi tidak menulis apa pun.'}</span>
       </div>
       ${canPost ? `<form method="post" data-confirm="Kirim ${overview.queued} faktur senilai ${escape(rupiah(overview.queuedValue))} ke Mekari Jurnal?">
         <input type="hidden" name="csrf" value="${escape(csrf)}">
@@ -1193,7 +1193,7 @@ export function renderJurnal({
         <input type="hidden" name="action" value="mekari_sync">
         <div class="apply">
           <button type="submit">Kirim ${overview.queued} faktur sekarang</button>
-          <span class="note">Faktur yang sudah ada tidak akan dibuat dua kali.</span>
+          <span class="note">Untuk pesanan yang webhook-nya terlewat. Faktur yang sudah ada tidak akan dibuat dua kali.</span>
         </div>
       </form>` : ''}
       ${rows

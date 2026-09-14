@@ -28,33 +28,48 @@ export const CATEGORIES = {
  */
 
 /** @type {MasterProduct[]} */
+/**
+ * SKU aliases: the same product, spelled differently by each channel.
+ *
+ * TikTok Shop drops the -001 suffix (OMC90), sometimes the dashes too, and for orders
+ * placed before a seller SKU was set it reports the numeric sku_id instead. Shopify
+ * occasionally carries the listing title where a SKU should be. Every one of those is the
+ * same jar, and without these 8,980 units - 35% of everything ever sold - counted as
+ * products nobody has heard of and vanished from the forecast.
+ *
+ * The numeric ids were resolved by looking each one up in the live TikTok catalogue, not
+ * inferred. FREE-OMC-* map to the ordinary capsules because a free one consumes the same
+ * stock as a sold one. What stays unmapped is what genuinely cannot be decided from the
+ * data - GIFT-OMC90/OMC180 is either one, and 'Inside Out  Moringa Protocol' does not say
+ * which protocol - and those remain visible as unknown rather than guessed.
+ */
 export const PRODUCTS = [
   // --- Moringa Powder
-  { sku: 'OMP-45-001', name: 'Moringa Powder', variant: '45 gram', category: 'powder' },
-  { sku: 'OMP-90-001', name: 'Moringa Powder', variant: '90 gram', category: 'powder' },
-  { sku: 'OMP-180-001', name: 'Moringa Powder', variant: '180 gram', category: 'powder' },
+  { sku: 'OMP-45-001', name: 'Moringa Powder', variant: '45 gram', category: 'powder', aliases: ['OMP45', '1731010082174765019'] },
+  { sku: 'OMP-90-001', name: 'Moringa Powder', variant: '90 gram', category: 'powder', aliases: ['OMP90', '1729838939428915163'] },
+  { sku: 'OMP-180-001', name: 'Moringa Powder', variant: '180 gram', category: 'powder', aliases: ['OMP180', '1729838939428849627'] },
 
   // --- Moringa Capsules
-  { sku: 'OMC-90-001', name: 'Moringa Capsules', variant: '90 caps', category: 'capsules' },
-  { sku: 'OMC-180-001', name: 'Moringa Capsules', variant: '180 caps', category: 'capsules' },
+  { sku: 'OMC-90-001', name: 'Moringa Capsules', variant: '90 caps', category: 'capsules', aliases: ['OMC90', 'OMC-90', 'FREE-OMC-90-001', '1731010208236603355'] },
+  { sku: 'OMC-180-001', name: 'Moringa Capsules', variant: '180 caps', category: 'capsules', aliases: ['OMC180', 'OMC-180', 'FREE-OMC-180-001', '1731010208236668891'] },
   { sku: 'OMC-270-001', name: 'Moringa Capsules', variant: '270 caps', category: 'capsules' },
 
   // --- Moringa Seed Oil
-  { sku: 'OMO-30-001', name: 'Moringa Seed Oil', variant: '30 ml', category: 'oil' },
-  { sku: 'OMO-60-001', name: 'Moringa Seed Oil', variant: '60 ml', category: 'oil' },
+  { sku: 'OMO-30-001', name: 'Moringa Seed Oil', variant: '30 ml', category: 'oil', aliases: ['OMO30', '1731010063360821211'] },
+  { sku: 'OMO-60-001', name: 'Moringa Seed Oil', variant: '60 ml', category: 'oil', aliases: ['OMO60', '1731010063360886747'] },
 
   // --- Set & aksesori
-  { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set' },
-  { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set' },
-  { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set' },
+  { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS'] },
+  { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop'] },
+  { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set', aliases: ['Bamboo Whisk - 120 prongs'] },
   { sku: 'The-Inside-&-Out30', name: 'Inside Out Moringa Protocol', variant: '30 hari', category: 'set' },
   { sku: 'The-Inside-&-Out60', name: 'Inside Out Moringa Protocol', variant: '60 hari', category: 'set' },
   // Named from its SKU: it sold 33 times in the last 30 days but is no longer listed on
   // any channel, so the only description of it left is the code itself. Its orders carried
   // the parent listing's title ("Inside Out Moringa Protocol"), which would make it
   // indistinguishable from the 30- and 60-day entries above.
-  { sku: 'The-Movement-&-Relief', name: 'The Movement & Relief', category: 'set' },
-  { sku: 'The-Discovery-Pack', name: 'The Discovery Pack', variant: 'listing Shopee', category: 'set' },
+  { sku: 'The-Movement-&-Relief', name: 'The Movement & Relief', category: 'set', aliases: ['The Movement & Relief', 'The-Movement-Relief'] },
+  { sku: 'The-Discovery-Pack', name: 'The Discovery Pack', variant: 'listing Shopee', category: 'set', aliases: ['The Discovery Pack'] },
 
   // --- Free gift
   { sku: 'Travel-Pouch', name: 'Travel Pouch', category: 'gift', gift: true, aliases: ['GFT-POUCH-001'] },
@@ -72,14 +87,17 @@ export const PRODUCTS = [
   },
   {
     sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram &middot; Starter', category: 'bundle',
+    aliases: ['MRS45'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-45-001', qty: 1 }],
   },
   {
     sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram &middot; Daily Wellness', category: 'bundle',
+    aliases: ['MRS90'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-90-001', qty: 1 }],
   },
   {
     sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram &middot; Complete', category: 'bundle',
+    aliases: ['MRS180'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },
   {

@@ -86,3 +86,55 @@ test('channel SKUs with no master entry are reported as drift', () => {
   const drift = unmapped([{ sku: 'OMP-45-001' }, { sku: 'TIDAK-DIKENAL' }]);
   assert.deepEqual(drift.map((d) => d.sku), ['TIDAK-DIKENAL']);
 });
+
+test('every channel spelling of a product resolves to the one master SKU', async () => {
+  const { findProduct } = await import('../src/master.js');
+  // TikTok drops the suffix and the dashes, and falls back to the numeric sku_id for
+  // orders placed before a seller SKU existed. All of it is the same jar.
+  const same = [
+    ['OMC-90-001', ['OMC90', 'OMC-90', 'FREE-OMC-90-001', '1731010208236603355']],
+    ['OMC-180-001', ['OMC180', 'OMC-180', 'FREE-OMC-180-001', '1731010208236668891']],
+    ['OMP-45-001', ['OMP45', '1731010082174765019']],
+    ['OMO-30-001', ['OMO30', '1731010063360821211']],
+    ['MRS-001', ['MRS']],
+    ['The-Movement-&-Relief', ['The Movement & Relief', 'The-Movement-Relief']],
+    ['Bamboo-Scoop', ['Bamboo Scoop']],
+  ];
+  for (const [master, aliases] of same) {
+    for (const alias of aliases) {
+      assert.equal(findProduct(alias)?.sku, master, `${alias} harus jadi ${master}`);
+    }
+  }
+  // A free capsule consumes the same stock as a sold one, so it is not a separate product.
+  assert.equal(findProduct('FREE-OMC-90-001')?.sku, findProduct('OMC-90-001')?.sku);
+});
+
+test('the ritual set short codes land on the bundle that holds the right powder', async () => {
+  const { findProduct } = await import('../src/master.js');
+  const { explode } = await import('../src/forecast/series.js');
+  assert.deepEqual(explode('MRS45', 1), { 'MRS-001': 1, 'OMP-45-001': 1 });
+  assert.deepEqual(explode('MRS90', 1), { 'MRS-001': 1, 'OMP-90-001': 1 });
+  assert.deepEqual(explode('MRS180', 1), { 'MRS-001': 1, 'OMP-180-001': 1 });
+  assert.equal(findProduct('MRS45')?.sku, 'MRS-002');
+});
+
+test('what cannot be decided from the data stays unknown rather than guessed', async () => {
+  const { findProduct } = await import('../src/master.js');
+  // GIFT-OMC90/OMC180 is literally either one; the protocol title does not say which
+  // protocol. Mapping them would put invented demand against a real product.
+  for (const sku of ['GIFT-OMC90/OMC180', 'Inside Out  Moringa Protocol', 'Consistency-Pack', 'MDLF-45-001', 'Test']) {
+    assert.equal(findProduct(sku), null, `${sku} tidak boleh dipetakan tanpa dasar`);
+  }
+});
+
+test('no alias is claimed by two different products', async () => {
+  const { PRODUCTS } = await import('../src/master.js');
+  const owner = new Map();
+  for (const p of PRODUCTS) {
+    for (const alias of p.aliases ?? []) {
+      assert.equal(owner.get(alias), undefined, `${alias} diklaim ${owner.get(alias)} dan ${p.sku}`);
+      owner.set(alias, p.sku);
+    }
+    assert.equal(owner.get(p.sku), undefined, `${p.sku} juga dipakai sebagai alias`);
+  }
+});

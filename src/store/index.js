@@ -323,9 +323,19 @@ const backend = () => {
   return sqliteBackend;
 };
 
-/** Close whatever is open; for a clean process exit in the CLI and timers. */
+/**
+ * Close whatever is open; for a clean process exit in the CLI and timers.
+ *
+ * close() alone is not enough. It resolves in a millisecond and leaves the pool's socket
+ * on the event loop - the sweep's own exit diagnostic named it, "Socket -> 127.0.0.1:6379"
+ * - so a finished command sat there until something else made it leave. close() first so
+ * an in-flight command is not cut off, then destroy() so the socket actually goes.
+ */
 export async function closeStore() {
-  if (pool) await pool.close().catch(() => {});
+  if (pool) {
+    await pool.close().catch(() => {});
+    try { pool.destroy(); } catch { /* already gone */ }
+  }
   pool = null;
   resetStore();
 }

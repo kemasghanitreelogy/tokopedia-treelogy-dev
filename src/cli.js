@@ -16,7 +16,7 @@ import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './le
 import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from './mekari/setup.js';
-import { isMekariConfigured } from './mekari/client.js';
+import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -706,6 +706,22 @@ async function cmdMekariPlan(config, args = []) {
   return code;
 }
 
+/**
+ * A spent monthly package is not a fault to fix, it is a date to wait for.
+ *
+ * Exit 2 says so: the sweep unit treats it as a clean run (SuccessExitStatus=2), because
+ * a unit left red for the rest of the month is a unit nobody looks at when something
+ * actually breaks. One Telegram message per month, keyed by the month, not per run.
+ */
+async function reportQuotaExhausted() {
+  console.log(`\n${fail('kuota API bulanan Mekari Jurnal habis - berhenti; pesanan menunggu, tidak hilang')}\n`);
+  await sendTelegram(
+    '<b>⛔ Kuota API bulanan Mekari Jurnal habis</b>\nSinkronisasi berhenti sampai kuota kembali (awal bulan) atau paket API Mekari di-upgrade. Pesanan tidak hilang: sapuan akan menyusul semuanya begitu kuota ada.',
+    { key: `mekari-monthly-quota-${new Date().toISOString().slice(0, 7)}` },
+  );
+  return 2;
+}
+
 async function cmdMekariSync(config, args = []) {
   if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
 
@@ -729,19 +745,23 @@ async function cmdMekariSync(config, args = []) {
 
   // Customers and products both have to exist before an invoice can name them; Jurnal
   // rejects the whole invoice otherwise.
-  await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
+  //
+  // This is the first live request of the run, so a spent monthly package shows up here
+  // rather than in the sync loop below - and thrown from here it used to escape as an
+  // ordinary error, print as a bare FAIL line, and exit 1, which is how the unit came to
+  // sit in "failed" all month. Same condition, same message, same exit code as the loop's
+  // own quota branch.
+  try {
+    await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
+  } catch (error) {
+    if (!(error instanceof QuotaExhaustedError)) throw error;
+    return reportQuotaExhausted();
+  }
 
   const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
   const result = await runSync({ orders, depositTo, dryRun: false, limit });
   if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
-  if (result.quotaExhausted) {
-    console.log(`\n${fail('kuota API bulanan Mekari Jurnal habis - berhenti; pesanan menunggu, tidak hilang')}\n`);
-    await sendTelegram(
-      '<b>⛔ Kuota API bulanan Mekari Jurnal habis</b>\nSinkronisasi berhenti sampai kuota kembali (awal bulan) atau paket API Mekari di-upgrade. Pesanan tidak hilang: sapuan akan menyusul semuanya begitu kuota ada.',
-      { key: `mekari-monthly-quota-${new Date().toISOString().slice(0, 7)}` },
-    );
-    return 2;
-  }
+  if (result.quotaExhausted) return reportQuotaExhausted();
   await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
   return printSyncResult(result);
 }

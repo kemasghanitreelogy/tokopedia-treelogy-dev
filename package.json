@@ -5,7 +5,7 @@
   "type": "module",
   "description": "TikTok Shop Open API integration for PT Treelogy Regenerative Moringa (ID / Tokopedia) - order management",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "bin": {
     "tts": "./bin/tts.mjs",

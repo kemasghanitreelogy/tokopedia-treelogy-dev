@@ -8,12 +8,26 @@ STATE=/opt/treelogy/state
 
 echo "== paket"
 apt-get update -qq
-apt-get install -y -qq curl git nginx redis-server ufw >/dev/null
-if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 24 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null
-  apt-get install -y -qq nodejs >/dev/null
+apt-get install -y -qq curl git nginx redis-server ufw ca-certificates >/dev/null
+
+# Node 22+ dibutuhkan (node:sqlite dipakai test, plus API modern di kode).
+# Coba repo Ubuntu dulu - 26.04 sudah membawa Node LTS - baru NodeSource kalau kurang.
+node_major() { command -v node >/dev/null && node -v | sed 's/^v//' | cut -d. -f1 || echo 0; }
+if [ "$(node_major)" -lt 22 ]; then
+  apt-get install -y -qq nodejs npm >/dev/null 2>&1 || true
 fi
-echo "node $(node -v)"
+if [ "$(node_major)" -lt 22 ]; then
+  echo "   node dari repo Ubuntu kurang ($(node_major)); mencoba NodeSource"
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1 || true
+  apt-get install -y -qq nodejs >/dev/null 2>&1 || true
+fi
+if [ "$(node_major)" -lt 22 ]; then
+  echo "!! Node 22+ tidak bisa dipasang otomatis di distro ini (dapat: $(node -v 2>/dev/null || echo tidak ada))."
+  echo "   Pasang manual, lalu jalankan skrip ini lagi:"
+  echo "     curl -fsSL https://fnm.vercel.app/install | bash   # atau snap install node --classic --channel=24"
+  exit 1
+fi
+echo "node $(node -v) · npm $(npm -v)"
 
 echo "== pengguna & direktori"
 id -u treelogy >/dev/null 2>&1 || useradd --system --home /opt/treelogy --shell /usr/sbin/nologin treelogy
@@ -21,7 +35,15 @@ mkdir -p "$APP" "$STATE" /opt/treelogy/backup /etc/treelogy
 chown -R treelogy:treelogy /opt/treelogy
 
 echo "== kode"
-if [ -d "$APP/.git" ]; then sudo -u treelogy git -C "$APP" pull -q --ff-only; else sudo -u treelogy git clone -q "$REPO" "$APP"; fi
+# root dan treelogy sama-sama menyentuh repo ini; tanpa ini git menolak dengan
+# "detected dubious ownership" dan deploy berhenti di tengah.
+git config --system --add safe.directory "$APP" 2>/dev/null || true
+if [ -d "$APP/.git" ]; then
+  sudo -u treelogy git -C "$APP" fetch -q origin main && sudo -u treelogy git -C "$APP" reset -q --hard origin/main
+else
+  sudo -u treelogy git clone -q "$REPO" "$APP"
+fi
+echo "commit $(sudo -u treelogy git -C "$APP" rev-parse --short HEAD)"
 sudo -u treelogy bash -c "cd $APP && npm ci --omit=dev --no-audit --no-fund --silent"
 
 echo "== env"
@@ -89,6 +111,14 @@ echo "== firewall"
 ufw allow OpenSSH >/dev/null; ufw allow 'Nginx Full' >/dev/null; ufw --force enable >/dev/null
 
 echo "== cek"
-sleep 2
-curl -fsS http://127.0.0.1:3000/api/status | head -c 300; echo
-systemctl --no-pager --lines=5 status treelogy.service | tail -6
+sleep 3
+echo "-- lokal :3000"
+curl -fsS --max-time 20 http://127.0.0.1:3000/api/status | head -c 400 || echo "(belum menjawab - lihat: journalctl -u treelogy -n 40)"
+echo
+echo "-- lewat nginx :443"
+curl -fsS --max-time 20 https://api.treelogy-services.my.id/api/status -o /dev/null -w "   https -> %{http_code}\n" || echo "   https -> gagal"
+echo "-- layanan & timer"
+systemctl is-active treelogy.service redis-server nginx | paste -sd' ' -
+systemctl list-timers --no-pager 'treelogy-*' | head -4
+echo
+echo "SELESAI. Webhook deploy sudah terdaftar di GitHub; push ke main akan ter-deploy sendiri."

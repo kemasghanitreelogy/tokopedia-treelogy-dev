@@ -175,3 +175,19 @@ test('a manifest merge keeps every channel when two pulls finish at once', async
   assert.equal(manifest.channels.tiktok.months['2025-05'].orders, 9);
   await deleteDoc('history/manifest.json');
 });
+
+test('one dead channel does not take the other channels history down with it', async () => {
+  const { pullHistory } = await import('../src/history/ingest.js');
+  const { deleteDoc } = await import('../src/store/index.js');
+  await deleteDoc('history/manifest.json');
+  const seen = [];
+  // shopee is unauthorised in production right now; shopify and tiktok must still finish.
+  const { summary } = await pullHistory({
+    channels: ['shopee'],
+    onMonth: (e) => seen.push(e),
+    now: Date.parse('2026-09-14T00:00:00Z'),
+  });
+  assert.ok(summary.shopee.error, 'kegagalan dilaporkan, bukan dilempar');
+  assert.ok(seen.some((e) => e.error), 'dan disampaikan ke pemanggil saat terjadi');
+  await deleteDoc('history/manifest.json');
+});

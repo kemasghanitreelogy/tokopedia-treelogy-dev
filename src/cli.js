@@ -866,10 +866,15 @@ async function cmdHistoryPull(config, args = []) {
   const t0 = Date.now();
   const { summary } = await pullHistory({
     channels: only ? [only] : undefined,
-    onMonth: ({ channel, month, orders, complete }) => console.log(`  ${channel.padEnd(8)} ${month}  ${String(orders).padStart(5)} order${complete ? '' : '  (bulan berjalan)'}`),
+    onMonth: ({ channel, month, orders, complete, error }) => console.log(error
+      ? fail(`${channel.padEnd(8)} berhenti: ${String(error).slice(0, 90)}`)
+      : `  ${channel.padEnd(8)} ${month}  ${String(orders).padStart(5)} order${complete ? '' : '  (bulan berjalan)'}`),
   });
   console.log();
-  for (const [ch, s] of Object.entries(summary)) console.log(ok(`${ch.padEnd(8)} ditarik ${s.pulled} bulan (${s.orders} order), dilewati ${s.skipped} bulan yang sudah lengkap`));
+  for (const [ch, s] of Object.entries(summary)) {
+    const line = `${ch.padEnd(8)} ditarik ${s.pulled} bulan (${s.orders} order), dilewati ${s.skipped} bulan yang sudah lengkap`;
+    console.log(s.error ? warn(`${line} - BERHENTI: ${String(s.error).slice(0, 70)}`) : ok(line));
+  }
   console.log(`  ${Math.round((Date.now() - t0) / 1000)} detik\n`);
   return 0;
 }

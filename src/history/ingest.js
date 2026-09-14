@@ -85,9 +85,10 @@ export async function pullHistory({ channels = ['shopify', 'tiktok', 'shopee'], 
     manifest.channels[channel] ??= { months: {} };
     const known = manifest.channels[channel].months;
     const months = monthsSince(HISTORY_STARTS[channel] ?? '2024-01', now);
-    summary[channel] = { pulled: 0, skipped: 0, orders: 0, empty_leading: 0 };
+    summary[channel] = { pulled: 0, skipped: 0, orders: 0, empty_leading: 0, error: null };
     let seenAny = false;
 
+    try {
     for (const month of months) {
       const done = known[month];
       if (done?.complete && month < current) { summary[channel].skipped++; seenAny = seenAny || done.orders > 0; continue; }
@@ -110,6 +111,13 @@ export async function pullHistory({ channels = ['shopify', 'tiktok', 'shopee'], 
       summary[channel].pulled++;
       summary[channel].orders += orders.length;
       onMonth({ channel, month, orders: orders.length, complete });
+    }
+    } catch (error) {
+      // A channel that will not answer - an expired authorization, an outage - must not
+      // take the other channels' history down with it. Whatever was already saved stays
+      // saved, the failure is reported, and the next run resumes from where this stopped.
+      summary[channel].error = error.message;
+      onMonth({ channel, month: null, orders: 0, complete: false, error: error.message });
     }
   }
   return { manifest, summary };

@@ -336,7 +336,7 @@ export async function tiktokConfig() {
 }
 
 /** The window is applied server-side, so every page returned is already in range. */
-async function fetchTikTokOrders({ config, since, until, max }) {
+export async function fetchTikTokOrders({ config, since, until, max }) {
   const summaries = [];
   let pageToken = null;
 
@@ -361,7 +361,7 @@ async function fetchTikTokOrders({ config, since, until, max }) {
   return { orders, truncated: summaries.length > max };
 }
 
-async function fetchShopeeOrders({ since, until, max, tracking = true }) {
+export async function fetchShopeeOrders({ since, until, max, tracking = true }) {
   const { config, auth, shop, refreshed } = await resolveShopeeSession();
 
   // Shopee caps a single query at 15 days, so a wider window is stitched from chunks.

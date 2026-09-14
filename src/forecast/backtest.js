@@ -111,15 +111,24 @@ export function selectModel(series, horizon) {
   candidates.sort((a, b) => a.mase - b.mase);
   const best = candidates[0];
 
-  // Residual quantiles, as a ratio to the prediction where possible, so the interval
-  // scales with the size of the forecast instead of being a fixed number of units.
-  const ratios = best.result.predictions.map((p, i) => (p > 0 ? best.result.actuals[i] / p : null)).filter((r) => r !== null);
-  const lo = ratios.length >= MIN_ORIGINS ? quantile(ratios, 0.1) : 0.5;
-  const hi = ratios.length >= MIN_ORIGINS ? quantile(ratios, 0.9) : 1.8;
+  /*
+   * The interval is the spread of this model's own errors, added to the forecast.
+   *
+   * The first version divided actual by predicted and took quantiles of the ratio, so the
+   * interval would scale with the forecast. It scaled with the forecast's *reciprocal*
+   * instead: one origin where the model predicted 0.003 and 20 actually sold gave a ratio
+   * of 6,600, and the p90 inherited it. In production that produced an upper bound of
+   * 26,975,742 bamboo scoops and a reorder of 18.8 million - a number somebody could have
+   * acted on. Absolute residuals are already on the right scale, because they come from
+   * the same horizon, and no prediction near zero can blow them up.
+   */
+  const residuals = best.result.actuals.map((a, i) => a - best.result.predictions[i]);
+  const loShift = residuals.length >= MIN_ORIGINS ? quantile(residuals, 0.1) : -Math.max(1, best.result.actuals[0] ?? 1) / 2;
+  const hiShift = residuals.length >= MIN_ORIGINS ? quantile(residuals, 0.9) : Math.max(1, best.result.actuals[0] ?? 1);
 
   const inside = best.result.predictions.filter((p, i) => {
     const a = best.result.actuals[i];
-    return a >= p * lo && a <= p * hi;
+    return a >= p + loShift && a <= p + hiShift;
   }).length;
 
   return {
@@ -133,8 +142,8 @@ export function selectModel(series, horizon) {
     // Positive means the model runs high - it would have us hold too much stock.
     bias: Number((sum(best.result.errors) / Math.max(1, sum(best.result.actuals))).toFixed(3)),
     origins: origins.length,
-    lo: Number(lo.toFixed(3)),
-    hi: Number(hi.toFixed(3)),
+    loShift: Math.round(loShift),
+    hiShift: Math.round(hiShift),
     coverage80: Number((inside / Math.max(1, best.result.predictions.length)).toFixed(2)),
     zeroShare: Number(zeroShare(series).toFixed(2)),
     medianActual: median(best.result.actuals),
@@ -148,10 +157,12 @@ export function forecastWith(series, selection) {
     ? (train, h) => ensemble(selection.members.map((k) => MODELS[k].fn(train, h)), h)
     : MODELS[selection.model].fn;
   const total = sum(fn(series, selection.horizon).slice(0, selection.horizon));
+  // Demand cannot be negative, and the upper bound cannot sit below the point forecast.
+  const p50 = Math.round(total);
   return {
     horizon: selection.horizon,
-    p50: Math.round(total),
-    p10: Math.round(total * selection.lo),
-    p90: Math.round(total * selection.hi),
+    p50,
+    p10: Math.max(0, Math.round(total + selection.loShift)),
+    p90: Math.max(p50, Math.round(total + selection.hiShift)),
   };
 }

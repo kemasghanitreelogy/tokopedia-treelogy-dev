@@ -191,3 +191,41 @@ test('one dead channel does not take the other channels history down with it', a
   assert.ok(seen.some((e) => e.error), 'dan disampaikan ke pemanggil saat terjadi');
   await deleteDoc('history/manifest.json');
 });
+
+test('an interval can never explode when the model predicts near zero', async () => {
+  const { selectModel, forecastWith } = await import('../src/forecast/backtest.js');
+  // The shape that broke production: long dead stretches, then occasional real sales. A
+  // ratio-based interval divided by a near-zero prediction and produced an upper bound of
+  // 26,975,742 units - and a reorder recommendation of 18.8 million.
+  const series = Array.from({ length: 400 }, (_, i) => (i % 97 === 0 ? 20 : 0));
+  const selection = selectModel(series, 30);
+  assert.ok(selection, 'harus bisa dinilai');
+  const f = forecastWith(series, selection);
+  assert.ok(f.p90 < 1000, `p90 meledak: ${f.p90}`);
+  assert.ok(f.p10 >= 0, 'permintaan tidak bisa negatif');
+  assert.ok(f.p90 >= f.p50, 'batas atas tidak boleh di bawah titik ramalan');
+});
+
+test('every SKU in a realistic mix stays within a believable interval', async () => {
+  const { buildForecast } = await import('../src/forecast/engine.js');
+  const day = (n) => 1_780_000_000 + n * 86_400;
+  const orders = [];
+  for (let d = 0; d < 300; d++) {
+    // A steady seller, a spiky one, and one that sells once a quarter.
+    orders.push({ at: day(d), stage: 'completed', lines: [{ sku: 'OMP-45-001', qty: 4 }] });
+    if (d % 11 === 0) orders.push({ at: day(d), stage: 'completed', lines: [{ sku: 'OMC-90-001', qty: 30 }] });
+    if (d % 89 === 0) orders.push({ at: day(d), stage: 'completed', lines: [{ sku: 'Bamboo-Scoop', qty: 15 }] });
+  }
+  const result = await buildForecast({
+    orders,
+    ledger: { skus: { 'OMP-45-001': { qty: 100 }, 'OMC-90-001': { qty: 100 }, 'Bamboo-Scoop': { qty: 100 } } },
+    now: day(300) * 1000,
+  });
+  for (const row of result.rows.filter((r) => r.status === 'ok')) {
+    for (const f of Object.values(row.forecasts)) {
+      assert.ok(f.p90 <= f.p50 * 50 + 500, `${row.sku}: p90 ${f.p90} tidak masuk akal terhadap p50 ${f.p50}`);
+      assert.ok(f.p10 >= 0 && f.p10 <= f.p50);
+    }
+    if (row.stock) assert.ok(row.stock.reorderQty < 100_000, `${row.sku}: pesan ${row.stock.reorderQty} tidak masuk akal`);
+  }
+});

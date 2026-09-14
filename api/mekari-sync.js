@@ -1,4 +1,5 @@
 import { collectOrders } from '../src/omni.js';
+import { rememberOrders } from '../src/orders-source.js';
 import { runSync, loadSyncLedger } from '../src/mekari/sync.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
@@ -99,8 +100,13 @@ export default async function handler(req, res) {
     // No tracking numbers here: the Shopee tracking lookups were the single biggest cost
     // in the collect, and the code-4 push adds the waybill to the order the moment it is
     // assigned - the sweep's job is to make sure the invoice exists, not to decorate it.
-    const { orders, errors } = await collectOrders({ range, maxPerPlatform: 300, tracking: false });
+    const live = await collectOrders({ range, maxPerPlatform: 300, tracking: false });
+    const { orders, errors } = live;
     timings.collect_ms = elapsed();
+    // The dashboard reads orders from the database, and this is a live, complete read of
+    // the same window - so it carries the covered window forward rather than being thrown
+    // away once the invoices are posted.
+    await rememberOrders(live, range);
 
     // A channel that failed to answer simply has no orders in this run; posting is
     // additive and idempotent, so the next tick picks up whatever was missed. What must

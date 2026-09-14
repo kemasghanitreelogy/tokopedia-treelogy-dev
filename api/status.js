@@ -1,5 +1,8 @@
 import { loadConfig, redirectUri } from '../src/config.js';
 import { loadTokenBundle } from '../src/token-store.js';
+import { isSupabaseConfigured } from '../src/db/client.js';
+import { readCoverage, dbStats } from '../src/db/orders.js';
+import { activeSources } from '../src/orders-source.js';
 
 /**
  * Deployment health check. Reports whether the environment is wired up and whether a
@@ -23,6 +26,33 @@ export default async function handler(req, res) {
     tokenState = `error: ${error.name}`;
   }
 
+  /**
+   * Whether the dashboard is being served from the database or still from the platforms.
+   *
+   * This is the one fact a health check cannot leave out now: the page looks identical
+   * either way, so without it an ingest that quietly stopped would show up only as the
+   * site being slow again, and nobody reads slowness as an outage.
+   */
+  let database = { configured: isSupabaseConfigured() };
+  if (database.configured) {
+    try {
+      const [stats, coverage] = await Promise.all([dbStats(), readCoverage()]);
+      const sources = activeSources();
+      database = {
+        configured: true,
+        orders: stats?.orders ?? null,
+        serving: sources.filter((source) => coverage[source]),
+        live_only: sources.filter((source) => !coverage[source]),
+        coverage: Object.fromEntries(Object.entries(coverage).map(([source, w]) => [
+          source,
+          { from: new Date(w.from * 1000).toISOString(), through: new Date(w.through * 1000).toISOString(), at: w.at },
+        ])),
+      };
+    } catch (error) {
+      database = { configured: true, error: error.message };
+    }
+  }
+
   res.statusCode = 200;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -36,8 +66,11 @@ export default async function handler(req, res) {
           APP_SECRET: Boolean(config.appSecret),
           SERVICE_ID: Boolean(config.serviceId),
           BLOB_READ_WRITE_TOKEN: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+          SUPABASE_URL: Boolean(process.env.SUPABASE_URL),
+          SUPABASE_SECRET_KEY: Boolean(process.env.SUPABASE_SECRET_KEY),
         },
         tokens: { state: tokenState, saved_at: savedAt, shop: shopName },
+        database,
       },
       null,
       2,

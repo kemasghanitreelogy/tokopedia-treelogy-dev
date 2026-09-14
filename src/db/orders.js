@@ -145,8 +145,8 @@ export async function orderById(channel, id) {
  *
  * @returns {Promise<Record<string, {from: number, through: number, at: string}>>}
  */
-export async function readCoverage() {
-  const rows = await selectAll('ingest_coverage', { select: '*' });
+export async function readCoverage(options = {}) {
+  const rows = await selectAll('ingest_coverage', { select: '*' }, options);
   const out = {};
   for (const row of rows) {
     out[row.source] = {
@@ -200,9 +200,10 @@ export function coversRange(coverage, { since, until }, sources) {
 }
 
 /** How many orders and lines are held, for the status page. */
-export async function dbStats() {
+export async function dbStats(options = {}) {
   if (!isSupabaseConfigured()) return null;
   const { contentRange } = await request('orders', {
+    ...options,
     params: { select: 'channel' },
     range: '0-0',
     prefer: 'count=exact',

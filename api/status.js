@@ -33,10 +33,18 @@ export default async function handler(req, res) {
    * either way, so without it an ingest that quietly stopped would show up only as the
    * site being slow again, and nobody reads slowness as an outage.
    */
+  //
+  // Bounded hard, and asked only once. The deploy script's health check is this endpoint
+  // with a twenty-second ceiling, so the moment it started calling an external service it
+  // also started being able to fail a good deploy because that service was slow - which
+  // is exactly what happened the first time, and rolled a healthy release back. A report
+  // that says "the database did not answer in three seconds" is useful; an endpoint that
+  // hangs waiting to find out is not.
+  const PROBE = { timeout: 3_000, retries: 1 };
   let database = { configured: isSupabaseConfigured() };
   if (database.configured) {
     try {
-      const [stats, coverage] = await Promise.all([dbStats(), readCoverage()]);
+      const [stats, coverage] = await Promise.all([dbStats(PROBE), readCoverage(PROBE)]);
       const sources = activeSources();
       database = {
         configured: true,

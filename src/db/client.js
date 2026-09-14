@@ -80,6 +80,10 @@ export async function request(path, {
   prefer = null,
   range = null,
   timeout = TIMEOUTS.api,
+  // Retries multiply the wait. A caller on a deadline - the health check is the one that
+  // matters - needs to be able to say "ask once", or three attempts with backoff turn a
+  // three-second budget into ten.
+  retries = RETRIES,
   config = loadSupabaseConfig(),
 } = {}) {
   if (!isSupabaseConfigured(config)) {
@@ -97,7 +101,7 @@ export async function request(path, {
   if (range) headers.range = range;
 
   let last = null;
-  for (let attempt = 1; attempt <= RETRIES; attempt += 1) {
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
     let response;
     try {
       response = await fetchWithTimeout(url, {
@@ -108,7 +112,7 @@ export async function request(path, {
       });
     } catch (error) {
       last = new SupabaseError(`tidak bisa menghubungi Supabase: ${error.message}`, { status: 0 });
-      if (attempt === RETRIES) throw last;
+      if (attempt === retries) throw last;
       await sleep(attempt * 400);
       continue;
     }
@@ -128,7 +132,7 @@ export async function request(path, {
       [payload?.message, payload?.hint].filter(Boolean).join(' - ') || `HTTP ${response.status}`,
       { status: response.status, code: payload?.code ?? '', details: payload?.details ?? '' },
     );
-    if (!last.retryable || attempt === RETRIES) throw last;
+    if (!last.retryable || attempt === retries) throw last;
     await sleep(attempt * 400);
   }
   throw last;

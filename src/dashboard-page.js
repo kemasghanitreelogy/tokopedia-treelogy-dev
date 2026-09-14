@@ -71,7 +71,7 @@ const svg = (name, cls = '') =>
 
 export const VIEWS = {
   orders: 'Pesanan', process: 'Proses', picklist: 'Picklist', labels: 'Label',
-  stock: 'Stok', products: 'Produk', jurnal: 'Jurnal',
+  stock: 'Stok', products: 'Produk', jurnal: 'Jurnal', forecast: 'Prakiraan',
 };
 
 function viewNav(current, rangeQuery) {
@@ -666,6 +666,31 @@ tbody tr:hover{background:var(--panel-2)}
 .ln__pic[hidden]{display:none}
 .ln__prod{display:flex; gap:.45rem; align-items:center; min-width:0}
 .ln__prod select{flex:1; min-width:0}
+
+/* ------------------------------------------------------ prakiraan stok ------ */
+/* Built to be scanned in the order the decision is made: how urgent, how long the stock
+   lasts, how much to order - and only then how the number was arrived at. */
+.fc__u{display:inline-flex; align-items:center; gap:.35rem; font-size:.72rem; font-weight:600;
+  padding:.18rem .5rem; border-radius:999px; white-space:nowrap}
+.fc__u::before{content:''; width:.4rem; height:.4rem; border-radius:50%; background:currentColor}
+.fc__u--stockout{color:var(--bad); background:color-mix(in srgb,var(--bad) 16%,transparent)}
+.fc__u--critical{color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.fc__u--watch{color:var(--warn); background:color-mix(in srgb,var(--warn) 15%,transparent)}
+.fc__u--ok{color:var(--good); background:color-mix(in srgb,var(--good) 14%,transparent)}
+.fc__u--idle{color:var(--dim); background:var(--panel-2)}
+
+.fc__spark{display:block; width:92px; height:26px; overflow:visible}
+.fc__spark path{fill:none; stroke:var(--brand); stroke-width:1.6; stroke-linejoin:round; stroke-linecap:round}
+.fc__spark rect{fill:color-mix(in srgb,var(--brand) 14%,transparent)}
+
+.fc__range{font-family:"Fira Code",ui-monospace,monospace; font-size:.74rem; color:var(--dim); white-space:nowrap}
+.fc__p50{color:var(--fg); font-size:.84rem}
+.fc__qty{font-family:"Fira Code",ui-monospace,monospace; font-weight:600}
+.fc__mase{font-family:"Fira Code",ui-monospace,monospace; font-size:.74rem}
+.fc__mase--good{color:var(--good)} .fc__mase--poor{color:var(--warn)}
+.fc__why{font-size:.7rem; color:var(--dim)}
+.fc__note{padding:.9rem 1rem; border-bottom:1px solid var(--line); font-size:.78rem; color:var(--muted); line-height:1.5}
+.fc__note b{color:var(--fg)}
 
 /* ------------------------------------------------- transaksi manual ---------- */
 /* A data-entry form, so it is built for one hand on the keyboard: every field is
@@ -1648,6 +1673,118 @@ export function renderManual({
 
   total();
 }());`,
+  });
+}
+
+const URGENCY_META = {
+  stockout: { label: 'Habis', tone: 'stockout' },
+  critical: { label: 'Kritis', tone: 'critical' },
+  watch: { label: 'Awasi', tone: 'watch' },
+  ok: { label: 'Aman', tone: 'ok' },
+  idle: { label: 'Diam', tone: 'idle' },
+};
+
+/**
+ * Twelve weeks of demand as a sparkline, drawn inline.
+ *
+ * No chart library: one path is less code than loading one, and the page has no external
+ * requests beyond its font. A flat series draws a flat line rather than dividing by zero.
+ */
+function sparkline(weekly = []) {
+  if (weekly.length < 2) return '<span class="dim">&mdash;</span>';
+  const w = 92;
+  const h = 26;
+  const max = Math.max(...weekly, 1);
+  const step = w / (weekly.length - 1);
+  const points = weekly.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / max) * (h - 3) - 1.5).toFixed(1)}`);
+  return `<svg class="fc__spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Permintaan 12 minggu terakhir, puncak ${max}">
+    <path d="M${points.join(' L')}"/>
+  </svg>`;
+}
+
+/**
+ * Forecast view: what will sell, and what to do about it.
+ *
+ * Every number carries the accuracy it was measured at. A row whose model never beat
+ * "same as last week" says so, because the honest reading of that is "this SKU is not
+ * predictable, use judgement" - not a figure to order against.
+ */
+export function renderForecast({ forecast, range, errors, shopeeShop, generatedAt, csrf, flash }) {
+  if (!forecast) {
+    return shell({
+      title: 'Prakiraan stok', range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
+      hideRangeControls: true,
+      body: `<p class="empty">Belum ada prakiraan. Jalankan <span class="mono">npm run forecast</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
+    });
+  }
+
+  const h = forecast.history;
+  const counts = forecast.counts ?? {};
+  const rows = (forecast.rows ?? []).map((r) => {
+    const u = URGENCY_META[r.urgency] ?? URGENCY_META.idle;
+    if (r.status !== 'ok') {
+      return `<tr>
+        <td><span class="pick__n">${escape(r.name)}</span><span class="pick__s mono">${escape(r.sku)}</span></td>
+        <td class="num mono">${r.onHand ?? '<span class="dim">&mdash;</span>'}</td>
+        <td colspan="5" class="dim">Belum cukup riwayat (${r.historyDays} hari; butuh 42) &mdash; belum ada ramalan yang bisa diperiksa</td>
+      </tr>`;
+    }
+    const f30 = r.forecasts[30] ?? {};
+    const a30 = r.accuracy[30] ?? {};
+    const stock = r.stock ?? {};
+    const maseClass = a30.beatsNaive ? 'fc__mase--good' : 'fc__mase--poor';
+    return `<tr>
+      <td>
+        <span class="pick__n">${escape(r.name)}</span>
+        <span class="pick__s mono">${escape(r.sku)}</span>
+      </td>
+      <td class="num mono">${r.onHand ?? '<span class="dim">&mdash;</span>'}</td>
+      <td class="num mono">${stock.daysOfCover ?? '<span class="dim">&mdash;</span>'}
+        ${stock.stockoutDate ? `<span class="fc__why">${escape(stock.stockoutDate)}</span>` : ''}</td>
+      <td class="num">
+        <b class="fc__p50 mono">${f30.p50 ?? '&mdash;'}</b>
+        <span class="fc__range">${f30.p10 ?? '?'}&ndash;${f30.p90 ?? '?'}</span>
+      </td>
+      <td>${sparkline(r.weekly)}</td>
+      <td class="num"><b class="fc__qty">${stock.reorderQty > 0 ? stock.reorderQty : '<span class="dim">0</span>'}</b></td>
+      <td>
+        <span class="fc__u fc__u--${u.tone}">${escape(u.label)}</span>
+        <span class="fc__why">${escape(a30.modelName ?? '')} &middot; MASE <span class="${maseClass}">${a30.mase ?? '?'}</span>${
+          a30.beatsNaive ? '' : ' &middot; tak lebih baik dari pola minggu lalu'}</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return shell({
+    title: 'Prakiraan stok',
+    range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
+    hideRangeControls: true,
+    kpis: `
+      <div class="strip">
+        ${stat('Habis', String(counts.stockout ?? 0), counts.stockout ? 'stop' : '')}
+        ${stat('Kritis', String(counts.critical ?? 0), counts.critical ? 'stop' : '')}
+        ${stat('Awasi', String(counts.watch ?? 0), counts.watch ? 'flag' : '')}
+        ${stat('Aman', String(counts.ok ?? 0), 'ok')}
+        <span class="strip__grow"></span>
+        <span class="note">Lead time ${forecast.policy.leadTimeDays} hari &middot; review ${forecast.policy.reviewDays} hari</span>
+      </div>`,
+    body: `
+      <div class="fc__note">
+        Dihitung dari <b>${Number(h.orders).toLocaleString('id-ID')}</b> pesanan berbayar
+        (${escape(h.from ?? '?')} s/d ${escape(h.to ?? '?')}), ${Number(h.excluded).toLocaleString('id-ID')} batal/retur dikeluarkan.
+        Bundel dipecah ke komponennya &mdash; yang diramal adalah barang yang benar-benar diproduksi.
+        Tiap angka membawa <b>MASE</b>-nya: di bawah 1 berarti lebih baik daripada menebak &ldquo;sama seperti minggu lalu&rdquo;.
+        Rentang p10&ndash;p90 berasal dari kesalahan model ini sendiri pada data yang disembunyikan, bukan dari asumsi.
+        Terakhir dihitung ${escape(wibStamp(forecast.generated_at))}.
+      </div>
+      ${rows ? `<div class="scroll"><table class="dense">
+        <thead><tr>
+          <th>Produk</th><th class="num">Stok</th><th class="num">Hari tersisa</th>
+          <th class="num">30 hari (p10&ndash;p90)</th><th>12 minggu</th><th class="num">Pesan</th><th>Status &amp; akurasi</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>` : '<p class="empty">Tidak ada SKU untuk diramal.</p>'}
+      <div class="foot"><span>${(forecast.rows ?? []).length} SKU komponen</span></div>`,
   });
 }
 

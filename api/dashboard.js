@@ -1,5 +1,5 @@
 import { collectOrders, summarize } from '../src/omni.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -16,6 +16,7 @@ import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
 import { loadImageManifest } from '../src/mekari/images.js';
+import { loadForecast } from '../src/forecast/engine.js';
 import { notifySyncFailures } from '../src/notify/telegram.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
@@ -494,6 +495,17 @@ export default async function handler(req, res) {
         contacts, existingCodes: used, images: await imagesByKey(),
         live: process.env.MEKARI_SYNC_LIVE === '1',
         depositTo: process.env.MEKARI_DEPOSIT_ACCOUNT || null,
+      }));
+      return;
+    }
+
+    // The forecast is a document written by a nightly job; the page only reads it, so it
+    // costs one lookup and never waits on a marketplace.
+    if (view === 'forecast') {
+      const forecast = await cached('forecast', 60_000, () => loadForecast().catch(() => null));
+      console.log(`dashboard/forecast: ${forecast?.rows?.length ?? 0} sku`);
+      send(200, renderForecast({
+        forecast, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
       return;
     }

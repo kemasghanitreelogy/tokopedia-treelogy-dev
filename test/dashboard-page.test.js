@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   renderDashboard, renderPicklist, renderLabels, renderProducts, renderProcess, renderStock, renderJurnal,
-  renderManual, renderLogin,
+  renderManual, renderForecast, renderLogin,
 } from '../src/dashboard-page.js';
 import { syncOverview } from '../src/mekari/sync.js';
 import { summarize } from '../src/omni.js';
@@ -683,4 +683,62 @@ test('the manual form carries thumbnails for the product picker', () => {
   });
   assert.match(html, /class="ln__pic"/);
   assert.match(html, /"OMP-45-001":"https:\/\/cdn\.shopify\.com\/x\/t\.jpg\?width=240"/);
+});
+
+
+const forecastFixture = {
+  generated_at: '2026-09-14T02:30:00.000Z',
+  policy: { leadTimeDays: 21, reviewDays: 7 },
+  history: { from: '2025-02-26', to: '2026-09-14', orders: 22658, excluded: 1204, unknownSkus: [] },
+  counts: { stockout: 1, critical: 2, watch: 1, ok: 5, idle: 0 },
+  rows: [
+    {
+      sku: 'OMP-45-001', name: 'Moringa Powder - 45 gram', status: 'ok', historyDays: 560,
+      onHand: 30, sold90: 900, weekly: [40, 52, 48, 61, 55, 70, 66, 58, 72, 64, 69, 75],
+      forecasts: { 30: { horizon: 30, p50: 300, p10: 240, p90: 390 } },
+      accuracy: { 30: { model: 'hw7', modelName: 'Holt-Winters mingguan', mase: 0.74, beatsNaive: true } },
+      stock: { daysOfCover: 3, stockoutDate: '2026-09-17', reorderQty: 313 }, urgency: 'critical',
+    },
+    {
+      sku: 'Bamboo-Whisk', name: 'Bamboo Whisk - 120 prongs', status: 'belum cukup data',
+      historyDays: 12, onHand: 40, forecasts: {}, accuracy: {}, stock: null, urgency: 'idle',
+    },
+    {
+      sku: 'OMC-90-001', name: 'Moringa Capsules - 90 caps', status: 'ok', historyDays: 500,
+      onHand: 500, sold90: 300, weekly: [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+      forecasts: { 30: { horizon: 30, p50: 20, p10: 10, p90: 40 } },
+      accuracy: { 30: { model: 'snaive', modelName: 'Seasonal naive', mase: 1.12, beatsNaive: false } },
+      stock: { daysOfCover: 750, stockoutDate: null, reorderQty: 0 }, urgency: 'ok',
+    },
+  ],
+};
+
+test('the forecast view leads with urgency and carries the accuracy of every number', () => {
+  const html = renderForecast({ forecast: forecastFixture, ...common });
+  assert.match(html, /fc__u--critical/);
+  assert.match(html, /Moringa Powder - 45 gram/);
+  assert.match(html, /240&ndash;390/, 'rentang p10-p90 harus tampil, bukan satu angka');
+  assert.match(html, /MASE/);
+  assert.match(html, /0\.74/);
+  assert.match(html, /313/, 'jumlah yang harus dipesan');
+  assert.match(html, /2026-09-17/, 'tanggal perkiraan habis');
+  // A model that did not beat naive must say so rather than look authoritative.
+  assert.match(html, /tak lebih baik dari pola minggu lalu/);
+  // A SKU without enough history gets no number at all.
+  assert.match(html, /Belum cukup riwayat \(12 hari/);
+  assert.ok(!/Bamboo Whisk[\s\S]{0,200}MASE/.test(html));
+});
+
+test('a sparkline is drawn inline, and a series too short to plot says so', () => {
+  const html = renderForecast({ forecast: forecastFixture, ...common });
+  assert.match(html, /<svg class="fc__spark"[\s\S]*?<path d="M0\.0,/);
+  const flat = { ...forecastFixture, rows: [{ ...forecastFixture.rows[0], weekly: [3] }] };
+  const html2 = renderForecast({ forecast: flat, ...common });
+  assert.ok(!/<svg class="fc__spark"/.test(html2));
+});
+
+test('with no forecast yet the page says how to make one, rather than breaking', () => {
+  const html = renderForecast({ forecast: null, ...common });
+  assert.match(html, /Belum ada prakiraan/);
+  assert.match(html, /npm run forecast/);
 });

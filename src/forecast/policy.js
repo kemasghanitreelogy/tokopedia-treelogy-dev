@@ -28,13 +28,21 @@ const spreadPerDay = (forecast) => (forecast && forecast.horizon ? (forecast.p90
 export function stockPolicy({ forecasts, onHand = 0, onOrder = 0, policy = DEFAULT_POLICY }) {
   const { leadTimeDays, reviewDays } = { ...DEFAULT_POLICY, ...policy };
 
-  // Prefer the horizon closest to the lead time: a 21-day lead time is better served by
-  // the 30-day model than by the 7-day one, which was tuned for a different question.
+  /*
+   * Use the shortest horizon that still covers the lead time, or the longest available
+   * when none does.
+   *
+   * "Closest" was the first rule and it was wrong in a way the dashboard made obvious: a
+   * 21-day lead time picked the 14-day model, while the table displayed the 30-day one -
+   * so a row could read "forecast 0" and "order 29" side by side. Covering the lead time
+   * is also the better statistics: a model asked about 30 days was validated on 30 days,
+   * where one asked about 14 has to be extrapolated past what it was judged on.
+   */
   const horizons = Object.keys(forecasts).map(Number).filter((h) => forecasts[h]).sort((a, b) => a - b);
   if (horizons.length === 0) return null;
-  const pick = (days) => forecasts[horizons.reduce((best, h) => (Math.abs(h - days) < Math.abs(best - days) ? h : best), horizons[0])];
+  const horizonUsed = horizons.find((h) => h >= leadTimeDays) ?? horizons[horizons.length - 1];
 
-  const leadForecast = pick(leadTimeDays);
+  const leadForecast = forecasts[horizonUsed];
   const daily = perDay(leadForecast);
   const dailySpread = spreadPerDay(leadForecast);
 
@@ -56,6 +64,7 @@ export function stockPolicy({ forecasts, onHand = 0, onOrder = 0, policy = DEFAU
   return {
     leadTimeDays,
     reviewDays,
+    horizonUsed,
     dailyRate: Number(daily.toFixed(2)),
     leadDemand,
     safetyStock: safety,

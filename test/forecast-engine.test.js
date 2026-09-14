@@ -82,6 +82,7 @@ test('the policy answers the question a buyer actually asks', () => {
   // reorder could land.
   const forecasts = { 30: { horizon: 30, p50: 300, p10: 240, p90: 390 } };
   const plan = stockPolicy({ forecasts, onHand: 30, policy: { leadTimeDays: 21, reviewDays: 7 } });
+  assert.equal(plan.horizonUsed, 30, 'horizon yang dipakai harus menutupi lead time, bukan sekadar terdekat');
   assert.equal(plan.dailyRate, 10);
   assert.equal(plan.daysOfCover, 3);
   assert.equal(plan.leadDemand, 210);
@@ -142,4 +143,35 @@ test('the whole engine runs on synthetic history and produces checkable rows', a
   const quiet = result.rows.find((r) => r.sku === 'Bamboo-Whisk');
   assert.equal(quiet.status, 'belum cukup data');
   assert.deepEqual(quiet.forecasts, {});
+});
+
+test('the policy never decides on a horizon shorter than the lead time', () => {
+  const forecasts = {
+    7: { horizon: 7, p50: 0, p10: 0, p90: 0 },
+    14: { horizon: 14, p50: 14, p10: 7, p90: 28 },
+    30: { horizon: 30, p50: 60, p10: 30, p90: 120 },
+  };
+  // 21-day lead: 14 is closer in absolute terms but does not cover it, so 30 is used -
+  // and that is also the number the dashboard shows, so the two cannot disagree.
+  assert.equal(stockPolicy({ forecasts, onHand: 100, policy: { leadTimeDays: 21 } }).horizonUsed, 30);
+  assert.equal(stockPolicy({ forecasts, onHand: 100, policy: { leadTimeDays: 7 } }).horizonUsed, 7);
+  assert.equal(stockPolicy({ forecasts, onHand: 100, policy: { leadTimeDays: 10 } }).horizonUsed, 14);
+  // Longer than anything forecast: fall back to the longest rather than refusing.
+  assert.equal(stockPolicy({ forecasts, onHand: 100, policy: { leadTimeDays: 90 } }).horizonUsed, 30);
+});
+
+test('a manifest merge keeps every channel when two pulls finish at once', async () => {
+  const { saveManifest, loadManifest } = await import('../src/history/store.js');
+  const { deleteDoc } = await import('../src/store/index.js');
+  await deleteDoc('history/manifest.json');
+  // Exactly what happened in production: both pulls loaded {}, added their own channel,
+  // and the later save erased the earlier channel from the index.
+  await Promise.all([
+    saveManifest({ version: 1, channels: { shopify: { months: { '2025-02': { orders: 5 } } } } }),
+    saveManifest({ version: 1, channels: { tiktok: { months: { '2025-05': { orders: 9 } } } } }),
+  ]);
+  const manifest = await loadManifest();
+  assert.deepEqual(Object.keys(manifest.channels).sort(), ['shopify', 'tiktok']);
+  assert.equal(manifest.channels.tiktok.months['2025-05'].orders, 9);
+  await deleteDoc('history/manifest.json');
 });

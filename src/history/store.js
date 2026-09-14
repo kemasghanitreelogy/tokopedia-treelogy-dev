@@ -1,4 +1,4 @@
-import { readDoc, writeDoc } from '../store/index.js';
+import { readDoc, writeDoc, updateDoc } from '../store/index.js';
 
 /**
  * Where the sales history lives.
@@ -24,7 +24,27 @@ async function writeJson(pathname, value) {
 }
 
 export const loadManifest = () => readJson(MANIFEST_PATHNAME, { version: 1, channels: {} });
-export const saveManifest = (manifest) => writeJson(MANIFEST_PATHNAME, { ...manifest, version: 1, updated_at: new Date().toISOString() });
+
+/**
+ * Merge, never overwrite.
+ *
+ * Two pulls running at once - one per channel, which is the obvious way to run them -
+ * each held their own copy of the manifest and the later save erased the earlier one's
+ * channel. The month files were all safely written; the index of them was not, so a
+ * whole channel's history became invisible to the forecast. One transaction per channel,
+ * per month, keyed deep enough that two channels cannot collide.
+ */
+export const saveManifest = (manifest) => updateDoc(MANIFEST_PATHNAME, (current) => {
+  const merged = { ...(current ?? {}), ...manifest, version: 1, updated_at: new Date().toISOString(), channels: { ...(current?.channels ?? {}) } };
+  for (const [channel, data] of Object.entries(manifest.channels ?? {})) {
+    merged.channels[channel] = {
+      ...(current?.channels?.[channel] ?? {}),
+      ...data,
+      months: { ...(current?.channels?.[channel]?.months ?? {}), ...(data.months ?? {}) },
+    };
+  }
+  return merged;
+}, { version: 1, channels: {} });
 
 export const loadMonth = (channel, month) => readJson(monthPathname(channel, month), null);
 

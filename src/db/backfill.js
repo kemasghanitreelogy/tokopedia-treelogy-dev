@@ -1,0 +1,106 @@
+import { collectOrders } from '../omni.js';
+import { saveOrders, recordCoverage, DB_HISTORY_START, DB_HISTORY_START_EPOCH } from './orders.js';
+import { activeSources, SOURCE_CHANNELS } from '../orders-source.js';
+import { wibDate } from '../range.js';
+
+/**
+ * Fill the database with everything that has already happened.
+ *
+ * Webhooks only ever carry what happens next, so on the day this is switched on the
+ * database knows nothing and every reader falls through to the platforms. This walks the
+ * period once and ends that.
+ *
+ * It goes in chunks rather than one enormous window for three reasons that all amount to
+ * the same one: a chunk that fails costs a chunk. Each platform paginates inside the
+ * chunk, each chunk is stored before the next begins, and re-running after a failure
+ * re-does only what was lost - writes are keyed on (channel, id), so repeating one is
+ * free.
+ *
+ * Coverage is the last thing written and only for sources that came back whole in every
+ * chunk. Claiming a window that was read with a gap in it is worse than claiming nothing:
+ * an unclaimed window is read live again, a wrongly claimed one is never revisited.
+ */
+
+const DAY = 24 * 3600;
+
+/** A week at a time: big enough to be few requests, small enough to lose little. */
+export const CHUNK_DAYS = 7;
+
+/**
+ * @param {{from?: string, until?: number, chunkDays?: number, onProgress?: Function, dryRun?: boolean}} options
+ */
+export async function backfill({
+  from = DB_HISTORY_START,
+  until = Math.floor(Date.now() / 1000),
+  chunkDays = CHUNK_DAYS,
+  onProgress = () => {},
+  dryRun = false,
+} = {}) {
+  const since = from === DB_HISTORY_START
+    ? DB_HISTORY_START_EPOCH
+    : Math.floor(Date.parse(`${from}T00:00:00+07:00`) / 1000);
+  if (!Number.isFinite(since)) throw new Error(`tanggal mulai tidak valid: ${from}`);
+  if (until <= since) throw new Error('rentang kosong: tanggal akhir tidak setelah tanggal mulai');
+
+  const sources = activeSources();
+  // A source stays eligible for a coverage claim only while every chunk has been clean.
+  const whole = new Set(sources);
+  const chunks = [];
+  let stored = 0;
+  let seen = 0;
+
+  for (let start = since; start < until; start += chunkDays * DAY) {
+    const end = Math.min(start + chunkDays * DAY - 1, until);
+    const window = { since: start, until: end, label: `${wibDate(start)} s/d ${wibDate(end)}` };
+
+    // maxPerPlatform is set high deliberately: a cap that trims here does not show up as
+    // an error, it shows up months later as a week that is quietly short of orders.
+    const live = await collectOrders({ range: window, maxPerPlatform: 5000, tracking: false });
+
+    for (const source of sources) {
+      const failed = Boolean(live.errors?.[source]);
+      const cut = source === 'tiktok'
+        ? (live.truncated ?? []).includes('Tokopedia + TikTok Shop')
+        : (live.truncated ?? []).includes('Shopee');
+      if (failed || cut) whole.delete(source);
+    }
+
+    const written = dryRun ? { written: 0 } : await saveOrders(live.orders, { source: 'backfill' });
+    seen += live.orders.length;
+    stored += written.written;
+
+    const chunk = {
+      label: window.label,
+      found: live.orders.length,
+      written: written.written,
+      errors: live.errors ?? {},
+      truncated: live.truncated ?? [],
+    };
+    chunks.push(chunk);
+    onProgress(chunk);
+  }
+
+  // What a clean run would claim, worked out the same way whether or not it is written.
+  // A dry run that reported nothing claimable would say the run had failed when it had
+  // only been asked not to write.
+  const claimed = sources.filter((source) => whole.has(source));
+  if (!dryRun) {
+    for (const source of claimed) {
+      await recordCoverage(source, { from: since, through: until, note: 'backfill' });
+    }
+  }
+
+  return {
+    since,
+    until,
+    chunks,
+    seen,
+    stored,
+    // Named so the operator can see at a glance which channels the dashboard may now
+    // answer for from the database, and which are still going to the platforms.
+    claimed,
+    unclaimed: sources.filter((s) => !claimed.includes(s)),
+    channels: claimed.flatMap((s) => SOURCE_CHANNELS[s] ?? []),
+    dryRun,
+  };
+}

@@ -48,6 +48,8 @@
     "mekari:images": "node bin/tts.mjs mekari:images",
     "mekari:rebuild": "node bin/tts.mjs mekari:rebuild",
     "history:pull": "node bin/tts.mjs history:pull",
+    "db:backfill": "node bin/tts.mjs db:backfill",
+    "db:status": "node bin/tts.mjs db:status",
     "start": "node server.js",
     "forecast": "node bin/tts.mjs forecast",
     "test": "node --test test/*.test.js"

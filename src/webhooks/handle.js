@@ -7,6 +7,7 @@ import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
 import { beatWebhook } from '../mekari/heartbeat.js';
 import { notifySyncFailures } from '../notify/telegram.js';
+import { rememberOrder } from '../orders-source.js';
 
 /**
  * What happens between a push arriving and an invoice existing.
@@ -66,22 +67,23 @@ export async function handlePush(push) {
 
 async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) {
   if (!id && !gid) return { status: 'ignored', reason: 'tanpa nomor pesanan' };
+
+  // The order is read first and kept first, before anything is decided about accounting.
+  //
+  // It used to be the other way round: an unconfigured Jurnal, or a Shopee order already
+  // in the ledger, returned before the platform was ever called. That was the right trade
+  // when the books were the only consumer - it saved a request for an answer we already
+  // had. They are not any more. The dashboard reads orders from the database now, so a
+  // push is the moment a stage changes from "to_ship" to "shipping", and skipping the
+  // read to save a call would mean the screen shows yesterday's state until the next
+  // sweep. One call per push is what realtime costs.
+  const order = await readOrder({ channel, id, gid });
+  if (!order) return { status: 'ignored', reason: 'pesanan tidak ditemukan di platform' };
+  await rememberOrder(order, { source: `webhook:${channel}` });
+
   if (!isMekariConfigured()) return { status: 'ignored', reason: 'kredensial Mekari belum diisi' };
 
   const ledger = await loadSyncLedger();
-
-  // The cheapest possible answer, when the push carries an id we can name the invoice
-  // from: already booked, no platform call at all. Only Shopee qualifies - a Shopify push
-  // carries a numeric id rather than the order name, and a TikTok push does not say which
-  // of the two storefronts the order belongs to.
-  if (channel === 'shopee') {
-    const known = ledger.orders?.[customIdFor({ channel, id })];
-    if (known) return { status: 'exists', customId: customIdFor({ channel, id }), invoiceId: known.invoice_id ?? null };
-  }
-
-  const order = await readOrder({ channel, id, gid });
-  if (!order) return { status: 'ignored', reason: 'pesanan tidak ditemukan di platform' };
-
   const customId = customIdFor(order);
   const known = ledger.orders?.[customId];
   if (known) {

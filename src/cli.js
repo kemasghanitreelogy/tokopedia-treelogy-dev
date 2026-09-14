@@ -9,6 +9,10 @@ import { openBrowser } from './open-browser.js';
 import { mask, ok, fail, warn, info, humanTime } from './format.js';
 import { signRequest } from './sign.js';
 import { collectOrders, summarize, CHANNELS, STAGES } from './omni.js';
+import { backfill } from './db/backfill.js';
+import { readCoverage, dbStats, DB_HISTORY_START } from './db/orders.js';
+import { isSupabaseConfigured } from './db/client.js';
+import { activeSources, rememberOrders } from './orders-source.js';
 import { resolveRange } from './range.js';
 import { buildPicklist } from './picklist.js';
 import { readCatalog } from './inventory.js';
@@ -56,6 +60,8 @@ Usage:
   npm run notify:test         Kirim pesan uji ke Telegram
   npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
+  npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
+  npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
   npm run history:pull        Tarik riwayat penjualan semua kanal ke state (bulan demi bulan)
   npm run forecast            Ramal permintaan & kebutuhan stok per SKU dari riwayat
   npm run doctor              End-to-end health check
@@ -636,12 +642,20 @@ async function mekariOrders(args) {
   const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
   // Tracking numbers cost an extra Shopee call per batch, and they are worth it: the
   // invoice carries the waybill, which is how a delivery dispute gets settled later.
-  const { orders, errors } = await collectOrders({ range: resolveRange({ preset }), tracking: true });
+  const range = resolveRange({ preset });
+  const live = await collectOrders({ range, tracking: true });
+  const { orders, errors } = live;
   // Posting is additive, so a dead channel only delays its own orders - but say so, never
   // let a missing channel read as "nothing to post".
   for (const [channel, message] of Object.entries(errors)) {
     console.log(warn(`${channel} gagal dibaca: ${message} - pesanannya dilewati run ini`));
   }
+  // This run already paid three marketplaces for a fresh, tracked read of the last thirty
+  // days. Throwing it away and making the dashboard fetch the same thing again is the
+  // waste this whole change exists to remove, so it is kept - and because the read was
+  // live and complete, it is what carries the covered window forward every fifteen
+  // minutes without anybody running a backfill.
+  await rememberOrders(live, range);
   return orders;
 }
 
@@ -734,36 +748,37 @@ async function cmdMekariSync(config, args = []) {
   if (preview.considered === 0) { console.log(`${ok('semua pesanan sudah ada di Jurnal')}\n`); return 0; }
   if (!args.includes('--yes')) { console.log(`${warn('belum dikirim. Ulangi dengan --yes untuk menulis ke Jurnal')}\n`); return 1; }
 
-  // An empty ledger next to a Jurnal full of invoices means the ledger was lost, not that
-  // nothing was ever posted. Rebuild it from the books first - two requests - rather than
-  // spend one request per already-posted order learning the same thing by 409.
-  const ledgerNow = await loadSyncLedger();
-  if (Object.keys(ledgerNow.orders ?? {}).length === 0) {
-    const rebuilt = await rebuildLedgerFromJurnal({ dryRun: false });
-    if (rebuilt.inJurnal > 0) console.log(info(`ledger kosong - dibangun ulang dari Jurnal: ${rebuilt.inJurnal} faktur`));
-  }
-
-  // Customers and products both have to exist before an invoice can name them; Jurnal
-  // rejects the whole invoice otherwise.
-  //
-  // This is the first live request of the run, so a spent monthly package shows up here
-  // rather than in the sync loop below - and thrown from here it used to escape as an
-  // ordinary error, print as a bare FAIL line, and exit 1, which is how the unit came to
-  // sit in "failed" all month. Same condition, same message, same exit code as the loop's
-  // own quota branch.
+  // From here every step talks to Jurnal, and any of them can be the one that finds the
+  // monthly package spent - the ledger rebuild reaches it before ensureReady does, and
+  // ensureReady before the sync loop. Which one gets there first is an accident of state,
+  // not something the operator needs to know, so all three report it the same way. Left
+  // uncaught it printed as a bare FAIL and exited 1, which is how the sweep unit came to
+  // sit in "failed" for the rest of the month - the exact state a real failure would have
+  // to be noticed in.
   try {
+    // An empty ledger next to a Jurnal full of invoices means the ledger was lost, not
+    // that nothing was ever posted. Rebuild it from the books first - two requests -
+    // rather than spend one request per already-posted order learning the same by 409.
+    const ledgerNow = await loadSyncLedger();
+    if (Object.keys(ledgerNow.orders ?? {}).length === 0) {
+      const rebuilt = await rebuildLedgerFromJurnal({ dryRun: false });
+      if (rebuilt.inJurnal > 0) console.log(info(`ledger kosong - dibangun ulang dari Jurnal: ${rebuilt.inJurnal} faktur`));
+    }
+
+    // Customers and products both have to exist before an invoice can name them; Jurnal
+    // rejects the whole invoice otherwise.
     await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
+
+    const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
+    const result = await runSync({ orders, depositTo, dryRun: false, limit });
+    if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
+    if (result.quotaExhausted) return reportQuotaExhausted();
+    await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
+    return printSyncResult(result);
   } catch (error) {
     if (!(error instanceof QuotaExhaustedError)) throw error;
     return reportQuotaExhausted();
   }
-
-  const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
-  const result = await runSync({ orders, depositTo, dryRun: false, limit });
-  if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
-  if (result.quotaExhausted) return reportQuotaExhausted();
-  await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
-  return printSyncResult(result);
 }
 
 async function cmdMekariStatus() {
@@ -945,6 +960,63 @@ async function cmdForecast(config, args = []) {
   return 0;
 }
 
+/**
+ * Fill the database with the sales that happened before webhooks existed.
+ *
+ * Re-running is safe and cheap: writes are keyed on (channel, id) and the newest read of
+ * an order wins, so a second pass over a week that is already stored changes nothing
+ * except the timestamps. That is what makes it usable as a repair tool and not only as a
+ * one-time migration.
+ */
+async function cmdDbBackfill(config, args = []) {
+  if (!isSupabaseConfigured()) { console.log(fail('SUPABASE_URL / SUPABASE_SECRET_KEY belum diisi')); return 1; }
+
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || DB_HISTORY_START;
+  const dryRun = !args.includes('--yes');
+  const t0 = Date.now();
+
+  console.log(`\n  Mengisi database dari ${from}${dryRun ? info('  (dry-run)') : ''}\n`);
+
+  const result = await backfill({
+    from,
+    dryRun,
+    onProgress: (chunk) => {
+      const problems = [
+        ...Object.entries(chunk.errors).map(([source, message]) => fail(`${source}: ${message}`)),
+        ...chunk.truncated.map((t) => warn(`terpotong: ${t}`)),
+      ];
+      console.log(`  ${chunk.label}  ${String(chunk.found).padStart(5)} ditemukan  ${String(chunk.written).padStart(5)} ditulis  ${problems.join('  ')}`);
+    },
+  });
+
+  console.log(`\n  ${result.seen} pesanan dibaca  ·  ${result.stored} ditulis  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  if (result.claimed.length > 0) {
+    console.log(`  ${ok(`${dryRun ? 'akan dicatat' : 'cakupan tercatat'}: ${result.claimed.join(', ')}`)}`);
+  }
+  // An unclaimed source is not a crash; it is the dashboard quietly continuing to read
+  // that platform live, which the operator should know rather than discover.
+  if (result.unclaimed.length > 0) console.log(`  ${warn(`belum tercakup, masih dibaca langsung: ${result.unclaimed.join(', ')}`)}`);
+  if (dryRun) console.log(`\n  ${info('dry-run: tidak ada yang ditulis. Ulangi dengan --yes')}`);
+  console.log('');
+  return 0;
+}
+
+async function cmdDbStatus() {
+  if (!isSupabaseConfigured()) { console.log(fail('SUPABASE_URL / SUPABASE_SECRET_KEY belum diisi')); return 1; }
+
+  const [stats, coverage] = await Promise.all([dbStats(), readCoverage()]);
+  console.log(`\n  ${stats?.orders ?? '?'} pesanan tersimpan\n`);
+  const sources = activeSources();
+  for (const source of sources) {
+    const window = coverage[source];
+    if (!window) { console.log(`  ${source.padEnd(10)} ${warn('belum ada cakupan - dibaca langsung dari platform')}`); continue; }
+    console.log(`  ${source.padEnd(10)} ${ok(`${wibDate(window.from)} s/d ${wibDate(window.through)}`)}  diperbarui ${window.at?.slice(0, 19).replace('T', ' ')}`);
+  }
+  const missing = sources.filter((s) => !coverage[s]);
+  console.log(`\n  ${missing.length === 0 ? ok('dashboard membaca dari database') : warn(`${missing.length} sumber masih dibaca langsung`)}\n`);
+  return 0;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -970,6 +1042,8 @@ const COMMANDS = {
   'notify:test': cmdNotifyTest,
   'mekari:images': cmdMekariImages,
   'mekari:rebuild': cmdMekariRebuild,
+  'db:backfill': cmdDbBackfill,
+  'db:status': cmdDbStatus,
   'history:pull': cmdHistoryPull,
   forecast: cmdForecast,
   doctor: cmdDoctor,

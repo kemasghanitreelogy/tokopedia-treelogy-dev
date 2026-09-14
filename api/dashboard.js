@@ -1,4 +1,6 @@
 import { collectOrders, summarize } from '../src/omni.js';
+import { loadOrders, rememberOrders } from '../src/orders-source.js';
+import { isSupabaseConfigured } from '../src/db/client.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
@@ -44,6 +46,15 @@ const PATH = '/api/dashboard';
 
 // Orders churn fastest, the catalogue slower, the ledger only when we write it.
 const ORDERS_TTL_MS = 45_000;
+/**
+ * With a database in front, this cache is no longer hiding three marketplace round trips
+ * - it is hiding one indexed query. Forty-five seconds of staleness was a fair price for
+ * the former and an absurd one for the latter: a webhook writes the new stage within
+ * seconds of the buyer paying, and the whole point is that the screen shows it. Five
+ * seconds still collapses the burst of requests a single page load makes.
+ */
+const DB_ORDERS_TTL_MS = 5_000;
+const ordersTtl = () => (isSupabaseConfigured() ? DB_ORDERS_TTL_MS : ORDERS_TTL_MS);
 const CATALOG_TTL_MS = 60_000;
 const LEDGER_TTL_MS = 60_000;
 // Pictures change when somebody edits a listing, which is rarely; five minutes is plenty.
@@ -225,7 +236,13 @@ async function handleWrite(form, ip) {
     // Orders are re-read rather than trusted from the form: the page only ever carries a
     // count, so nothing a browser sends can decide what gets booked.
     const range = resolveRange({ preset: '7d' });
-    const { orders } = await collectOrders({ range, tracking: false });
+    // Read live rather than from the database, even though the database is usually ahead
+    // of nothing at all: this writes to the books, and the one place worth paying full
+    // price for the freshest possible answer is the one where being a minute stale posts
+    // a wrong number. The read is kept afterwards so it is not wasted.
+    const live = await collectOrders({ range, tracking: false });
+    const { orders } = live;
+    await rememberOrders(live, range);
     const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
     const ledgerNow = await loadSyncLedger();
@@ -517,8 +534,8 @@ export default async function handler(req, res) {
     const rangeKey = range.preset ?? `${range.from}:${range.to}`;
     const data = await cached(
       `orders:${rangeKey}:${wantsTracking}`,
-      ORDERS_TTL_MS,
-      () => collectOrders({ range, tracking: wantsTracking }),
+      ordersTtl(),
+      () => loadOrders({ range, tracking: wantsTracking }),
     );
 
     if (view === 'labels') {

@@ -151,20 +151,48 @@ export async function rpc(name, args = {}, options = {}) {
  * error, so a caller that ignores it silently works on a quarter of the data. Paging is
  * therefore not optional and does not belong at the call site.
  */
+/** Pages fetched at once after the first. Enough to hide the latency, few enough to be polite. */
+const PAGE_CONCURRENCY = 4;
+
 export async function selectAll(table, params = {}, options = {}) {
-  const rows = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { body, contentRange } = await request(table, {
-      ...options,
-      params,
-      range: `${from}-${from + PAGE_SIZE - 1}`,
-      prefer: 'count=estimated',
-    });
-    const page = Array.isArray(body) ? body : [];
-    rows.push(...page);
-    if (page.length < PAGE_SIZE) return rows;
-    // "0-999/*" means PostgREST declined to count; the short-page test above still ends it.
-    const total = Number(String(contentRange ?? '').split('/')[1]);
-    if (Number.isFinite(total) && rows.length >= total) return rows;
+  // The first page is asked for with an exact count, which is what turns the rest from a
+  // guessing game into arithmetic: over a link to another continent, three pages fetched
+  // one after another is three round trips of latency for data that has no order
+  // dependency at all. Knowing the total up front means every page after the first can go
+  // out together.
+  const first = await request(table, {
+    ...options,
+    params,
+    range: `0-${PAGE_SIZE - 1}`,
+    prefer: 'count=exact',
+  });
+  const rows = Array.isArray(first.body) ? first.body : [];
+  if (rows.length < PAGE_SIZE) return rows;
+
+  const total = Number(String(first.contentRange ?? '').split('/')[1]);
+  if (!Number.isFinite(total)) {
+    // PostgREST declined to count. Fall back to walking until a short page ends it.
+    for (let from = rows.length; ; from += PAGE_SIZE) {
+      const { body } = await request(table, { ...options, params, range: `${from}-${from + PAGE_SIZE - 1}` });
+      const page = Array.isArray(body) ? body : [];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) return rows;
+    }
   }
+
+  const offsets = [];
+  for (let from = PAGE_SIZE; from < total; from += PAGE_SIZE) offsets.push(from);
+
+  // Ordering is restored by offset, not by arrival: pages come back in whatever order the
+  // network hands them over, and the caller asked for a sorted list.
+  const pages = new Array(offsets.length);
+  for (let i = 0; i < offsets.length; i += PAGE_CONCURRENCY) {
+    const group = offsets.slice(i, i + PAGE_CONCURRENCY);
+    await Promise.all(group.map(async (from, j) => {
+      const { body } = await request(table, { ...options, params, range: `${from}-${from + PAGE_SIZE - 1}` });
+      pages[i + j] = Array.isArray(body) ? body : [];
+    }));
+  }
+  for (const page of pages) rows.push(...(page ?? []));
+  return rows;
 }

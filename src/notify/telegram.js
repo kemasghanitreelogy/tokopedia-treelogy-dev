@@ -1,4 +1,5 @@
 import { readEnv } from '../env-file.js';
+import { fetchWithTimeout } from '../http.js';
 import { ENV_PATH, ENV_LOCAL_PATH, publicBaseUrl } from '../config.js';
 
 /**
@@ -54,11 +55,21 @@ export function resetDedupe() {
 
 /**
  * @param {string} html  message body, already escaped where it carries user data
+ * The default sender carries a deadline, and it has to.
+ *
+ * This call sits at the very end of every job - after the summary is printed, after the
+ * work is done - which made it the worst possible place for a request that can wait
+ * forever. api.telegram.org accepting the connection and then answering nothing held
+ * treelogy-sweep for 45 minutes at 0% CPU, every run, until systemd killed it: the sync
+ * had already finished and the books were already written, but the unit reported failure
+ * and the timer would not schedule the next run.
+ *
  * @param {{key?: string, fetchImpl?: typeof fetch}} options
  * @returns {Promise<{sent: boolean, reason?: string}>}
  */
-export async function sendTelegram(html, { key = html, fetchImpl = fetch, config = loadTelegramConfig() } = {}) {
-  if (process.env.NODE_TEST_CONTEXT && fetchImpl === fetch) return { sent: false, reason: 'test' };
+export async function sendTelegram(html, { key = html, fetchImpl = fetchWithTimeout, config = loadTelegramConfig() } = {}) {
+  // A test that did not inject its own sender is not asking to message a real chat.
+  if (process.env.NODE_TEST_CONTEXT && fetchImpl === fetchWithTimeout) return { sent: false, reason: 'test' };
   if (!isTelegramConfigured(config)) return { sent: false, reason: 'belum dikonfigurasi' };
   if (alreadySent(key)) return { sent: false, reason: 'sudah dikirim dalam satu jam terakhir' };
 

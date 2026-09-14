@@ -23,11 +23,20 @@ import { loadConfig } from '../config.js';
 const env = (key) => process.env[key] ?? '';
 
 export function backendName() {
+  /*
+   * The test runner never touches a real store, and this check comes FIRST.
+   *
+   * It used to come after STATE_BACKEND, which was a loaded gun: the deploy script runs
+   * `npm test` with the production environment file loaded, so the suite would have
+   * connected to the production Redis - and one of its tests deletes the TikTok token
+   * bundle. Every deploy would have wiped it. Testing a real Redis on purpose is still
+   * possible, but it needs its own variable that production never sets.
+   */
+  if (process.env.NODE_TEST_CONTEXT) {
+    return env('STATE_BACKEND_TEST').toLowerCase() === 'redis' ? 'redis' : 'sqlite';
+  }
   const explicit = env('STATE_BACKEND').toLowerCase();
   if (explicit === 'sqlite' || explicit === 'blob' || explicit === 'redis') return explicit;
-  // The suite must never touch a real store, whatever the local .env holds - unless a
-  // Redis is pointed at on purpose (STATE_BACKEND=redis) to test that backend.
-  if (process.env.NODE_TEST_CONTEXT) return 'sqlite';
   if (env('REDIS_URL')) return 'redis';
   if (env('STATE_DB_PATH')) return 'sqlite';
   if (process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken) return 'blob';
@@ -122,6 +131,28 @@ const sqliteBackend = {
 const REDIS_PREFIX = env('REDIS_PREFIX') || 'treelogy:';
 let redisClient = null;
 
+/**
+ * One update per key at a time within this process.
+ *
+ * WATCH/MULTI handles writers in *other* processes, but it handles them by making the
+ * loser start over - and twenty-five callers inside one process all retrying at the same
+ * instant just collide again, until they run out of attempts. Queueing them locally means
+ * each one does a single clean round trip, and WATCH is left to do the job it is good at:
+ * catching the webhook that arrived while the sweep was mid-update.
+ */
+const inFlight = new Map();
+
+function queued(key, run) {
+  const previous = inFlight.get(key) ?? Promise.resolve();
+  const mine = previous.then(run, run);
+  // The chain the next caller waits on swallows outcomes, so one failed update does not
+  // reject every update queued behind it. Only `mine` is returned, so the caller's own
+  // error handling is the only handling that matters - a stray derived promise here
+  // would surface as an unhandled rejection and fail the process.
+  inFlight.set(key, mine.then(() => {}, () => {}));
+  return mine;
+}
+
 async function redis() {
   if (redisClient?.isOpen) return redisClient;
   const { createClient } = await import('redis');
@@ -135,8 +166,34 @@ async function redis() {
 }
 
 const rkey = (key) => `${REDIS_PREFIX}${key}`;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const redisBackend = {
+  /*
+   * A sliding-window reservation shared by every process.
+   *
+   * On the VPS the web service, the 15-minute sweep and the daily job are three separate
+   * processes, each of which used to keep its own in-memory budget of 34 requests a
+   * minute against a Jurnal limit of about 40. Two of them running at once was already
+   * over. The window lives in Redis so the budget belongs to the account, not to one
+   * process.
+   */
+  async reserveSlot(key, limit, windowMs) {
+    const client = await redis();
+    const k = rkey(`rate:${key}`);
+    const now = Date.now();
+    await client.zRemRangeByScore(k, 0, now - windowMs);
+    const used = await client.zCard(k);
+    if (used < limit) {
+      await client.zAdd(k, { score: now, value: `${now}:${Math.random().toString(36).slice(2, 8)}` });
+      await client.pExpire(k, windowMs * 2);
+      return 0;
+    }
+    const oldest = await client.zRangeWithScores(k, 0, 0);
+    const freesAt = (oldest[0]?.score ?? now) + windowMs;
+    return Math.max(50, freesAt - now + 50);
+  },
+
   async read(key) {
     const raw = await (await redis()).get(rkey(key));
     return raw === null ? null : JSON.parse(raw);
@@ -144,11 +201,14 @@ const redisBackend = {
   async write(key, value) {
     await (await redis()).set(rkey(key), JSON.stringify(value));
   },
-  async update(key, fn, initial) {
+  update(key, fn, initial) {
+    return queued(key, () => this.updateNow(key, fn, initial));
+  },
+  async updateNow(key, fn, initial) {
     const client = await redis();
-    // Optimistic concurrency: watch the key, compute, commit only if it did not change
-    // underneath us; otherwise read again and recompute. Contention here is a handful of
-    // writers a minute, so a retry is rare and cheap.
+    // Optimistic concurrency across processes: watch the key, compute, commit only if it
+    // did not change underneath us; otherwise read again and recompute. A short random
+    // backoff keeps two processes from retrying in lockstep forever.
     for (let attempt = 0; attempt < 20; attempt++) {
       const isolated = client.duplicate();
       await isolated.connect();
@@ -166,6 +226,7 @@ const redisBackend = {
       } finally {
         await isolated.quit().catch(() => {});
       }
+      await sleep(10 + Math.random() * 40);
     }
     throw new Error(`redis: ${key} terus berubah, update dibatalkan setelah 20 percobaan`);
   },
@@ -248,6 +309,17 @@ export async function closeStore() {
 }
 
 /** @returns {Promise<any|null>} the document, or null when there is none. Never throws on absence. */
+/**
+ * Ask for permission to make one rate-limited request.
+ *
+ * @returns {Promise<number>} 0 when there is room now, otherwise milliseconds to wait.
+ *   A backend with no shared view returns 0 and leaves the caller's own budget in charge.
+ */
+export const reserveSlot = (key, limit, windowMs) => {
+  const b = backend();
+  return b.reserveSlot ? b.reserveSlot(key, limit, windowMs) : Promise.resolve(0);
+};
+
 export const readDoc = (key) => backend().read(key);
 export const writeDoc = (key, value) => backend().write(key, value);
 /** Atomic read-modify-write. `fn` must be synchronous and return the next document. */

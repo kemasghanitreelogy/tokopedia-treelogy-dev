@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { readEnv } from '../env-file.js';
+import { reserveSlot } from '../store/index.js';
 import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
 
 /**
@@ -135,6 +136,18 @@ export function resetBudget() {
 }
 
 async function takeSlot(interval = MIN_INTERVAL_MS, deadlineAt = null) {
+  // The shared budget first: on the VPS this process is one of three that spend the same
+  // account quota, and only Redis can see all of them. A backend without a shared view
+  // returns 0 and the in-process bucket below remains the only guard.
+  for (let round = 0; round < 40; round++) {
+    const shared = await reserveSlot('mekari', REQUESTS_PER_MINUTE, WINDOW_MS).catch(() => 0);
+    if (shared === 0) break;
+    if (deadlineAt !== null && Date.now() + shared >= deadlineAt) {
+      throw new RateLimitedError(`kuota ${REQUESTS_PER_MINUTE} request/menit Jurnal habis (dipakai bersama), tenggat tidak cukup untuk menunggu ${Math.ceil(shared / 1000)}s`, shared);
+    }
+    await sleep(shared);
+  }
+
   const wait = budgetWaitMs();
   if (wait > 0) {
     if (deadlineAt !== null && Date.now() + wait >= deadlineAt) {

@@ -7,7 +7,7 @@ test.after(async () => { await closeStore(); });
 
 test('under the test runner the store is a throwaway sqlite file, never Blob', () => {
   // ...unless a Redis is pointed at on purpose, to test that backend for real.
-  assert.equal(backendName(), process.env.STATE_BACKEND === 'redis' ? 'redis' : 'sqlite');
+  assert.equal(backendName(), process.env.STATE_BACKEND_TEST === 'redis' ? 'redis' : 'sqlite');
 });
 
 test('a document round-trips, and absence is null rather than an error', async () => {
@@ -56,4 +56,40 @@ test('the database can be closed and reopened at the same path without losing an
   await writeDoc('uji/persist.json', { ok: true });
   resetStore();
   assert.deepEqual(await readDoc('uji/persist.json'), { ok: true });
+});
+
+test('the test runner is never routed to a production store, whatever the env says', async () => {
+  // The deploy script runs `npm test` with /etc/treelogy/env loaded, which sets
+  // STATE_BACKEND=redis. Before this, the suite connected to the production Redis - and
+  // one of its tests deletes the TikTok token bundle. Every deploy would have wiped it.
+  const before = process.env.STATE_BACKEND;
+  const beforeTest = process.env.STATE_BACKEND_TEST;
+  try {
+    process.env.STATE_BACKEND = 'redis';
+    delete process.env.STATE_BACKEND_TEST;
+    assert.equal(backendName(), 'sqlite', 'STATE_BACKEND tidak boleh mengalahkan NODE_TEST_CONTEXT');
+    process.env.STATE_BACKEND = 'blob';
+    assert.equal(backendName(), 'sqlite');
+    // Testing a real Redis on purpose still works, through a variable production never sets.
+    process.env.STATE_BACKEND_TEST = 'redis';
+    assert.equal(backendName(), 'redis');
+  } finally {
+    if (before === undefined) delete process.env.STATE_BACKEND; else process.env.STATE_BACKEND = before;
+    if (beforeTest === undefined) delete process.env.STATE_BACKEND_TEST; else process.env.STATE_BACKEND_TEST = beforeTest;
+  }
+});
+
+test('the shared request budget hands out a window, then makes callers wait', async () => {
+  const { reserveSlot } = await import('../src/store/index.js');
+  if (backendName() !== 'redis') {
+    // SQLite has no cross-process view; it must say "go ahead" rather than pretend.
+    assert.equal(await reserveSlot('uji-rate', 3, 1000), 0);
+    return;
+  }
+  const key = `uji-rate-${Date.now()}`;
+  assert.equal(await reserveSlot(key, 3, 5000), 0);
+  assert.equal(await reserveSlot(key, 3, 5000), 0);
+  assert.equal(await reserveSlot(key, 3, 5000), 0);
+  const wait = await reserveSlot(key, 3, 5000);
+  assert.ok(wait > 0 && wait <= 5100, `harus menunggu, dapat ${wait}`);
 });

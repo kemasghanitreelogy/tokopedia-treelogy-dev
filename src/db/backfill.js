@@ -26,13 +26,42 @@ const DAY = 24 * 3600;
 /** A week at a time: big enough to be few requests, small enough to lose little. */
 export const CHUNK_DAYS = 7;
 
+/** How many times a chunk is re-read before its failure is accepted as real. */
+export const ATTEMPTS = 3;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * @param {{from?: string, until?: number, chunkDays?: number, onProgress?: Function, dryRun?: boolean}} options
+ * Read one chunk, giving a flaky link a second and third chance.
+ *
+ * The connection out of this box is not always well: a run over the same six weeks
+ * produced "tiktok: fetch failed" in a different chunk each time, on a network where a
+ * TLS connect was taking three seconds. Accepting the first refusal means one blink costs
+ * a whole week its coverage, and the week is then read live by every visitor forever
+ * after - which is the failure this backfill exists to end.
+ *
+ * Only a chunk with something wrong is re-read, so a healthy run pays nothing at all, and
+ * the result kept is the first one that came back whole.
+ */
+async function readChunk(window, attempts) {
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await collectOrders({ range: window, maxPerPlatform: 5000, tracking: false });
+    const failed = Object.keys(last.errors ?? {}).length > 0;
+    if (!failed || attempt === attempts) return last;
+    await sleep(attempt * 2000);
+  }
+  return last;
+}
+
+/**
+ * @param {{from?: string, until?: number, chunkDays?: number, attempts?: number, onProgress?: Function, dryRun?: boolean}} options
  */
 export async function backfill({
   from = DB_HISTORY_START,
   until = Math.floor(Date.now() / 1000),
   chunkDays = CHUNK_DAYS,
+  attempts = ATTEMPTS,
   onProgress = () => {},
   dryRun = false,
 } = {}) {
@@ -56,7 +85,7 @@ export async function backfill({
 
     // maxPerPlatform is set high deliberately: a cap that trims here does not show up as
     // an error, it shows up months later as a week that is quietly short of orders.
-    const live = await collectOrders({ range: window, maxPerPlatform: 5000, tracking: false });
+    const live = await readChunk(window, attempts);
 
     for (const source of sources) {
       const failed = Boolean(live.errors?.[source]);

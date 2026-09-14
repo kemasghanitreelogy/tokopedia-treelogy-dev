@@ -46,10 +46,14 @@
     "hooks:recover": "node bin/tts.mjs hooks:recover",
     "notify:test": "node bin/tts.mjs notify:test",
     "mekari:images": "node bin/tts.mjs mekari:images",
+    "mekari:rebuild": "node bin/tts.mjs mekari:rebuild",
+    "history:pull": "node bin/tts.mjs history:pull",
+    "start": "node server.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "redis": "^5.12.1"
   }
 }

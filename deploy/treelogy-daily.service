@@ -1,0 +1,18 @@
+# /etc/systemd/system/treelogy-daily.service  (run by treelogy-daily.timer)
+[Unit]
+Description=Treelogy: riwayat penjualan, gambar produk, backup state
+After=treelogy.service
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node bin/tts.mjs history:pull
+ExecStart=/usr/bin/node bin/tts.mjs mekari:images --yes
+# Snapshot Redis to disk and keep a dated copy; 30 days retained. BGSAVE is asynchronous,
+# so wait for it to finish before copying.
+ExecStart=/bin/sh -c 'mkdir -p /opt/treelogy/backup && redis-cli BGSAVE >/dev/null && while [ "$(redis-cli INFO persistence | tr -d "\r" | grep rdb_bgsave_in_progress | cut -d: -f2)" = "1" ]; do sleep 1; done && cp /var/lib/redis/dump.rdb /opt/treelogy/backup/treelogy-$(date +%%F).rdb && find /opt/treelogy/backup -name "*.rdb" -mtime +30 -delete'
+TimeoutStartSec=2h

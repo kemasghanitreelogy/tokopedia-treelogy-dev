@@ -117,7 +117,7 @@ export async function refreshAccessToken({ config }) {
  * TikTok had already invalidated: the CLI refreshed into .env, the deployment kept a
  * frozen copy of an older .env, and the two chains diverged.
  */
-export async function persistTokens(config, tokens, { blobToken = config.blobToken } = {}) {
+export async function persistTokens(config, tokens, { saveBundle = true } = {}) {
   const updates = {
     ACCESS_TOKEN: tokens.accessToken,
     REFRESH_TOKEN: tokens.refreshToken,
@@ -140,7 +140,7 @@ export async function persistTokens(config, tokens, { blobToken = config.blobTok
     // Read-only filesystem, or no .env: the deployment does not keep one.
   }
 
-  if (blobToken) {
+  if (saveBundle) {
     await saveTokenBundle({
       tokens: {
         accessToken: tokens.accessToken,
@@ -152,7 +152,6 @@ export async function persistTokens(config, tokens, { blobToken = config.blobTok
       },
       nonce: 'refresh',
       shop: config.shopCipher ? { id: config.shopId, cipher: config.shopCipher, name: config.shopName } : null,
-      token: blobToken,
     });
   }
 }
@@ -164,11 +163,10 @@ export async function persistTokens(config, tokens, { blobToken = config.blobTok
  * the dashboard or a webhook - lands. A bundle that has none of the tokens is ignored so
  * a fresh checkout with a .env can still work before anything was ever saved.
  */
-export async function hydrateFromBundle(config, { blobToken = config.blobToken } = {}) {
-  if (!blobToken) return config;
+export async function hydrateFromBundle(config) {
   let bundle;
   try {
-    bundle = await loadTokenBundle({ token: blobToken });
+    bundle = await loadTokenBundle();
   } catch {
     return config;
   }

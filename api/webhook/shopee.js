@@ -3,7 +3,7 @@ import { handlePush, statusFor } from '../../src/webhooks/handle.js';
 import { beatRejected } from '../../src/mekari/heartbeat.js';
 import { loadShopeeConfig } from '../../src/shopee/config.js';
 import { resolveShopeeSession } from '../../src/shopee/session.js';
-import { put } from '@vercel/blob';
+import { writeDoc } from '../../src/store/index.js';
 
 /**
  * Keep the last push this endpoint could not verify, so the shape Shopee actually signs
@@ -12,12 +12,9 @@ import { put } from '@vercel/blob';
  * is a diagnostic for pinning the signature and comes out once it is pinned.
  */
 async function keepRejected(detail) {
-  const token = process.env.NODE_TEST_CONTEXT ? '' : process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) return;
+  if (process.env.NODE_TEST_CONTEXT) return;
   try {
-    await put('mekari/webhook-diag/shopee-last.json', JSON.stringify({ at: new Date().toISOString(), ...detail }), {
-      access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
-    });
+    await writeDoc('mekari/webhook-diag/shopee-last.json', { at: new Date().toISOString(), ...detail });
   } catch { /* a diagnostic must never take the endpoint down */ }
 }
 

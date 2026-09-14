@@ -1,5 +1,4 @@
-import { put, get } from '@vercel/blob';
-import { loadConfig } from './config.js';
+import { readDoc, writeDoc } from './store/index.js';
 
 /**
  * Last-known-good snapshots, shared across serverless instances.
@@ -14,17 +13,10 @@ import { loadConfig } from './config.js';
 
 const PREFIX = 'snapshot/';
 
-function blobToken() {
-  return process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || '';
-}
-
 export async function readSnapshot(name) {
-  const token = blobToken();
-  if (!token) return null;
   try {
-    const result = await get(`${PREFIX}${name}.json`, { access: 'private', useCache: false, token });
-    if (!result) return null;
-    const body = JSON.parse(await new Response(result.stream).text());
+    const body = await readDoc(`${PREFIX}${name}.json`);
+    if (!body) return null;
     return { data: body.data, savedAt: body.saved_at };
   } catch {
     // A missing or corrupt snapshot must never be the reason a page fails.
@@ -33,13 +25,8 @@ export async function readSnapshot(name) {
 }
 
 export async function writeSnapshot(name, data) {
-  const token = blobToken();
-  if (!token) return;
   try {
-    await put(`${PREFIX}${name}.json`, JSON.stringify({ saved_at: new Date().toISOString(), data }), {
-      access: 'private', allowOverwrite: true, contentType: 'application/json',
-      token, cacheControlMaxAge: 0,
-    });
+    await writeDoc(`${PREFIX}${name}.json`, { saved_at: new Date().toISOString(), data });
   } catch {
     // Best effort: failing to record a snapshot should not fail the request that produced it.
   }

@@ -1,0 +1,10 @@
+# /etc/systemd/system/treelogy-daily.timer
+[Unit]
+Description=Treelogy daily jobs at 02:30 WIB
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Jakarta
+Persistent=true
+
+[Install]
+WantedBy=timers.target

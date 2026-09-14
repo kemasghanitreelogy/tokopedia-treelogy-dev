@@ -5,7 +5,7 @@ import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
 import { recoverShopee } from '../src/webhooks/recover.js';
 import { beatSweep } from '../src/mekari/heartbeat.js';
-import { notifySyncFailures, notifyCrash } from '../src/notify/telegram.js';
+import { notifySyncFailures, notifyCrash, sendTelegram } from '../src/notify/telegram.js';
 import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../src/dashboard-auth.js';
 
 /**
@@ -129,6 +129,14 @@ export default async function handler(req, res) {
     }
     timings.recover_ms = elapsed() - timings.collect_ms - timings.prepare_ms - timings.post_ms;
 
+    if (!dryRun && result.quotaExhausted) {
+      // Once, not once per sweep: keyed on the month, so it fires again only when a new
+      // month's quota has also run out.
+      await sendTelegram(
+        '<b>⛔ Kuota API bulanan Mekari Jurnal habis</b>\nSinkronisasi berhenti sampai kuota kembali (awal bulan) atau paket API Mekari di-upgrade. Pesanan tidak hilang: sapuan akan menyusul semuanya begitu kuota ada.',
+        { key: `mekari-monthly-quota-${new Date().toISOString().slice(0, 7)}` },
+      );
+    }
     if (!dryRun) {
       // A failed order or an unreadable channel reaches a person; a clean run stays quiet.
       // A mismatch is a wrong number already in the books; an undone sale whose invoice

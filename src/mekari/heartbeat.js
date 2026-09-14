@@ -1,5 +1,4 @@
-import { put, get } from '@vercel/blob';
-import { loadConfig } from '../config.js';
+import { readDoc, writeDoc } from '../store/index.js';
 
 /**
  * When did each part of the sync last show signs of life.
@@ -20,27 +19,21 @@ export const HEARTBEAT_PATHNAME = 'mekari/heartbeat.json';
  * production heartbeat and showed five Shopee rejections that never happened. node:test
  * marks its processes with NODE_TEST_CONTEXT, which is the cleanest way to tell.
  */
-const blobToken = () => (process.env.NODE_TEST_CONTEXT ? '' : (process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || ''));
+const testing = () => Boolean(process.env.NODE_TEST_CONTEXT);
 
 export async function loadHeartbeat() {
-  const token = blobToken();
-  if (!token) return { webhooks: {}, sweep: null };
+  if (testing()) return { webhooks: {}, sweep: null };
   try {
-    const result = await get(HEARTBEAT_PATHNAME, { access: 'private', useCache: false, token });
-    if (!result) return { webhooks: {}, sweep: null };
-    const parsed = JSON.parse(await new Response(result.stream).text());
-    return { webhooks: parsed.webhooks ?? {}, sweep: parsed.sweep ?? null };
+    const parsed = await readDoc(HEARTBEAT_PATHNAME);
+    return { webhooks: parsed?.webhooks ?? {}, sweep: parsed?.sweep ?? null };
   } catch {
     return { webhooks: {}, sweep: null };
   }
 }
 
 async function save(state) {
-  const token = blobToken();
-  if (!token) return;
-  await put(HEARTBEAT_PATHNAME, JSON.stringify(state), {
-    access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
-  });
+  if (testing()) return;
+  await writeDoc(HEARTBEAT_PATHNAME, state);
 }
 
 /**

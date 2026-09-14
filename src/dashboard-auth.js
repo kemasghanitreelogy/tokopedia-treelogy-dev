@@ -153,7 +153,7 @@ export async function readFormBody(req, limitBytes = 4096) {
 
 /* ------------------------------------------------------ brute-force protection */
 
-import { put, get } from '@vercel/blob';
+import { readDoc, writeDoc } from './store/index.js';
 
 /**
  * Failed-login throttling, backed by Blob.
@@ -174,33 +174,24 @@ export const callerIp = (req) =>
   req.socket?.remoteAddress ||
   'unknown';
 
-function blobToken() {
-  return process.env.BLOB_READ_WRITE_TOKEN ?? '';
-}
+const EMPTY = { count: 0, lockedUntil: 0 };
 
 export async function attemptState(ip) {
-  const token = blobToken();
-  if (!token) return { count: 0, lockedUntil: 0 };
   try {
-    const result = await get(attemptPath(ip), { access: 'private', useCache: false, token });
-    if (!result) return { count: 0, lockedUntil: 0 };
-    const state = JSON.parse(await new Response(result.stream).text());
+    const state = await readDoc(attemptPath(ip));
+    if (!state) return { ...EMPTY };
     // A lapsed window starts the count over rather than holding a grudge forever.
-    if (state.lockedUntil && state.lockedUntil < Math.floor(Date.now() / 1000)) {
-      return { count: 0, lockedUntil: 0 };
-    }
+    if (state.lockedUntil && state.lockedUntil < Math.floor(Date.now() / 1000)) return { ...EMPTY };
     return state;
   } catch {
     // Never let the throttle store lock out a legitimate login by failing closed.
-    return { count: 0, lockedUntil: 0 };
+    return { ...EMPTY };
   }
 }
 
 export const isLockedOut = (state) => state.lockedUntil > Math.floor(Date.now() / 1000);
 
 export async function recordFailure(ip) {
-  const token = blobToken();
-  if (!token) return { count: 0, lockedUntil: 0 };
   const state = await attemptState(ip);
   const count = state.count + 1;
   const next = {
@@ -208,21 +199,13 @@ export async function recordFailure(ip) {
     lockedUntil: count >= MAX_ATTEMPTS ? Math.floor(Date.now() / 1000) + LOCKOUT_SECONDS : 0,
   };
   try {
-    await put(attemptPath(ip), JSON.stringify(next), {
-      access: 'private', allowOverwrite: true, contentType: 'application/json',
-      token, cacheControlMaxAge: 0,
-    });
+    await writeDoc(attemptPath(ip), next);
   } catch { /* throttling is best-effort; a failed write must not block the response */ }
   return next;
 }
 
 export async function clearFailures(ip) {
-  const token = blobToken();
-  if (!token) return;
   try {
-    await put(attemptPath(ip), JSON.stringify({ count: 0, lockedUntil: 0 }), {
-      access: 'private', allowOverwrite: true, contentType: 'application/json',
-      token, cacheControlMaxAge: 0,
-    });
+    await writeDoc(attemptPath(ip), { ...EMPTY });
   } catch { /* best effort */ }
 }

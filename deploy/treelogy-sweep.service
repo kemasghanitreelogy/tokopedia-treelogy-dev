@@ -1,0 +1,15 @@
+# /etc/systemd/system/treelogy-sweep.service  (run by treelogy-sweep.timer)
+[Unit]
+Description=Treelogy: sapu pesanan yang terlewat ke Mekari Jurnal
+After=treelogy.service
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+# The CLI has no 120-second ceiling and paces itself to Jurnal's quota.
+ExecStart=/usr/bin/node bin/tts.mjs mekari:sync --7d --yes
+TimeoutStartSec=45min

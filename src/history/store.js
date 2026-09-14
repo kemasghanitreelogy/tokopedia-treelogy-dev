@@ -1,5 +1,4 @@
-import { put, get } from '@vercel/blob';
-import { loadConfig } from '../config.js';
+import { readDoc, writeDoc } from '../store/index.js';
 
 /**
  * Where the sales history lives.
@@ -12,26 +11,16 @@ import { loadConfig } from '../config.js';
 export const MANIFEST_PATHNAME = 'history/manifest.json';
 export const monthPathname = (channel, month) => `history/${channel}/${month}.json`;
 
-const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || '';
-
 async function readJson(pathname, fallback) {
-  const token = blobToken();
-  if (!token) return fallback;
   try {
-    const result = await get(pathname, { access: 'private', useCache: false, token });
-    if (!result) return fallback;
-    return JSON.parse(await new Response(result.stream).text());
+    return (await readDoc(pathname)) ?? fallback;
   } catch {
     return fallback;
   }
 }
 
 async function writeJson(pathname, value) {
-  const token = blobToken();
-  if (!token) throw new Error('BLOB_READ_WRITE_TOKEN tidak ada');
-  await put(pathname, JSON.stringify(value), {
-    access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
-  });
+  await writeDoc(pathname, value);
 }
 
 export const loadManifest = () => readJson(MANIFEST_PATHNAME, { version: 1, channels: {} });

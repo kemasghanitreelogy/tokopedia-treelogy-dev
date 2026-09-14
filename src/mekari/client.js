@@ -31,6 +31,22 @@ export function loadMekariConfig() {
 export const isMekariConfigured = (config = loadMekariConfig()) =>
   Boolean(config.clientId && config.clientSecret);
 
+/**
+ * Jurnal's package quota for the month is gone: "Monthly limit exceeded. Please wait
+ * until next month or upgrade your package." Retrying this burns nothing useful and
+ * backing off does not help; every caller must stop cleanly and somebody must be told.
+ */
+export class QuotaExhaustedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'QuotaExhaustedError';
+    this.status = 429;
+    this.monthly = true;
+  }
+}
+
+export const isMonthlyQuota = (payload) => /monthly limit exceeded/i.test(JSON.stringify(payload ?? ''));
+
 export class MekariError extends Error {
   constructor(message, { status, body } = {}) {
     super(message);
@@ -186,6 +202,9 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
     }
 
     // 5xx and 429 are transient. A 4xx is an answer - retrying it would only duplicate work.
+    if (response.status === 429 && isMonthlyQuota(payload)) {
+      throw new QuotaExhaustedError(`kuota API bulanan Mekari habis: ${payload?.message ?? payload?.raw ?? ''}`.trim());
+    }
     if (response.status === 429) noteRateLimited();
     if ((response.status >= 500 || response.status === 429) && attempt < RETRY_DELAYS_MS.length) {
       // Honour the server's own number when it gives one; ours is only a guess.

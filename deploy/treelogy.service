@@ -1,0 +1,27 @@
+# /etc/systemd/system/treelogy.service
+[Unit]
+Description=Treelogy omnichannel server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+# Hardening: the process owns nothing outside its state directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/treelogy/state
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

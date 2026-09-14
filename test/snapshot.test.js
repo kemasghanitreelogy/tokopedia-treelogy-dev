@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { deleteDoc } from '../src/store/index.js';
 import assert from 'node:assert/strict';
 import { withFallback } from '../src/snapshot.js';
 
@@ -14,11 +15,13 @@ test('a healthy read is returned unchanged and never marked stale', async () => 
 });
 
 test('a throwing fetcher with no snapshot still surfaces the error', async () => {
+  await deleteDoc('snapshot/t.json');
   // Silently swallowing it would leave the page blank with no explanation.
   await assert.rejects(() => withFallback('t', async () => { throw new Error('down'); }), /down/);
 });
 
 test('a partial read is returned when there is no snapshot to prefer', async () => {
+  await deleteDoc('snapshot/t.json');
   const result = await withFallback('t', async () => ({ skus: [], errors: { shopee: 'x' } }), {
     isComplete: (v) => Object.keys(v.errors).length === 0,
   });

@@ -95,7 +95,6 @@ async function cmdUrl(config) {
 }
 
 async function cmdPull(config) {
-  if (!config.blobToken) throw new BlobNotConfiguredError();
   const bundle = await loadTokenBundle({ pathname: SHOPEE_TOKENS_PATHNAME, token: config.blobToken });
   if (!bundle) {
     console.log(fail('no Shopee bundle stored yet - authorize first (`npm run shopee:url`)'));
@@ -120,7 +119,7 @@ async function cmdRefresh(config) {
   });
   persistShopeeTokens(config, tokens);
   // Keep the blob in step: the old refresh token is dead the moment this succeeds.
-  if (config.blobToken) {
+  {
     await saveTokenBundle({
       tokens,
       nonce: `shopee-${config.shopId}`,

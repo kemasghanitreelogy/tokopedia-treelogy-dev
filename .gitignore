@@ -4,3 +4,6 @@ node_modules/
 .vercel/
 *.log
 .env*.local
+
+# local state store (sqlite) - real ledger data, never committed
+state/

@@ -1,4 +1,4 @@
-import { put, get } from '@vercel/blob';
+import { readDoc, writeDoc } from './store/index.js';
 import { loadConfig } from './config.js';
 
 /**
@@ -26,28 +26,13 @@ export const emptyLedger = () => ({
   skus: {},
 });
 
-export async function loadLedger({ token } = {}) {
-  const blobToken = resolveToken(token);
-  const result = await get(LEDGER_PATHNAME, { access: 'private', useCache: false, token: blobToken });
-  if (!result) return null;
-  const text = await new Response(result.stream).text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`Ledger at ${LEDGER_PATHNAME} is not valid JSON`);
-  }
+export async function loadLedger() {
+  return readDoc(LEDGER_PATHNAME);
 }
 
 export async function saveLedger(ledger, { token } = {}) {
-  const blobToken = resolveToken(token);
-  const payload = { ...ledger, version: LEDGER_VERSION, updated_at: new Date().toISOString() };
-  await put(LEDGER_PATHNAME, JSON.stringify(payload, null, 2), {
-    access: 'private',
-    allowOverwrite: true,
-    contentType: 'application/json',
-    token: blobToken,
-    cacheControlMaxAge: 0,
-  });
+  const payload = { ...ledger, version: 1, updated_at: new Date().toISOString() };
+  await writeDoc(LEDGER_PATHNAME, payload);
   return payload;
 }
 

@@ -21,6 +21,8 @@ import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhook
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, isTelegramConfigured } from './notify/telegram.js';
 import { syncProductImages } from './mekari/images.js';
+import { rebuildLedgerFromJurnal } from './mekari/rebuild.js';
+import { pullHistory } from './history/ingest.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -50,6 +52,8 @@ Usage:
   npm run hooks:recover       Ambil push Shopee yang sempat gagal terkirim
   npm run notify:test         Kirim pesan uji ke Telegram
   npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
+  npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
+  npm run history:pull        Tarik riwayat penjualan semua kanal ke state (bulan demi bulan)
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -83,7 +87,7 @@ async function applyBundle(config, bundle) {
     refreshTokenExpireAt: bundle.tokens?.refreshTokenExpireAt ?? 0,
     openId: bundle.tokens?.openId ?? '',
     sellerName: bundle.tokens?.sellerName ?? '',
-  }, { blobToken: null });
+  }, { saveBundle: false });
   if (bundle.shop) persistShop(config, bundle.shop);
 }
 
@@ -302,7 +306,6 @@ async function cmdStockApply(config, args = []) {
 async function cmdAuthorize(config, args = []) {
   requireAppCredentials(config);
   if (!config.serviceId) throw new Error('SERVICE_ID missing in .env');
-  if (!config.blobToken) throw new BlobNotConfiguredError();
 
   const { state } = createState(config.appSecret);
   const links = buildAuthorizeUrl({ serviceId: config.serviceId, state });
@@ -336,7 +339,7 @@ async function cmdAuthorize(config, args = []) {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS);
-    const bundle = await loadTokenBundle({ token: config.blobToken });
+    const bundle = await loadTokenBundle();
     if (bundle && Date.parse(bundle.saved_at) > startedAt) {
       console.log(`\n${info('callback completed')}`);
       await applyBundle(config, bundle);
@@ -351,8 +354,7 @@ async function cmdAuthorize(config, args = []) {
 }
 
 async function cmdPull(config) {
-  if (!config.blobToken) throw new BlobNotConfiguredError();
-  const bundle = await loadTokenBundle({ token: config.blobToken });
+  const bundle = await loadTokenBundle();
   if (!bundle) {
     console.log(warn('no token bundle stored yet - run `npm run authorize`'));
     return 1;
@@ -383,7 +385,7 @@ async function cmdRefresh(config) {
   // never fall back to a stale token.
   const tokens = await refreshAccessToken({ config });
   await persistTokens(config, tokens);
-  console.log(ok(config.blobToken ? 'refreshed and synced to Vercel Blob' : 'access token refreshed locally'));
+  console.log(ok('refreshed and saved to the state store'));
   console.log(`        access expires : ${humanTime(tokens.accessTokenExpireAt)}`);
   console.log(`        refresh expires: ${humanTime(tokens.refreshTokenExpireAt)}`);
 }
@@ -577,22 +579,6 @@ async function cmdDoctor(config) {
   }
 
   step('5. Blob store (local access)');
-  if (!config.blobToken) {
-    console.log(fail('BLOB_READ_WRITE_TOKEN missing - run `vercel env pull .env.local --yes`'));
-    failed += 1;
-  } else {
-    try {
-      const bundle = await loadTokenBundle({ token: config.blobToken });
-      console.log(
-        bundle
-          ? ok(`bundle present, saved ${bundle.saved_at}`)
-          : warn('reachable but empty - run `npm run authorize`'),
-      );
-    } catch (error) {
-      console.log(fail(`blob read failed: ${error.message}`));
-      failed += 1;
-    }
-  }
 
   step('6. Access token');
   if (!config.accessToken) {
@@ -728,13 +714,30 @@ async function cmdMekariSync(config, args = []) {
   if (preview.considered === 0) { console.log(`${ok('semua pesanan sudah ada di Jurnal')}\n`); return 0; }
   if (!args.includes('--yes')) { console.log(`${warn('belum dikirim. Ulangi dengan --yes untuk menulis ke Jurnal')}\n`); return 1; }
 
+  // An empty ledger next to a Jurnal full of invoices means the ledger was lost, not that
+  // nothing was ever posted. Rebuild it from the books first - two requests - rather than
+  // spend one request per already-posted order learning the same thing by 409.
+  const ledgerNow = await loadSyncLedger();
+  if (Object.keys(ledgerNow.orders ?? {}).length === 0) {
+    const rebuilt = await rebuildLedgerFromJurnal({ dryRun: false });
+    if (rebuilt.inJurnal > 0) console.log(info(`ledger kosong - dibangun ulang dari Jurnal: ${rebuilt.inJurnal} faktur`));
+  }
+
   // Customers and products both have to exist before an invoice can name them; Jurnal
   // rejects the whole invoice otherwise.
-  await ensureReady({ dryRun: false });
+  await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
 
   const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
   const result = await runSync({ orders, depositTo, dryRun: false, limit });
   if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
+  if (result.quotaExhausted) {
+    console.log(`\n${fail('kuota API bulanan Mekari Jurnal habis - berhenti; pesanan menunggu, tidak hilang')}\n`);
+    await sendTelegram(
+      '<b>⛔ Kuota API bulanan Mekari Jurnal habis</b>\nSinkronisasi berhenti sampai kuota kembali (awal bulan) atau paket API Mekari di-upgrade. Pesanan tidak hilang: sapuan akan menyusul semuanya begitu kuota ada.',
+      { key: `mekari-monthly-quota-${new Date().toISOString().slice(0, 7)}` },
+    );
+    return 2;
+  }
   await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
   return printSyncResult(result);
 }
@@ -848,6 +851,26 @@ async function cmdMekariImages(config, args = []) {
   return result.failed ? 1 : 0;
 }
 
+async function cmdMekariRebuild(config, args = []) {
+  const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
+  console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}`);
+  console.log(result.dryRun ? `\n${info('dry-run. Terapkan dengan --yes')}\n` : `\n${ok('ledger dibangun ulang')}\n`);
+  return 0;
+}
+
+async function cmdHistoryPull(config, args = []) {
+  const only = args.find((a) => /^--(shopify|tiktok|shopee)$/.test(a))?.slice(2);
+  const t0 = Date.now();
+  const { summary } = await pullHistory({
+    channels: only ? [only] : undefined,
+    onMonth: ({ channel, month, orders, complete }) => console.log(`  ${channel.padEnd(8)} ${month}  ${String(orders).padStart(5)} order${complete ? '' : '  (bulan berjalan)'}`),
+  });
+  console.log();
+  for (const [ch, s] of Object.entries(summary)) console.log(ok(`${ch.padEnd(8)} ditarik ${s.pulled} bulan (${s.orders} order), dilewati ${s.skipped} bulan yang sudah lengkap`));
+  console.log(`  ${Math.round((Date.now() - t0) / 1000)} detik\n`);
+  return 0;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -872,6 +895,8 @@ const COMMANDS = {
   'hooks:recover': cmdHooksRecover,
   'notify:test': cmdNotifyTest,
   'mekari:images': cmdMekariImages,
+  'mekari:rebuild': cmdMekariRebuild,
+  'history:pull': cmdHistoryPull,
   doctor: cmdDoctor,
   api: cmdApi,
 };

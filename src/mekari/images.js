@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { put, get } from '@vercel/blob';
+import { readDoc, writeDoc } from '../store/index.js';
 import { mekari } from './client.js';
 import { listProducts } from './setup.js';
 import { fetchProductImages, sizedUrl } from '../shopify/images.js';
@@ -20,26 +20,16 @@ export const IMAGES_PATHNAME = 'mekari/images.json';
 export const JURNAL_IMAGE_WIDTH = 1200;
 export const THUMB_WIDTH = 240;
 
-const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || '';
-
 export async function loadImageManifest() {
-  const token = blobToken();
-  if (!token) return { version: 1, images: {} };
   try {
-    const result = await get(IMAGES_PATHNAME, { access: 'private', useCache: false, token });
-    if (!result) return { version: 1, images: {} };
-    return JSON.parse(await new Response(result.stream).text());
+    return (await readDoc(IMAGES_PATHNAME)) ?? { version: 1, images: {} };
   } catch {
     return { version: 1, images: {} };
   }
 }
 
 export async function saveImageManifest(manifest) {
-  const token = blobToken();
-  if (!token) return;
-  await put(IMAGES_PATHNAME, JSON.stringify({ ...manifest, version: 1, updated_at: new Date().toISOString() }), {
-    access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
-  });
+  await writeDoc(IMAGES_PATHNAME, { ...manifest, version: 1, updated_at: new Date().toISOString() });
 }
 
 /** A picture's identity is its Shopify URL without the size parameter Shopify lets us add. */

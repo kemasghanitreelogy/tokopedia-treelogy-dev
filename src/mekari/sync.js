@@ -1,9 +1,8 @@
-import { put, get } from '@vercel/blob';
-import { mekari, isMekariConfigured, MekariError } from './client.js';
+import { readDoc, writeDoc, updateDoc } from '../store/index.js';
+import { mekari, isMekariConfigured, MekariError, QuotaExhaustedError } from './client.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
-import { loadConfig } from '../config.js';
 
 /**
  * Posting orders into Jurnal, exactly once.
@@ -33,6 +32,7 @@ export const LEDGER_PATHNAME = 'mekari/synced.json';
  * themselves by the next round.
  */
 export function isTransient(error) {
+  if (error?.monthly) return true; // deferred until the quota returns; the run itself stops
   const status = error?.status;
   if (status === 429 || (status >= 500 && status < 600)) return true;
   if (status === undefined && error?.name === 'MekariError') return true; // unreachable / timed out
@@ -44,20 +44,12 @@ const failureOf = (error) => (isTransient(error) ? 'deferred' : 'failed');
 /** Stages that represent money actually earned. */
 export const POSTABLE_STAGES = new Set(['to_ship', 'shipping', 'delivered', 'completed']);
 
-function blobToken() {
-  return process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || '';
-}
-
 export async function loadSyncLedger() {
-  const token = blobToken();
-  if (!token) return { version: 1, orders: {} };
   try {
-    const result = await get(LEDGER_PATHNAME, { access: 'private', useCache: false, token });
-    if (!result) return { version: 1, orders: {} };
-    return JSON.parse(await new Response(result.stream).text());
+    return (await readDoc(LEDGER_PATHNAME)) ?? { version: 1, orders: {} };
   } catch {
     // A missing or unreadable ledger must not become a licence to re-post everything;
-    // the custom_id probe below is what actually protects the books.
+    // Jurnal's own 409 on a repeated custom_id is what actually protects the books.
     return { version: 1, orders: {} };
   }
 }
@@ -72,21 +64,16 @@ export async function loadSyncLedger() {
  * shrinks the window from the whole run to the few milliseconds between read and write.
  */
 export async function saveSyncLedger(ledger) {
-  const token = blobToken();
-  if (!token) return;
-  const current = await loadSyncLedger().catch(() => null);
-  const merged = {
+  // One transaction: read what is stored, take the union, write. On SQLite that is
+  // genuinely atomic; on Blob it is the narrowest window the platform allows.
+  const merged = await updateDoc(LEDGER_PATHNAME, (current) => ({
     ...(current ?? {}),
     ...ledger,
     version: 1,
     orders: { ...(current?.orders ?? {}), ...(ledger.orders ?? {}) },
     contacts: [...new Set([...(current?.contacts ?? []), ...(ledger.contacts ?? [])])],
     updated_at: new Date().toISOString(),
-  };
-  await put(LEDGER_PATHNAME, JSON.stringify(merged), {
-    access: 'private', allowOverwrite: true, contentType: 'application/json',
-    token, cacheControlMaxAge: 0,
-  });
+  }), { version: 1, orders: {} });
   // Keep the caller's copy in step so a later save in the same run does not regress it.
   ledger.orders = merged.orders;
   ledger.contacts = merged.contacts;
@@ -128,12 +115,8 @@ export async function acquireLock(owner = `${Date.now()}-${Math.random().toStrin
 }
 
 export async function releaseLock() {
-  const token = blobToken();
-  if (!token) return;
   try {
-    await put(LOCK_PATHNAME, JSON.stringify({ owner: null, at: 0 }), {
-      access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
-    });
+    await writeDoc(LOCK_PATHNAME, { owner: null, at: 0 });
   } catch {
     // Failing to release only costs us the TTL.
   }
@@ -250,7 +233,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
   try {
     await ensureContact(customerFor(order), { deadlineAt });
   } catch (error) {
-    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: `kontak gagal: ${error.message}` };
+    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: `kontak gagal: ${error.message}`, monthly: Boolean(error.monthly) };
   }
 
   try {
@@ -278,7 +261,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
     if (error.status === 409) {
       return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: error.body?.id ?? null, total: expectedTotal };
     }
-    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: error.message };
+    return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: error.message, monthly: Boolean(error.monthly) };
   }
 }
 
@@ -374,6 +357,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
   const stopAt = deadlineMs ? Date.now() + deadlineMs : Infinity;
   const deadlineAt = Number.isFinite(stopAt) ? stopAt : null;
   let ranOutOfTime = false;
+  let quotaExhausted = false;
 
   for (const order of queue) {
     // Stopping early is free: the ledger already holds everything posted so far, and the
@@ -382,6 +366,11 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     if (Date.now() > stopAt) { ranOutOfTime = true; break; }
     const result = await postOrder(order, { depositTo, dryRun, deadlineAt });
     results.push(result);
+    if (result.monthly) {
+      // Every further order would fail the same way and spend nothing but time.
+      quotaExhausted = true;
+      break;
+    }
 
     if (!dryRun && (result.status === 'created' || result.status === 'exists' || result.status === 'mismatch')) {
       ledger.contacts = knownContactNames();
@@ -404,7 +393,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
   // orders in the same state.
   const undone = [];
   for (const order of undoneCandidates(orders, ledger)) {
-    if (Date.now() > stopAt) break;
+    if (Date.now() > stopAt || quotaExhausted) break;
     const entry = ledger.orders[customIdFor(order)];
     const outcome = await voidInvoice(order, entry, { dryRun, deadlineAt });
     undone.push(outcome);
@@ -431,6 +420,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     // left". The first chained sweep stopped after one round on exactly that misreading.
     remaining: backlog.length - results.length,
     ranOutOfTime,
+    quotaExhausted,
     created: count('created'),
     exists: count('exists'),
     failed: count('failed'),

@@ -139,7 +139,7 @@ import { callApi } from './client.js';
 import { loadConfig } from './config.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
-import { put } from '@vercel/blob';
+import { writeDoc } from './store/index.js';
 
 /**
  * A hard stop for anything that would change a live listing.
@@ -304,23 +304,16 @@ export async function applySync(plan, { dryRun = true, blobToken } = {}) {
  * `summary` accepts anything carrying `results`; price edits have no plan, so the
  * description falls back to counting the results rather than assuming a plan shape.
  */
-export async function writeAudit(summary, plan = null, blobToken) {
-  const token = blobToken || process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken;
-  if (!token) return null;
+export async function writeAudit(summary, plan = null) {
   const results = summary.results ?? [];
   const pathname = `inventory/audit/${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  await put(pathname, JSON.stringify({
+  await writeDoc(pathname, {
     at: new Date().toISOString(),
     summary: plan?.changes
       ? describePlan(plan)
       : `${results.filter((r) => r.status === 'ok').length} berhasil, ${results.filter((r) => r.status === 'failed').length} gagal`,
     guards: plan?.guards ?? null,
     results,
-  }, null, 2), {
-    access: 'private',
-    contentType: 'application/json',
-    token,
-    cacheControlMaxAge: 0,
   });
   return pathname;
 }

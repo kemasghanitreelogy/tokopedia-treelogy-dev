@@ -1,3 +1,4 @@
+import { resolveShopeeSession } from './session.js';
 import { loadShopeeConfig, requirePartnerCredentials, shopeeRedirectUri, TEST_HOST } from './config.js';
 import { buildAuthorizeUrl, refreshAccessToken, persistShopeeTokens } from './auth.js';
 import { buildPublicUrl } from './sign.js';
@@ -18,12 +19,24 @@ Usage:
   npm run shopee:items        Active listings
 `;
 
-function requireAuth(config) {
+/**
+ * The shop credentials, from wherever they actually live.
+ *
+ * Shopee access tokens last four hours and the refresh token rotates with every use, so
+ * the copy in .env is stale within the day and is only a seed. The session resolver reads
+ * the shared store and refreshes when needed - the same path the dashboard, the webhooks
+ * and the sweeps take. These commands were still reading .env directly, so they failed
+ * with "run shopee:pull" on a shop that was perfectly well authorised.
+ */
+async function requireAuth(config) {
   requirePartnerCredentials(config);
-  if (!config.accessToken || !config.shopId) {
-    throw new Error('No SHOPEE_ACCESS_TOKEN / SHOPEE_SHOP_ID in .env - run `npm run shopee:pull` after authorizing');
+  try {
+    const { auth } = await resolveShopeeSession({ config });
+    return auth;
+  } catch (error) {
+    if (config.accessToken && config.shopId) return { accessToken: config.accessToken, shopId: config.shopId };
+    throw error;
   }
-  return { accessToken: config.accessToken, shopId: config.shopId };
 }
 
 /**
@@ -139,9 +152,9 @@ const COMMANDS = {
   url: cmdUrl,
   pull: cmdPull,
   refresh: cmdRefresh,
-  shop: async (config) => show(await getShopInfo(config, requireAuth(config))),
-  orders: async (config) => show(await getOrderList(config, requireAuth(config))),
-  items: async (config) => show(await getItemList(config, requireAuth(config))),
+  shop: async (config) => show(await getShopInfo(config, await requireAuth(config))),
+  orders: async (config) => show(await getOrderList(config, await requireAuth(config))),
+  items: async (config) => show(await getItemList(config, await requireAuth(config))),
 };
 
 export async function run(argv) {

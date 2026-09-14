@@ -24,7 +24,7 @@ import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
-import { syncProductImages } from './mekari/images.js';
+import { syncProductImages, refreshImageManifest } from './mekari/images.js';
 import { rebuildLedgerFromJurnal } from './mekari/rebuild.js';
 import { pullHistory } from './history/ingest.js';
 import { runForecast } from './forecast/engine.js';
@@ -58,6 +58,7 @@ Usage:
   npm run hooks:register      Daftarkan URL webhook (butuh --yes)
   npm run hooks:recover       Ambil push Shopee yang sempat gagal terkirim
   npm run notify:test         Kirim pesan uji ke Telegram
+  npm run images              Tarik gambar produk & varian dari Shopify ke dashboard
   npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
@@ -875,6 +876,25 @@ async function cmdNotifyTest() {
   return result.sent ? 0 : 1;
 }
 
+/**
+ * Pictures onto the dashboard, with Jurnal left out of it entirely.
+ *
+ * Kept separate from mekari:images because the pictures on the dashboard have nothing to
+ * do with the books: when Jurnal's monthly package ran out, the combined job died on its
+ * first request and every product showed "tanpa gambar" for a week for a reason that had
+ * nothing to do with the pictures.
+ */
+async function cmdImages() {
+  const t0 = Date.now();
+  const { total, changed, unknown } = await refreshImageManifest();
+  console.log(`\n  ${total} SKU bergambar di Shopify  ·  ${changed} diperbarui  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  if (unknown.length > 0) {
+    console.log(`  ${warn(`${unknown.length} SKU Shopify tidak ada di data master: ${unknown.slice(0, 6).join(', ')}${unknown.length > 6 ? '...' : ''}`)}`);
+  }
+  console.log(`  ${changed > 0 ? ok('manifest dashboard diperbarui') : info('sudah sesuai, tidak ada yang ditulis')}\n`);
+  return 0;
+}
+
 async function cmdMekariImages(config, args = []) {
   const dryRun = !args.includes('--yes');
   const result = await syncProductImages({ dryRun });
@@ -1043,6 +1063,7 @@ const COMMANDS = {
   'hooks:register': cmdHooksRegister,
   'hooks:recover': cmdHooksRecover,
   'notify:test': cmdNotifyTest,
+  images: cmdImages,
   'mekari:images': cmdMekariImages,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,

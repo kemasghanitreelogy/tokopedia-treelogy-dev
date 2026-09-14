@@ -19,7 +19,12 @@ Environment=NODE_ENV=production
 # pembacaan penuh per malam menutupnya, dan harganya sekitar satu menit.
 ExecStart=-/usr/bin/node bin/tts.mjs db:backfill --yes
 ExecStart=/usr/bin/node bin/tts.mjs history:pull
-ExecStart=/usr/bin/node bin/tts.mjs mekari:images --yes
+# Gambar dashboard ditarik sendiri, sebelum dan lepas dari urusan Jurnal. Dulu keduanya
+# satu perintah, dan ketika kuota bulanan Jurnal habis perintah itu mati di permintaan
+# pertamanya - dashboard lalu menampilkan "tanpa gambar" untuk semua produk karena alasan
+# yang sama sekali tidak ada hubungannya dengan gambar.
+ExecStart=-/usr/bin/node bin/tts.mjs images
+ExecStart=-/usr/bin/node bin/tts.mjs mekari:images --yes
 # Forecast last: it reads the history the pull just refreshed, and the stock the
 # catalogues report. Failing here must not stop the backup below it.
 ExecStart=-/usr/bin/node bin/tts.mjs forecast --notify

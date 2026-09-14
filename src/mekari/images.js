@@ -33,6 +33,25 @@ export async function saveImageManifest(manifest) {
   await writeDoc(IMAGES_PATHNAME, { ...manifest, version: 1, updated_at: new Date().toISOString() });
 }
 
+/**
+ * The same picture, in a format Jurnal will accept.
+ *
+ * The shop's media is webp. Shopify's CDN will hand back jpeg for a client that does not
+ * advertise webp, which is why this worked at all - but that makes the format a property
+ * of whatever Accept header the runtime happens to send, and Jurnal rejects anything that
+ * is not jpg or png. Asking for it by name removes the guess.
+ */
+export const jurnalUrl = (url) => {
+  const sized = sizedUrl(url, JURNAL_IMAGE_WIDTH);
+  try {
+    const u = new URL(sized);
+    u.searchParams.set('format', 'jpg');
+    return u.toString();
+  } catch {
+    return sized;
+  }
+};
+
 /** A picture's identity is its Shopify URL without the size parameter Shopify lets us add. */
 export const imageKey = (url) => crypto.createHash('sha1').update(String(url).replace(/\?.*$/, '')).digest('hex').slice(0, 16);
 
@@ -55,11 +74,54 @@ export async function uploadProductImage(productId, { bytes, type }, { deadlineA
 }
 
 /**
+ * Shopify to the dashboard manifest, and nothing else.
+ *
+ * Split out from the Jurnal upload because the two had been one job, and that job asked
+ * Jurnal for its product list before it did anything at all. When the monthly API package
+ * ran out, the whole thing died on its first request - so the dashboard sat on an empty
+ * manifest and showed "tanpa gambar" for every product, for a reason that had nothing to
+ * do with the dashboard. The pictures come from Shopify; Jurnal has no part in getting
+ * them onto a page here, and now does not get a say in it.
+ *
+ * An entry already carrying a Jurnal upload keeps it: this refreshes where the picture
+ * lives, not what has been done with it.
+ *
+ * @returns {Promise<{total: number, changed: number, unknown: string[]}>}
+ */
+export async function refreshImageManifest() {
+  const [{ images, unknown }, manifest] = await Promise.all([fetchProductImages(), loadImageManifest()]);
+
+  let changed = 0;
+  for (const image of images.values()) {
+    const key = imageKey(image.url);
+    const known = manifest.images[image.sku];
+    if (known?.key === key && known?.thumb) continue;
+    manifest.images[image.sku] = {
+      ...(known ?? {}),
+      sku: image.sku,
+      source: image.source,
+      key,
+      url: image.url,
+      thumb: sizedUrl(image.url, THUMB_WIDTH),
+      alt: image.alt,
+      at: new Date().toISOString(),
+    };
+    changed += 1;
+  }
+  if (changed > 0) await saveImageManifest(manifest);
+  return { total: images.size, changed, unknown };
+}
+
+/**
  * Sync pictures from Shopify to Jurnal and the dashboard manifest.
  *
  * @param {{dryRun?: boolean, deadlineAt?: number|null}} options
  */
 export async function syncProductImages({ dryRun = true, deadlineAt = null } = {}) {
+  // The dashboard's half runs first and on its own terms, so whatever Jurnal does or
+  // refuses to do below, the pictures are on the page.
+  const refreshed = dryRun ? { total: 0, changed: 0, unknown: [] } : await refreshImageManifest();
+
   const [{ images, unknown }, manifest, jurnalProducts] = await Promise.all([
     fetchProductImages(),
     loadImageManifest(),
@@ -91,7 +153,7 @@ export async function syncProductImages({ dryRun = true, deadlineAt = null } = {
     if (isReadOnly()) throw new ReadOnlyError(`gambar produk ${image.sku}`);
 
     try {
-      const file = await download(sizedUrl(image.url, JURNAL_IMAGE_WIDTH));
+      const file = await download(jurnalUrl(image.url));
       const uploaded = await uploadProductImage(jurnalProduct.id, file, { deadlineAt });
       manifest.images[image.sku] = { ...entry, jurnal_image_url: uploaded?.url ?? '', jurnal_product_id: jurnalProduct.id, at: new Date().toISOString() };
       // Saved after every upload, like the ledger: a run killed halfway leaves nothing to redo.
@@ -102,19 +164,9 @@ export async function syncProductImages({ dryRun = true, deadlineAt = null } = {
     }
   }
 
-  // The dashboard manifest is useful even for SKUs Jurnal does not have yet.
-  if (!dryRun) {
-    for (const image of images.values()) {
-      if (!manifest.images[image.sku]) {
-        manifest.images[image.sku] = { sku: image.sku, source: image.source, key: imageKey(image.url), url: image.url, thumb: sizedUrl(image.url, THUMB_WIDTH), alt: image.alt, at: new Date().toISOString() };
-      }
-    }
-    await saveImageManifest(manifest);
-  }
-
   const count = (status) => results.filter((r) => r.status === status).length;
   return {
-    dryRun, results, unknown,
+    dryRun, results, unknown, refreshed,
     withImage: images.size, uploaded: count('uploaded'), unchanged: count('unchanged'),
     wouldUpload: count('would-upload'), failed: count('failed'), noJurnalProduct: count('no-jurnal-product'),
   };

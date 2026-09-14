@@ -316,14 +316,18 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .strip .search{min-width:170px}
 
 /* --- product cards: three across on a desktop, one on a phone --- */
-.cards{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:.7rem; padding:1rem}
+/* 190px, not 300px. The picture is square and spans the card, so the column width sets
+   the card height twice over - at 300px a row of five filled the screen and everything
+   else was a scroll away. At this width a 1900px screen shows nine across and three rows
+   deep, which is most of the catalogue at once. */
+.cards{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:.55rem; padding:1rem}
 .grp{grid-column:1/-1; margin:.6rem 0 -.1rem; font-size:.72rem; letter-spacing:.08em;
   text-transform:uppercase; color:var(--muted); font-weight:500}
 .grp:first-child{margin-top:0}
 .grp__n{margin-left:.5rem; opacity:.55; letter-spacing:0}
 .grp[hidden],.card[hidden]{display:none}
 
-.card{display:flex; flex-direction:column; gap:.35rem; padding:.8rem .9rem; text-decoration:none;
+.card{display:flex; flex-direction:column; gap:.25rem; padding:.55rem .6rem; text-decoration:none;
   color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:11px;
   transition:border-color var(--t-base) var(--ease-out),background var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out)}
 .card:hover{border-color:var(--brand); background:var(--panel); transform:translateY(-2px);
@@ -331,17 +335,20 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .card:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .card--flag{box-shadow:inset 3px 0 0 var(--warn)}
 .card__top{display:flex; align-items:baseline; gap:.35rem; flex-wrap:wrap}
-.card__name{font-size:.92rem; font-weight:500; line-height:1.3}
-.card__sku{font-size:.7rem; color:var(--dim)}
-.card__stock{display:flex; gap:1.1rem; padding:.35rem 0; border-top:1px solid var(--line);
-  border-bottom:1px solid var(--line); margin-top:.15rem}
-.qty{display:flex; align-items:baseline; gap:.35rem; font-size:.9rem}
-.qty i{font-style:normal; font-size:.68rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted);
+.card__name{font-size:.82rem; font-weight:500; line-height:1.25}
+.card__sku{font-size:.64rem; color:var(--dim)}
+/* Label above number rather than beside it. Three channels side by side as "TOKPED 199"
+   needs more width than a 190px card has, and wrapping them put the Shopify count on a
+   line of its own at random. Stacked, all three fit in one tidy row at any width. */
+.card__stock{display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:.25rem;
+  padding:.3rem 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin-top:.1rem}
+.qty{display:flex; flex-direction:column; align-items:center; gap:.05rem; font-size:.82rem; min-width:0}
+.qty i{font-style:normal; font-size:.58rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted);
   font-family:"Inter",sans-serif}
 .qty b{font-weight:600; font-variant-numeric:tabular-nums}
-.card__foot{display:flex; align-items:center; justify-content:space-between; gap:.5rem;
-  flex-wrap:wrap; font-size:.85rem}
-.card__tags{display:flex; gap:.4rem; align-items:center; font-size:.75rem}
+.card__foot{display:flex; align-items:center; justify-content:space-between; gap:.35rem;
+  flex-wrap:wrap; font-size:.76rem}
+.card__tags{display:flex; gap:.3rem; align-items:center; font-size:.68rem}
 .badge{font-size:.63rem; letter-spacing:.04em; text-transform:uppercase;
   padding:.1rem .35rem; border-radius:4px; background:var(--panel); color:var(--muted)}
 .badge--b{color:var(--done); background:color-mix(in srgb,var(--done) 16%,transparent)}
@@ -514,7 +521,7 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .sync__go:hover{filter:brightness(1.12)}
 .sync__go:disabled{opacity:.4; cursor:not-allowed; filter:none}
 
-@media (max-width:640px){ .cards{padding:.75rem; gap:.6rem} .dense td,.dense th{padding:.45rem .7rem} }
+@media (max-width:640px){ .cards{grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); padding:.75rem; gap:.5rem} .dense td,.dense th{padding:.45rem .7rem} }
 .plink{color:var(--fg); text-decoration:none; border-bottom:1px solid transparent; transition:border-color .2s}
 .plink:hover{border-bottom-color:var(--brand)}
 .kv{display:grid; grid-template-columns:auto 1fr; gap:.4rem 1rem; margin:0}
@@ -655,9 +662,9 @@ tbody tr:hover{background:var(--panel-2)}
 
 /* Product pictures. Fixed boxes so a card never reflows when a picture arrives late, and
    object-fit keeps a square product shot square whatever Shopify sent. */
-.card__img{display:block; width:100%; aspect-ratio:1; border-radius:9px; object-fit:cover;
-  background:var(--panel-2); border:1px solid var(--line); margin-bottom:.35rem}
-.card__img--none{display:grid; place-items:center; color:var(--dim); font-size:.7rem; letter-spacing:.06em; text-transform:uppercase}
+.card__img{display:block; width:100%; aspect-ratio:4/3; border-radius:7px; object-fit:cover;
+  background:var(--panel-2); border:1px solid var(--line); margin-bottom:.25rem}
+.card__img--none{display:grid; place-items:center; color:var(--dim); font-size:.6rem; letter-spacing:.06em; text-transform:uppercase}
 .pd__hero{display:grid; grid-template-columns:200px minmax(0,1fr); gap:1.1rem; align-items:start; padding:1rem 1rem 0}
 .pd__cap{display:flex; flex-direction:column; gap:.25rem; font-size:.9rem; padding-top:.2rem}
 .pd__img{width:200px; height:200px; border-radius:12px; object-fit:cover; background:var(--panel-2); border:1px solid var(--line)}
@@ -2442,7 +2449,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
         const picture = images[product.sku];
         return `<a class="card${attention ? ' card--flag' : ''}" href="?view=products&sku=${encodeURIComponent(product.sku)}">
           ${picture?.thumb
-            ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="240">`
+            ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="180" decoding="async">`
             : '<span class="card__img card__img--none" aria-hidden="true">tanpa gambar</span>'}
           <span class="card__top">
             <span class="card__name">${escape(product.name)}${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}</span>

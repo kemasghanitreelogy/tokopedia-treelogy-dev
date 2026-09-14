@@ -45,6 +45,7 @@
     "hooks:register": "node bin/tts.mjs hooks:register",
     "hooks:recover": "node bin/tts.mjs hooks:recover",
     "notify:test": "node bin/tts.mjs notify:test",
+    "images": "node bin/tts.mjs images",
     "mekari:images": "node bin/tts.mjs mekari:images",
     "mekari:rebuild": "node bin/tts.mjs mekari:rebuild",
     "history:pull": "node bin/tts.mjs history:pull",

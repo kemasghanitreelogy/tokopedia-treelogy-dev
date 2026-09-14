@@ -23,6 +23,8 @@ import { sendTelegram, notifySyncFailures, isTelegramConfigured } from './notify
 import { syncProductImages } from './mekari/images.js';
 import { rebuildLedgerFromJurnal } from './mekari/rebuild.js';
 import { pullHistory } from './history/ingest.js';
+import { runForecast } from './forecast/engine.js';
+import { URGENCY_ORDER } from './forecast/policy.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -54,6 +56,7 @@ Usage:
   npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run history:pull        Tarik riwayat penjualan semua kanal ke state (bulan demi bulan)
+  npm run forecast            Ramal permintaan & kebutuhan stok per SKU dari riwayat
   npm run doctor              End-to-end health check
   npm run api -- <METHOD> <path> [key=value ...] [--body '<json>']
 
@@ -871,6 +874,45 @@ async function cmdHistoryPull(config, args = []) {
   return 0;
 }
 
+const URGENCY_LABEL = { stockout: 'HABIS', critical: 'KRITIS', watch: 'AWASI', ok: 'aman', idle: 'diam' };
+
+async function cmdForecast(config, args = []) {
+  const t0 = Date.now();
+  // Stock comes from the ledger where it exists, otherwise from the live catalogues.
+  const [ledger, catalog] = await Promise.all([
+    loadLedger().catch(() => null),
+    readCatalog().catch(() => null),
+  ]);
+  if (catalog && Object.keys(catalog.errors ?? {}).length > 0) {
+    for (const [ch, msg] of Object.entries(catalog.errors)) console.log(warn(`stok ${ch} tidak terbaca: ${String(msg).slice(0, 80)}`));
+  }
+
+  const leadTimeDays = Number(args.find((a) => a.startsWith('--lead='))?.slice(7)) || undefined;
+  const result = await runForecast({ ledger, catalog, policy: leadTimeDays ? { leadTimeDays } : undefined });
+
+  const h = result.history;
+  console.log(`\n  riwayat ${h.from} s/d ${h.to}  ·  ${h.orders.toLocaleString('id-ID')} pesanan terpakai, ${h.excluded.toLocaleString('id-ID')} batal/retur dikeluarkan`);
+  console.log(`  lead time ${result.policy.leadTimeDays} hari  ·  review ${result.policy.reviewDays} hari\n`);
+  console.log(`  ${URGENCY_ORDER.map((u) => `${URGENCY_LABEL[u]} ${result.counts[u]}`).join('  ·  ')}\n`);
+
+  const show = args.includes('--all') ? result.rows : result.rows.filter((r) => r.status === 'ok');
+  console.log('  SKU                          stok  hari  30hr (p10-p90)        model        MASE  pesan');
+  for (const r of show.slice(0, 40)) {
+    if (r.status !== 'ok') { console.log(`  ${r.sku.padEnd(28)} ${String(r.onHand ?? '-').padStart(5)}   belum cukup data (${r.historyDays} hari)`); continue; }
+    const f = r.forecasts[30] ?? {};
+    const a = r.accuracy[30] ?? {};
+    const tag = URGENCY_LABEL[r.urgency] ?? r.urgency;
+    console.log(
+      `  ${r.sku.padEnd(28)} ${String(r.onHand ?? '-').padStart(5)} ${String(r.stock?.daysOfCover ?? '-').padStart(5)}  ` +
+      `${String(f.p50 ?? '-').padStart(5)} (${String(f.p10 ?? '-').padStart(4)}-${String(f.p90 ?? '-').padStart(5)})  ` +
+      `${String(a.model ?? '-').padEnd(10)} ${String(a.mase ?? '-').padStart(6)}  ${String(r.stock?.reorderQty ?? '-').padStart(5)}  ${tag}`,
+    );
+  }
+  if (h.unknownSkus?.length) console.log(`\n  SKU di luar data master: ${h.unknownSkus.map((u) => `${u.sku} (${u.qty})`).join(', ')}`);
+  console.log(`\n  ${Math.round((Date.now() - t0) / 1000)} detik\n`);
+  return 0;
+}
+
 const COMMANDS = {
   authorize: cmdAuthorize,
   pull: cmdPull,
@@ -897,6 +939,7 @@ const COMMANDS = {
   'mekari:images': cmdMekariImages,
   'mekari:rebuild': cmdMekariRebuild,
   'history:pull': cmdHistoryPull,
+  forecast: cmdForecast,
   doctor: cmdDoctor,
   api: cmdApi,
 };

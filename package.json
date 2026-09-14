@@ -49,6 +49,7 @@
     "mekari:rebuild": "node bin/tts.mjs mekari:rebuild",
     "history:pull": "node bin/tts.mjs history:pull",
     "start": "node server.js",
+    "forecast": "node bin/tts.mjs forecast",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

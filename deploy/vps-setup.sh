@@ -62,10 +62,28 @@ systemctl enable --now treelogy.service treelogy-sweep.timer treelogy-daily.time
 systemctl restart treelogy.service
 
 echo "== nginx"
-cp "$APP/deploy/nginx-api.conf" /etc/nginx/sites-available/api.treelogy-services.my.id
-ln -sf /etc/nginx/sites-available/api.treelogy-services.my.id /etc/nginx/sites-enabled/api.treelogy-services.my.id
+SITE=/etc/nginx/sites-available/api.treelogy-services.my.id
+# Simpan config yang sedang berjalan, dan kembalikan kalau yang baru tidak lolos uji -
+# lebih baik tetap dengan yang lama daripada meninggalkan nginx mati.
+[ -f "$SITE" ] && cp "$SITE" "$SITE.bak.$(date +%s)"
+cp "$APP/deploy/nginx-api.conf" "$SITE"
+ln -sf "$SITE" /etc/nginx/sites-enabled/api.treelogy-services.my.id
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl reload nginx
+mkdir -p /var/www/html
+if nginx -t 2>/dev/null; then
+  systemctl reload nginx
+  echo "nginx: config baru dipasang"
+else
+  LAST_BAK=$(ls -1t "$SITE".bak.* 2>/dev/null | head -1)
+  if [ -n "$LAST_BAK" ]; then
+    cp "$LAST_BAK" "$SITE"
+    nginx -t && systemctl reload nginx
+    echo "!! config nginx baru TIDAK lolos uji - dikembalikan ke yang lama"
+    nginx -t
+  else
+    echo "!! config nginx baru tidak lolos uji dan tidak ada cadangan"; nginx -t
+  fi
+fi
 
 echo "== firewall"
 ufw allow OpenSSH >/dev/null; ufw allow 'Nginx Full' >/dev/null; ufw --force enable >/dev/null

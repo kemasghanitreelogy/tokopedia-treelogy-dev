@@ -129,13 +129,43 @@ const sqliteBackend = {
  * sweep and the CLI each hold their own.
  */
 const REDIS_PREFIX = env('REDIS_PREFIX') || 'treelogy:';
-let redisClient = null;
+let pool = null;
+
+/**
+ * One connection pool per process, not one connection per transaction.
+ *
+ * WATCH has to run on a connection nobody else is using, and the first version of this
+ * got that by calling duplicate() + connect() + quit() around every update - a full TCP
+ * handshake per ledger write. Production showed ten open connections and eighty-six
+ * handshakes for a handful of operations. node-redis has a pool for exactly this:
+ * ordinary commands go straight through it, and `execute` lends out a private connection
+ * for the length of a transaction and takes it back afterwards.
+ */
+async function redis() {
+  if (pool) return pool;
+  const { createClientPool } = await import('redis');
+  pool = createClientPool(
+    {
+      url: env('REDIS_URL') || 'redis://127.0.0.1:6379',
+      socket: { reconnectStrategy: (retries) => Math.min(retries * 100, 3000), connectTimeout: 5000 },
+    },
+    // Two is enough for a web process plus one transaction in flight; four gives the
+    // sweeps headroom without holding connections open for nothing.
+    { minimum: 1, maximum: 4, acquireTimeout: 10_000 },
+  );
+  pool.on('error', (error) => console.error(`redis: ${error.message}`));
+  await pool.connect();
+  return pool;
+}
+
+const rkey = (key) => `${REDIS_PREFIX}${key}`;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * One update per key at a time within this process.
  *
- * WATCH/MULTI handles writers in *other* processes, but it handles them by making the
- * loser start over - and twenty-five callers inside one process all retrying at the same
+ * WATCH handles writers in *other* processes, but it handles them by making the loser
+ * start over - and twenty-five callers inside one process all retrying at the same
  * instant just collide again, until they run out of attempts. Queueing them locally means
  * each one does a single clean round trip, and WATCH is left to do the job it is good at:
  * catching the webhook that arrived while the sweep was mid-update.
@@ -152,21 +182,6 @@ function queued(key, run) {
   inFlight.set(key, mine.then(() => {}, () => {}));
   return mine;
 }
-
-async function redis() {
-  if (redisClient?.isOpen) return redisClient;
-  const { createClient } = await import('redis');
-  redisClient = createClient({
-    url: env('REDIS_URL') || 'redis://127.0.0.1:6379',
-    socket: { reconnectStrategy: (retries) => Math.min(retries * 100, 3000), connectTimeout: 5000 },
-  });
-  redisClient.on('error', (error) => console.error(`redis: ${error.message}`));
-  await redisClient.connect();
-  return redisClient;
-}
-
-const rkey = (key) => `${REDIS_PREFIX}${key}`;
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const redisBackend = {
   /*
@@ -210,37 +225,44 @@ const redisBackend = {
     // did not change underneath us; otherwise read again and recompute. A short random
     // backoff keeps two processes from retrying in lockstep forever.
     for (let attempt = 0; attempt < 20; attempt++) {
-      const isolated = client.duplicate();
-      await isolated.connect();
       try {
-        await isolated.watch(rkey(key));
-        const raw = await isolated.get(rkey(key));
-        const current = raw === null ? structuredClone(initial ?? null) : JSON.parse(raw);
-        const next = fn(current);
-        // node-redis v5 reports an aborted EXEC by throwing WatchError; older clients
-        // returned null. Both mean "somebody wrote first, go again".
-        const result = await isolated.multi().set(rkey(key), JSON.stringify(next)).exec();
-        if (result !== null) return next;
+        const next = await client.execute(async (isolated) => {
+          await isolated.watch(rkey(key));
+          const raw = await isolated.get(rkey(key));
+          const candidate = fn(raw === null ? structuredClone(initial ?? null) : JSON.parse(raw));
+          const result = await isolated.multi().set(rkey(key), JSON.stringify(candidate)).exec();
+          return result === null ? undefined : candidate;
+        });
+        if (next !== undefined) return next;
       } catch (error) {
+        // node-redis reports an aborted EXEC as WatchError; older clients returned null.
+        // Both mean "somebody wrote first, go again".
         if (error?.name !== 'WatchError' && !/watched keys/i.test(error?.message ?? '')) throw error;
-      } finally {
-        await isolated.quit().catch(() => {});
       }
       await sleep(10 + Math.random() * 40);
     }
     throw new Error(`redis: ${key} terus berubah, update dibatalkan setelah 20 percobaan`);
   },
+
   async list(prefix) {
     const client = await redis();
-    const out = [];
-    for await (const batch of client.scanIterator({ MATCH: `${rkey(prefix)}*`, COUNT: 200 })) {
-      for (const full of (Array.isArray(batch) ? batch : [batch])) {
-        const size = await client.strLen(full);
-        out.push({ key: full.slice(REDIS_PREFIX.length), size, updatedAt: null });
+    // Borrow one connection for the whole listing: scanIterator is a client helper, and a
+    // scan spread across pooled connections would be several independent cursors.
+    return client.execute(async (isolated) => {
+      const keys = [];
+      for await (const batch of isolated.scanIterator({ MATCH: `${rkey(prefix)}*`, COUNT: 500 })) {
+        keys.push(...(Array.isArray(batch) ? batch : [batch]));
       }
-    }
-    return out.sort((a, b) => a.key.localeCompare(b.key));
+      if (keys.length === 0) return [];
+      // One pipeline rather than a round trip per key: listing history is forty-odd keys
+      // today and grows by one a month per channel.
+      const sizes = await Promise.all(keys.map((k) => isolated.strLen(k)));
+      return keys
+        .map((k, i) => ({ key: k.slice(REDIS_PREFIX.length), size: sizes[i], updatedAt: null }))
+        .sort((a, b) => a.key.localeCompare(b.key));
+    });
   },
+
   async remove(key) {
     await (await redis()).del(rkey(key));
   },
@@ -303,8 +325,8 @@ const backend = () => {
 
 /** Close whatever is open; for a clean process exit in the CLI and timers. */
 export async function closeStore() {
-  if (redisClient?.isOpen) await redisClient.quit().catch(() => {});
-  redisClient = null;
+  if (pool) await pool.close().catch(() => {});
+  pool = null;
   resetStore();
 }
 

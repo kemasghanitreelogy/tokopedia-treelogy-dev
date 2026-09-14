@@ -69,9 +69,28 @@ echo "== redis: persistensi AOF (default Ubuntu hanya snapshot RDB berkala)"
 redis-cli CONFIG SET appendonly yes >/dev/null
 redis-cli CONFIG SET appendfsync everysec >/dev/null
 redis-cli CONFIG SET maxmemory-policy noeviction >/dev/null   # state bukan cache: jangan pernah dibuang
+# Tanpa batas, Redis tumbuh sampai kernel membunuh sesuatu - bisa saja proses lain. Dengan
+# batas + noeviction, penulisan gagal dengan pesan jelas dan mesinnya tetap hidup. 512 MB
+# kira-kira 75x pemakaian sekarang, jadi ini pagar, bukan kendala.
+redis-cli CONFIG SET maxmemory 536870912 >/dev/null
 redis-cli CONFIG REWRITE >/dev/null
 systemctl enable --now redis-server >/dev/null
 echo "redis $(redis-cli --version | cut -d' ' -f2) · appendonly=$(redis-cli CONFIG GET appendonly | tail -1) · bind=$(redis-cli CONFIG GET bind | tail -1)"
+
+echo "== rotasi log"
+cat > /etc/logrotate.d/treelogy <<'ROTATE'
+/opt/treelogy/state/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su treelogy treelogy
+}
+ROTATE
+logrotate -d /etc/logrotate.d/treelogy >/dev/null 2>&1 && echo "logrotate: ok" || echo "!! logrotate: konfigurasi ditolak"
 
 echo "== systemd"
 cp "$APP/deploy/treelogy.service" "$APP/deploy/treelogy-sweep.service" "$APP/deploy/treelogy-sweep.timer" \
@@ -108,7 +127,28 @@ else
 fi
 
 echo "== firewall"
-ufw allow OpenSSH >/dev/null; ufw allow 'Nginx Full' >/dev/null; ufw --force enable >/dev/null
+# Order and verification matter more than brevity here. Enabling a default-deny firewall
+# before its allow rules exist locks everyone out of the machine, including whoever is
+# running this script - which is exactly what happened once, because the allow commands
+# were silenced with >/dev/null and their failure went unseen. Rules first, printed, then
+# verified in the rule table, and only then is the firewall switched on.
+ufw allow 22/tcp comment 'ssh'
+ufw allow 80/tcp comment 'http'
+ufw allow 443/tcp comment 'https'
+
+missing=""
+for port in 22 80 443; do
+  ufw status | grep -qE "^${port}/tcp" || missing="$missing $port"
+done
+if [ -n "$missing" ]; then
+  echo "!! aturan ufw untuk port$missing tidak terpasang - firewall TIDAK dinyalakan"
+  echo "   (menyalakannya sekarang akan mengunci mesin ini)"
+  ufw status
+else
+  ufw --force enable
+  echo "firewall aktif dengan: $(ufw status | grep -cE '^(22|80|443)/tcp') aturan port"
+  ufw status numbered | grep -E '^\[|22|80|443' | head -8
+fi
 
 echo "== cek"
 sleep 3

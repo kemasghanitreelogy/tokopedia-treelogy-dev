@@ -133,5 +133,37 @@ export async function notifyCrash({ source, error }, options = {}) {
   return sendTelegram(html, { ...options, key: `crash|${source}|${String(error?.message ?? error).slice(0, 80)}` });
 }
 
+/**
+ * The one thing worth a message about stock: what will run out before a reorder lands.
+ *
+ * Sent once a day after the forecast rebuilds, and only when there is something to say.
+ * A SKU whose model never beat the seasonal naive is still listed - it is still running
+ * out - but flagged, because "order 325" resting on an unreliable model deserves a
+ * second look rather than a purchase order.
+ */
+export async function notifyStockRisk(forecast, options = {}) {
+  const rows = (forecast?.rows ?? []).filter((r) => r.urgency === 'stockout' || r.urgency === 'critical');
+  if (rows.length === 0) return { sent: false, reason: 'tidak ada yang kritis' };
+
+  const lines = [`<b>📦 Stok akan habis sebelum pesanan tiba</b> — lead time ${forecast.policy.leadTimeDays} hari`];
+  for (const r of rows.slice(0, 12)) {
+    const s = r.stock ?? {};
+    const a = r.accuracy?.[s.horizonUsed] ?? r.accuracy?.[30] ?? {};
+    const shaky = a.beatsNaive === false ? ' ⚠︎ model tak lebih baik dari pola minggu lalu' : '';
+    lines.push(
+      `• <b>${escapeHtml(r.name)}</b> <code>${escapeHtml(r.sku)}</code>\n` +
+      `  sisa ${r.onHand ?? '?'} — habis ${escapeHtml(s.stockoutDate ?? '?')} (${s.daysOfCover ?? '?'} hari)\n` +
+      `  pesan <b>${s.reorderQty ?? '?'}</b>${shaky}`,
+    );
+  }
+  if (rows.length > 12) lines.push(`…dan ${rows.length - 12} SKU lagi`);
+  lines.push(`\n<a href="${publicBaseUrl()}/api/dashboard?view=forecast">Buka tab Prakiraan</a>`);
+
+  // Keyed on the day and the SKUs, so the same set is not repeated within a day but a
+  // newly critical product still gets through.
+  const key = `stock|${new Date().toISOString().slice(0, 10)}|${rows.map((r) => r.sku).sort().join(',')}`;
+  return sendTelegram(lines.join('\n'), { ...options, key });
+}
+
 /** Nothing to close here today, but shell one-shots call it so the process can exit. */
 export async function closeQuietly() {}

@@ -94,3 +94,36 @@ test('a crash is reported with its message', async () => {
   assert.match(calls[0].body.text, /berhenti/);
   assert.match(calls[0].body.text, /kredensial Mekari belum diisi/);
 });
+
+test('the stock alert names only what will run out before a reorder can land', async () => {
+  resetDedupe();
+  const { notifyStockRisk } = await import('../src/notify/telegram.js');
+  const { calls, fetchImpl } = capture();
+  const forecast = {
+    policy: { leadTimeDays: 21 },
+    rows: [
+      { sku: 'OMC-90-001', name: 'Moringa Capsules - 90 caps', urgency: 'critical',
+        stock: { onHand: 3, daysOfCover: 0, stockoutDate: '2026-09-14', reorderQty: 325, horizonUsed: 30 },
+        accuracy: { 30: { beatsNaive: false } }, onHand: 3 },
+      { sku: 'OMP-45-001', name: 'Moringa Powder - 45 gram', urgency: 'ok', stock: {}, accuracy: {}, onHand: 95 },
+    ],
+  };
+  const result = await notifyStockRisk(forecast, { config, fetchImpl });
+  assert.equal(result.sent, true);
+  const text = calls[0].body.text;
+  assert.match(text, /OMC-90-001/);
+  assert.match(text, /pesan <b>325<\/b>/);
+  assert.match(text, /habis 2026-09-14/);
+  // A model that never beat the naive still gets listed - it is still running out - but
+  // ordering 325 on it deserves a second look.
+  assert.match(text, /model tak lebih baik/);
+  assert.ok(!text.includes('OMP-45-001'), 'yang aman tidak ikut diributkan');
+});
+
+test('nothing critical means no message at all', async () => {
+  const { notifyStockRisk } = await import('../src/notify/telegram.js');
+  const { calls, fetchImpl } = capture();
+  const r = await notifyStockRisk({ policy: { leadTimeDays: 21 }, rows: [{ sku: 'A', urgency: 'ok' }] }, { config, fetchImpl });
+  assert.equal(r.sent, false);
+  assert.equal(calls.length, 0);
+});

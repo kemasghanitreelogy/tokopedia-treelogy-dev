@@ -19,7 +19,7 @@ import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from
 import { isMekariConfigured } from './mekari/client.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
-import { sendTelegram, notifySyncFailures, isTelegramConfigured } from './notify/telegram.js';
+import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
 import { syncProductImages } from './mekari/images.js';
 import { rebuildLedgerFromJurnal } from './mekari/rebuild.js';
 import { pullHistory } from './history/ingest.js';
@@ -914,6 +914,12 @@ async function cmdForecast(config, args = []) {
     );
   }
   if (h.unknownSkus?.length) console.log(`\n  SKU di luar data master: ${h.unknownSkus.map((u) => `${u.sku} (${u.qty})`).join(', ')}`);
+
+  // Only when asked: the daily job wants the alert, someone checking a number does not.
+  if (args.includes('--notify')) {
+    const sent = await notifyStockRisk(result);
+    console.log(sent.sent ? ok('peringatan stok dikirim ke Telegram') : info(`tidak dikirim: ${sent.reason}`));
+  }
   console.log(`\n  ${Math.round((Date.now() - t0) / 1000)} detik\n`);
   return 0;
 }

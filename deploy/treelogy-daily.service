@@ -14,7 +14,7 @@ ExecStart=/usr/bin/node bin/tts.mjs history:pull
 ExecStart=/usr/bin/node bin/tts.mjs mekari:images --yes
 # Forecast last: it reads the history the pull just refreshed, and the stock the
 # catalogues report. Failing here must not stop the backup below it.
-ExecStart=-/usr/bin/node bin/tts.mjs forecast
+ExecStart=-/usr/bin/node bin/tts.mjs forecast --notify
 # Snapshot Redis to disk and keep a dated copy; 30 days retained. BGSAVE is asynchronous,
 # so wait for it to finish before copying.
 ExecStart=/bin/sh -c 'mkdir -p /opt/treelogy/backup && redis-cli BGSAVE >/dev/null && while [ "$(redis-cli INFO persistence | tr -d "\r" | grep rdb_bgsave_in_progress | cut -d: -f2)" = "1" ]; do sleep 1; done && cp /var/lib/redis/dump.rdb /opt/treelogy/backup/treelogy-$(date +%%F).rdb && find /opt/treelogy/backup -name "*.rdb" -mtime +30 -delete'

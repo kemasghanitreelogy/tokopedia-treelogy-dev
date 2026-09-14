@@ -15,6 +15,26 @@ import { closeStore } from '../src/store/index.js';
  */
 const LINGER_MS = 5_000;
 
+/**
+ * Name what is still open, with enough detail to act on.
+ *
+ * "TCPSocketWrap" tells you a socket is open and nothing else - which host, which port,
+ * which service is exactly the part you need, and chasing it took a dozen probes against
+ * the live box. Printing the remote address turns the next occurrence into one line.
+ */
+function describeOpenHandles() {
+  const handles = typeof process._getActiveHandles === 'function' ? process._getActiveHandles() : [];
+  const described = handles
+    .filter((h) => h !== process.stdout && h !== process.stderr && h !== process.stdin)
+    .map((h) => {
+      const kind = h?.constructor?.name ?? typeof h;
+      if (h?.remoteAddress) return `${kind} -> ${h.remoteAddress}:${h.remotePort}`;
+      if (h?._host) return `${kind} -> ${h._host}`;
+      return kind;
+    });
+  return described.length ? described.join(', ') : process.getActiveResourcesInfo().join(', ');
+}
+
 try {
   process.exitCode = await run(process.argv.slice(2));
 } finally {
@@ -22,7 +42,7 @@ try {
   await closeStore();
   // unref'd, so a command that exits cleanly - which is all of them - never waits for it.
   setTimeout(() => {
-    console.error(`(masih ada ${process.getActiveResourcesInfo().join(', ')} setelah selesai - keluar paksa)`);
+    console.error(`(masih terbuka setelah selesai, keluar paksa: ${describeOpenHandles()})`);
     process.exit(process.exitCode ?? 0);
   }, LINGER_MS).unref();
 }

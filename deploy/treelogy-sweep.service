@@ -13,3 +13,9 @@ Environment=NODE_ENV=production
 # The CLI has no 120-second ceiling and paces itself to Jurnal's quota.
 ExecStart=/usr/bin/node bin/tts.mjs mekari:sync --7d --yes
 TimeoutStartSec=45min
+# Exit 2 means Mekari's monthly API package is spent. The sweep did its job: it read the
+# orders, found what was missing, and stopped rather than hammer a closed door. Nothing is
+# lost - the next sweep after the quota resets picks all of it up - so this must not leave
+# the unit sitting in "failed" for the rest of the month, where a real failure would then
+# look identical to it. Every other non-zero exit still counts as a failure.
+SuccessExitStatus=2

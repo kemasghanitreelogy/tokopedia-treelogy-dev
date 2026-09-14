@@ -995,6 +995,9 @@ export async function run(argv) {
     return (await handler(config, args)) ?? 0;
   } catch (error) {
     console.error(`\n${fail(describeApiError(error))}\n`);
+    // The message alone says what went wrong but never where, and on a box you reach over
+    // ssh that difference is an afternoon. Off by default so normal output stays readable.
+    if (process.env.TREELOGY_TRACE) console.error(error?.stack ?? error);
     return 1;
   }
 }

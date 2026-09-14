@@ -46,6 +46,7 @@ export async function backfill({
   // A source stays eligible for a coverage claim only while every chunk has been clean.
   const whole = new Set(sources);
   const chunks = [];
+  const rejected = [];
   let stored = 0;
   let seen = 0;
 
@@ -65,14 +66,22 @@ export async function backfill({
       if (failed || cut) whole.delete(source);
     }
 
-    const written = dryRun ? { written: 0 } : await saveOrders(live.orders, { source: 'backfill' });
+    const written = dryRun ? { written: 0, rejected: [] } : await saveOrders(live.orders, { source: 'backfill' });
     seen += live.orders.length;
     stored += written.written;
+    rejected.push(...(written.rejected ?? []));
+    // An order the database refused is a hole in the window, so the source that produced
+    // it loses its claim rather than the operator finding out months later.
+    for (const bad of written.rejected ?? []) {
+      const source = bad.channel === 'shopee' ? 'shopee' : bad.channel === 'shopify' ? 'shopify' : 'tiktok';
+      whole.delete(source);
+    }
 
     const chunk = {
       label: window.label,
       found: live.orders.length,
       written: written.written,
+      rejected: written.rejected ?? [],
       errors: live.errors ?? {},
       truncated: live.truncated ?? [],
     };
@@ -96,6 +105,7 @@ export async function backfill({
     chunks,
     seen,
     stored,
+    rejected,
     // Named so the operator can see at a glance which channels the dashboard may now
     // answer for from the database, and which are still going to the platforms.
     claimed,

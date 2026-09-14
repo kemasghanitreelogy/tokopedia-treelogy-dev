@@ -64,20 +64,40 @@ function enrich(order, fetchedAt) {
  * function in Postgres keeps whichever was read from the platform most recently rather
  * than whichever arrived last.
  *
- * @returns {Promise<{written: number, batches: number}>}
+ * @returns {Promise<{written: number, batches: number, rejected: Array<{channel: string, id: string, error: string}>}>}
  */
 export async function saveOrders(orders, { source = 'unknown', fetchedAt = Date.now() / 1000 } = {}) {
-  if (!Array.isArray(orders) || orders.length === 0) return { written: 0, batches: 0 };
+  if (!Array.isArray(orders) || orders.length === 0) return { written: 0, batches: 0, rejected: [] };
 
   let written = 0;
   let batches = 0;
+  const rejected = [];
+
   for (let i = 0; i < orders.length; i += BATCH) {
     const slice = orders.slice(i, i + BATCH).map((order) => enrich(order, fetchedAt));
-    const count = await rpc('ingest_orders', { p_orders: slice, p_source: source });
-    written += Number(count) || 0;
     batches += 1;
+    try {
+      written += Number(await rpc('ingest_orders', { p_orders: slice, p_source: source })) || 0;
+    } catch (error) {
+      // One unusable order must not cost the ninety-nine it travelled with.
+      //
+      // This is not hypothetical: a Shopify total arrived as "1073252.09", Postgres
+      // refused to read it as a whole number of rupiah, and the entire batch rolled back.
+      // A hundred orders disappeared because of one sen. Retrying one at a time turns
+      // that into one named order to look at, and costs an extra round trip only on the
+      // batch that actually had something wrong with it.
+      if (error?.retryable || slice.length === 1) throw error;
+      for (const one of slice) {
+        try {
+          written += Number(await rpc('ingest_orders', { p_orders: [one], p_source: source })) || 0;
+        } catch (single) {
+          if (single?.retryable) throw single;
+          rejected.push({ channel: one.channel, id: one.id, error: single.message });
+        }
+      }
+    }
   }
-  return { written, batches };
+  return { written, batches, rejected };
 }
 
 /**

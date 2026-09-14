@@ -984,12 +984,15 @@ async function cmdDbBackfill(config, args = []) {
       const problems = [
         ...Object.entries(chunk.errors).map(([source, message]) => fail(`${source}: ${message}`)),
         ...chunk.truncated.map((t) => warn(`terpotong: ${t}`)),
+        ...chunk.rejected.map((r) => fail(`${r.channel}/${r.id}: ${r.error}`)),
       ];
       console.log(`  ${chunk.label}  ${String(chunk.found).padStart(5)} ditemukan  ${String(chunk.written).padStart(5)} ditulis  ${problems.join('  ')}`);
     },
   });
 
-  console.log(`\n  ${result.seen} pesanan dibaca  ·  ${result.stored} ditulis  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  console.log(`\n  ${result.seen} pesanan dibaca  ·  ${result.stored} ditulis` +
+    (result.rejected.length > 0 ? `  ·  ${result.rejected.length} ditolak database` : '') +
+    `  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
   if (result.claimed.length > 0) {
     console.log(`  ${ok(`${dryRun ? 'akan dicatat' : 'cakupan tercatat'}: ${result.claimed.join(', ')}`)}`);
   }

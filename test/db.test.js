@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coversRange, DB_HISTORY_START, DB_HISTORY_START_EPOCH } from '../src/db/orders.js';
+import { coversRange, STALE_AFTER_MS, DB_HISTORY_START, DB_HISTORY_START_EPOCH } from '../src/db/orders.js';
 import { isSupabaseConfigured, loadSupabaseConfig, SupabaseError, PAGE_SIZE } from '../src/db/client.js';
 import { SOURCE_CHANNELS, activeSources } from '../src/orders-source.js';
 import { wibDate } from '../src/range.js';
@@ -26,12 +26,32 @@ test('a window is answerable only when every source covers all of it', () => {
   const late = { from: w.since + HOUR, through: w.until + HOUR };
   assert.equal(coversRange({ tiktok: full, shopee: late }, w, ['tiktok', 'shopee']), false);
 
-  // One source ending early is the same problem at the other end.
-  const early = { from: w.since - HOUR, through: w.until - HOUR };
-  assert.equal(coversRange({ tiktok: full, shopee: early }, w, ['tiktok', 'shopee']), false);
-
   // A source with no record at all has never been read.
   assert.equal(coversRange({ tiktok: full }, w, ['tiktok', 'shopee']), false);
+});
+
+test('a window ending now is answerable while the ingest is alive', () => {
+  const now = Date.now();
+  const w = window(24);
+  // A sweep records how far it got when it ran, which is always before "now" - so
+  // insisting `through` reach `until` means the database is never read by anyone, ever.
+  // What keeps the tail right is the webhooks, and a fresh coverage row is the proof they
+  // are running.
+  const trailing = { from: w.since - HOUR, through: w.until - HOUR, at: new Date(now - 60_000).toISOString() };
+  assert.equal(coversRange({ tiktok: trailing }, w, ['tiktok'], now), true);
+
+  // Stop the sweep and the row goes stale, and the dashboard goes back to the platforms
+  // on its own rather than serving a tail nobody is maintaining.
+  const stale = { ...trailing, at: new Date(now - STALE_AFTER_MS - 60_000).toISOString() };
+  assert.equal(coversRange({ tiktok: stale }, w, ['tiktok'], now), false);
+
+  // A row with no timestamp at all proves nothing.
+  assert.equal(coversRange({ tiktok: { from: w.since - HOUR, through: w.until - HOUR } }, w, ['tiktok'], now), false);
+
+  // Freshness only forgives the recent end. A window starting before what was ever
+  // ingested is missing history no webhook is going to supply.
+  const short = { from: w.since + HOUR, through: w.until - HOUR, at: new Date(now).toISOString() };
+  assert.equal(coversRange({ tiktok: short }, w, ['tiktok'], now), false);
 });
 
 test('no coverage and no sources both mean "ask the platforms"', () => {

@@ -184,18 +184,46 @@ export async function recordCoverage(source, { from, through, note = '' }) {
 }
 
 /**
+ * How long a source may go without a completed sweep before it stops being trusted.
+ *
+ * The sweep runs every fifteen minutes and widens the covered window each time, so a
+ * record older than this means the ingest is not running - not that the shop is quiet.
+ * Twenty-five minutes leaves room for one missed tick before the dashboard silently goes
+ * back to reading the platforms.
+ */
+export const STALE_AFTER_MS = 25 * 60_000;
+
+/**
  * Can the database answer for this window on its own?
  *
- * Every source that is meant to be there has to cover the whole window. One source behind
- * is enough to make the answer wrong in a way nobody can see - the page would look normal
- * and simply be missing Shopee - so the rule is all or nothing, and the caller falls back
- * to reading the platforms.
+ * Two conditions, and the second one is the subtle half.
+ *
+ * The first is the obvious one: the stored window has to start at or before the window
+ * being asked for. Every source that is meant to be there has to satisfy it - one source
+ * behind is enough to make the answer wrong in a way nobody can see, because the page
+ * would look entirely normal and simply be missing Shopee.
+ *
+ * The second is about the other end, and a literal reading of it makes the database
+ * useless. A coverage row records how far a sweep got at the moment it ran; a dashboard
+ * asking for "today" wants a window ending *now*, which is always later than that. Demand
+ * that `through` reach `until` and the answer is always no, for every reader, forever -
+ * which is exactly what happened the first time this was measured: every request fell
+ * through to the platforms and the database was never once read.
+ *
+ * What actually keeps the tail correct is not the sweep, it is the webhooks: an order is
+ * written seconds after the buyer pays. So the honest test for the recent end is not
+ * "has a sweep covered it" but "is the ingest alive", and the coverage row's own
+ * timestamp answers that. If the sweep stops, the row goes stale, and the dashboard goes
+ * back to reading the platforms on its own - which is the right way round to fail.
  */
-export function coversRange(coverage, { since, until }, sources) {
+export function coversRange(coverage, { since, until }, sources, now = Date.now()) {
   if (!coverage || !Array.isArray(sources) || sources.length === 0) return false;
   return sources.every((source) => {
     const window = coverage[source];
-    return Boolean(window) && window.from <= since && window.through >= until;
+    if (!window || window.from > since) return false;
+    if (window.through >= until) return true;
+    const at = Date.parse(window.at ?? '');
+    return Number.isFinite(at) && now - at <= STALE_AFTER_MS;
   });
 }
 

@@ -13,7 +13,7 @@ import { backfill } from './db/backfill.js';
 import { readCoverage, dbStats, DB_HISTORY_START } from './db/orders.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { activeSources, rememberOrders } from './orders-source.js';
-import { resolveRange } from './range.js';
+import { resolveRange, wibDate } from './range.js';
 import { buildPicklist } from './picklist.js';
 import { readCatalog } from './inventory.js';
 import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './ledger.js';

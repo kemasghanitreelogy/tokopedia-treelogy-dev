@@ -1,0 +1,14 @@
+# /etc/systemd/system/treelogy-deploy.service  (dipicu oleh treelogy-deploy.path)
+[Unit]
+Description=Treelogy: tarik kode terbaru, uji, restart
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+ExecStart=/opt/treelogy/app/deploy/deploy.sh
+TimeoutStartSec=15min

@@ -1,0 +1,13 @@
+# /etc/systemd/system/treelogy-deploy.path
+# Menonton berkas pemicu yang ditulis /api/deploy. Proses web tidak boleh me-restart
+# dirinya sendiri di tengah request, dan tidak perlu diberi sudo untuk itu - systemd yang
+# memiliki layanannya, jadi systemd yang me-restart.
+[Unit]
+Description=Pantau permintaan deploy dari webhook GitHub
+
+[Path]
+PathModified=/opt/treelogy/state/deploy-requested
+Unit=treelogy-deploy.service
+
+[Install]
+WantedBy=multi-user.target

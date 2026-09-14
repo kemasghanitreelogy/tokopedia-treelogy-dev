@@ -15,7 +15,19 @@ export const AUTHORIZE_URL = 'https://services.tiktokshop.com/open/authorize';
 export const TOKOPEDIA_AUTHORIZE_URL =
   'https://seller-id.tokopedia.com/services/market/custom-authorize';
 
-export const DEFAULT_PUBLIC_BASE_URL = 'https://tokopedia-treelogy-dev.vercel.app';
+/**
+ * Where this deployment answers from.
+ *
+ * Every outward-facing URL - OAuth redirects, webhook callbacks, the link in a Telegram
+ * alert - is built from this. It was hardcoded to the Vercel host in three places, so
+ * after the move those links pointed at a deployment that no longer serves anything.
+ * PUBLIC_BASE_URL wins; the default is only a last resort for a bare local run.
+ */
+export const DEFAULT_PUBLIC_BASE_URL = 'https://api.treelogy-services.my.id';
+
+/** The public origin, without a trailing slash. */
+export const publicBaseUrl = () =>
+  (process.env.PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE_URL).replace(/\/$/, '');
 export const CALLBACK_PATH = '/api/callback';
 
 /** The exact string registered as redirect_url in Partner Center. */

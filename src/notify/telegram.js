@@ -1,5 +1,5 @@
 import { readEnv } from '../env-file.js';
-import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
+import { ENV_PATH, ENV_LOCAL_PATH, publicBaseUrl } from '../config.js';
 
 /**
  * Telling a person when the books did not get written.
@@ -81,7 +81,7 @@ export async function sendTelegram(html, { key = html, fetchImpl = fetch, config
   }
 }
 
-const DASHBOARD = 'https://tokopedia-treelogy-dev.vercel.app/api/dashboard?view=jurnal';
+const dashboardLink = () => `${publicBaseUrl()}/api/dashboard?view=jurnal`;
 
 /**
  * One message for a batch of failed invoices, grouped by what went wrong.
@@ -107,7 +107,7 @@ export function formatFailures({ source, failures = [], channelErrors = {} }) {
   for (const [channel, message] of Object.entries(channelErrors)) {
     lines.push(`• Kanal <b>${escapeHtml(channel)}</b> tidak bisa dibaca: ${escapeHtml(String(message).slice(0, 160))}`);
   }
-  lines.push(`\n<a href="${DASHBOARD}">Buka tab Jurnal</a>`);
+  lines.push(`\n<a href="${dashboardLink()}">Buka tab Jurnal</a>`);
   return lines.join('\n');
 }
 
@@ -128,7 +128,10 @@ export async function notifyCrash({ source, error }, options = {}) {
   const html = [
     `<b>🛑 Sinkronisasi Jurnal berhenti</b> — ${escapeHtml(source)}`,
     `<code>${escapeHtml(String(error?.message ?? error).slice(0, 600))}</code>`,
-    `\n<a href="${DASHBOARD}">Buka tab Jurnal</a>`,
+    `\n<a href="${dashboardLink()}">Buka tab Jurnal</a>`,
   ].join('\n');
   return sendTelegram(html, { ...options, key: `crash|${source}|${String(error?.message ?? error).slice(0, 80)}` });
 }
+
+/** Nothing to close here today, but shell one-shots call it so the process can exit. */
+export async function closeQuietly() {}

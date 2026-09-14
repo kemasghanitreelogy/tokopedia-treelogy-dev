@@ -1,0 +1,3 @@
+# /etc/sudoers.d/treelogy-deploy  (chmod 440, dipasang dengan visudo -c)
+# Satu-satunya hak root yang dimiliki proses deploy: me-restart layanannya sendiri.
+treelogy ALL=(root) NOPASSWD: /bin/systemctl restart treelogy.service

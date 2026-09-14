@@ -1,4 +1,5 @@
 import { readEnv } from '../env-file.js';
+import { DEFAULT_PUBLIC_BASE_URL } from '../config.js';
 import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
 
 /**
@@ -44,7 +45,7 @@ export function loadShopeeConfig() {
     partnerKey,
     live,
     host: get('SHOPEE_HOST') || (live ? LIVE_HOST : TEST_HOST),
-    publicBaseUrl: get('PUBLIC_BASE_URL') || 'https://tokopedia-treelogy-dev.vercel.app',
+    publicBaseUrl: get('PUBLIC_BASE_URL') || DEFAULT_PUBLIC_BASE_URL,
     // When set, the callback refuses any shop_id other than this one.
     shopId: get('SHOPEE_SHOP_ID'),
     shopName: get('SHOPEE_SHOP_NAME'),

@@ -27,6 +27,7 @@ const ROUTES = {
   '/api/webhook/shopee': './api/webhook/shopee.js',
   '/api/webhook/tiktok': './api/webhook/tiktok.js',
   '/api/webhook/shopify': './api/webhook/shopify.js',
+  '/api/deploy': './api/deploy.js',
 };
 
 const handlers = new Map();

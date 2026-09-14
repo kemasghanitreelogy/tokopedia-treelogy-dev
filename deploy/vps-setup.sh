@@ -36,6 +36,13 @@ if [ ! -f /etc/treelogy/env ]; then
 fi
 chown root:treelogy /etc/treelogy/env && chmod 640 /etc/treelogy/env
 
+# Rahasia webhook deploy: dibuat sekali, lalu dicetak supaya bisa dipasang di GitHub.
+if ! grep -q '^DEPLOY_SECRET=.\+' /etc/treelogy/env 2>/dev/null; then
+  SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
+  sed -i "s|^DEPLOY_SECRET=.*|DEPLOY_SECRET=${SECRET}|" /etc/treelogy/env || echo "DEPLOY_SECRET=${SECRET}" >> /etc/treelogy/env
+fi
+echo "DEPLOY_SECRET (pasang di webhook GitHub): $(grep '^DEPLOY_SECRET=' /etc/treelogy/env | cut -d= -f2)"
+
 echo "== redis: persistensi AOF (default Ubuntu hanya snapshot RDB berkala)"
 redis-cli CONFIG SET appendonly yes >/dev/null
 redis-cli CONFIG SET appendfsync everysec >/dev/null
@@ -46,9 +53,12 @@ echo "redis $(redis-cli --version | cut -d' ' -f2) · appendonly=$(redis-cli CON
 
 echo "== systemd"
 cp "$APP/deploy/treelogy.service" "$APP/deploy/treelogy-sweep.service" "$APP/deploy/treelogy-sweep.timer" \
-   "$APP/deploy/treelogy-daily.service" "$APP/deploy/treelogy-daily.timer" /etc/systemd/system/
+   "$APP/deploy/treelogy-daily.service" "$APP/deploy/treelogy-daily.timer" \
+   "$APP/deploy/treelogy-deploy.service" "$APP/deploy/treelogy-deploy.path" /etc/systemd/system/
+install -m 440 -o root -g root "$APP/deploy/treelogy-deploy.sudoers" /etc/sudoers.d/treelogy-deploy
+visudo -c -q || { echo "sudoers tidak valid, dibatalkan"; rm -f /etc/sudoers.d/treelogy-deploy; exit 1; }
 systemctl daemon-reload
-systemctl enable --now treelogy.service treelogy-sweep.timer treelogy-daily.timer
+systemctl enable --now treelogy.service treelogy-sweep.timer treelogy-daily.timer treelogy-deploy.path
 systemctl restart treelogy.service
 
 echo "== nginx"

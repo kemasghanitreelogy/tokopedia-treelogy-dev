@@ -155,3 +155,21 @@ test('a push naming a shop that is not ours is refused even if it looks right', 
   await handler(req, res);
   assert.equal(res.statusCode, 401, out);
 });
+
+test('moving host removes the subscription that points at the old one', async () => {
+  // Shopify keeps delivering to a subscription for a host that no longer exists, so
+  // after a move there were two ORDERS_PAID: the live one and a dead one swallowing
+  // orders. Both the retired topic and the stale host must be cleaned up.
+  const { SHOPIFY_TOPICS, SHOPIFY_RETIRED_TOPICS } = await import('../src/webhooks/register.js');
+  const url = 'https://api.treelogy-services.my.id/api/webhook/shopify';
+  const existing = [
+    { id: 'gid://1', topic: 'ORDERS_PAID', uri: 'https://lama.vercel.app/api/webhook/shopify' },
+    { id: 'gid://2', topic: 'ORDERS_PAID', uri: url },
+    { id: 'gid://3', topic: 'ORDERS_CREATE', uri: url },
+  ];
+  const doomed = existing.filter((w) =>
+    SHOPIFY_RETIRED_TOPICS.includes(w.topic) || (SHOPIFY_TOPICS.includes(w.topic) && w.uri !== url));
+  assert.deepEqual(doomed.map((w) => w.id), ['gid://1', 'gid://3']);
+  const kept = existing.filter((w) => !doomed.includes(w));
+  assert.deepEqual(kept.map((w) => w.id), ['gid://2'], 'yang menunjuk host sekarang harus bertahan');
+});

@@ -136,13 +136,19 @@ export async function registerShopify({ url = webhookUrl('shopify') } = {}) {
   const skipped = [];
   const removed = [];
 
-  // Retired topics are unsubscribed, not left to keep racing the ones that matter.
+  // Two kinds of subscription are removed, not left behind:
+  //   - retired topics, so they cannot keep racing the ones that matter
+  //   - the topics we do want, but pointing somewhere else - a stale host from before a
+  //     move. Shopify keeps delivering to it, and a subscription aimed at a deployment
+  //     that no longer exists is an order silently going nowhere.
   for (const w of existing.webhooks) {
-    if (!SHOPIFY_RETIRED_TOPICS.includes(w.topic)) continue;
+    const retired = SHOPIFY_RETIRED_TOPICS.includes(w.topic);
+    const staleHost = SHOPIFY_TOPICS.includes(w.topic) && w.uri !== url;
+    if (!retired && !staleHost) continue;
     const data = await shopifyGraphql(WEBHOOK_DELETE, { id: w.id });
     const errors = data.webhookSubscriptionDelete?.userErrors ?? [];
     if (errors.length > 0) throw new Error(`hapus ${w.topic}: ${errors.map((e) => e.message).join(', ')}`);
-    removed.push(w.topic);
+    removed.push(retired ? w.topic : `${w.topic} @ ${w.uri}`);
   }
 
   for (const topic of SHOPIFY_TOPICS) {

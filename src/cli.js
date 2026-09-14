@@ -25,6 +25,7 @@ import { rebuildLedgerFromJurnal } from './mekari/rebuild.js';
 import { pullHistory } from './history/ingest.js';
 import { runForecast } from './forecast/engine.js';
 import { URGENCY_ORDER } from './forecast/policy.js';
+import { fetchWithTimeout, TIMEOUTS } from './http.js';
 
 const USAGE = `tts - TikTok Shop Open API client (ID / Tokopedia)
 
@@ -544,7 +545,7 @@ async function cmdDoctor(config) {
 
   step('3. API reachability (unsigned probe)');
   try {
-    const response = await fetch(`${config.apiBaseUrl}/seller/202309/shops`);
+    const response = await fetchWithTimeout(`${config.apiBaseUrl}/seller/202309/shops`);
     const payload = await response.json();
     if (payload.code === 36009004) {
       console.log(ok(`${config.apiBaseUrl} reachable; rejects unsigned request as expected`));
@@ -559,7 +560,7 @@ async function cmdDoctor(config) {
   step('4. Hosted callback');
   console.log(`        register in Partner Center: ${redirectUri(config)}`);
   try {
-    const response = await fetch(`${config.publicBaseUrl}/api/status`);
+    const response = await fetchWithTimeout(`${config.publicBaseUrl}/api/status`);
     if (response.ok) {
       const status = await response.json();
       const missing = Object.entries(status.env)

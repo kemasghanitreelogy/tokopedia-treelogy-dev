@@ -1,5 +1,6 @@
 import { buildShopUrl } from './sign.js';
 import { ShopeeError } from './auth.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 /**
  * Errors worth retrying: the shop is fine, the call simply arrived too fast or the
@@ -49,7 +50,7 @@ async function callShopApiOnce(config, path, { accessToken, shopId }, params = {
   const url = buildShopUrl(config, path, { accessToken, shopId }, params);
   let response;
   try {
-    response = await fetch(url, body
+    response = await fetchWithTimeout(url, body
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       : {});
   } catch (cause) {

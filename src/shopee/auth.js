@@ -1,6 +1,7 @@
 import { buildPublicUrl } from './sign.js';
 import { updateEnv } from '../env-file.js';
 import { shopeeRedirectUri } from './config.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 const AUTH_PARTNER_PATH = '/api/v2/shop/auth_partner';
 const TOKEN_GET_PATH = '/api/v2/auth/token/get';
@@ -25,7 +26,7 @@ export function buildAuthorizeUrl(config) {
 }
 
 async function callAuth(config, path, body) {
-  const response = await fetch(buildPublicUrl(config, path), {
+  const response = await fetchWithTimeout(buildPublicUrl(config, path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

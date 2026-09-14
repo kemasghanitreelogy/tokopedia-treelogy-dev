@@ -1,5 +1,6 @@
 import { buildSignedUrl } from './sign.js';
 import { refreshAccessToken, persistTokens } from './auth.js';
+import { fetchWithTimeout, TIMEOUTS } from './http.js';
 
 /**
  * Endpoints that reject shop_cipher outright ("not required for this request").
@@ -46,7 +47,7 @@ async function sendOnce({ config, method, path, query, bodyText }) {
   const headers = { 'Content-Type': 'application/json' };
   if (config.accessToken) headers['x-tts-access-token'] = config.accessToken;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method,
     headers,
     body: bodyText || undefined,

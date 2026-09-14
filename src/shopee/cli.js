@@ -6,6 +6,7 @@ import { getShopInfo, getOrderList, getItemList } from './client.js';
 import { loadTokenBundle, saveTokenBundle, SHOPEE_TOKENS_PATHNAME, BlobNotConfiguredError } from '../token-store.js';
 import { openBrowser } from '../open-browser.js';
 import { ok, fail, warn, info, mask, humanTime } from '../format.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 const USAGE = `shopee - Shopee Open API v2 client
 
@@ -55,13 +56,13 @@ async function cmdDoctor(config) {
   console.log(info(`partner_id : ${config.partnerId}`));
   console.log(info(`partner_key: ${mask(config.partnerKey, 8)}`));
 
-  const probe = await fetch(config.host + path, { redirect: 'manual' });
+  const probe = await fetchWithTimeout(config.host + path, { redirect: 'manual' });
   const skew = Math.floor(Date.now() / 1000) - Math.floor(new Date(probe.headers.get('date')).getTime() / 1000);
   console.log(Math.abs(skew) < 60
     ? ok(`clock in sync with Shopee (${skew}s)`)
     : fail(`clock is ${skew}s off Shopee - signatures expire outside a 5 minute window`));
 
-  const response = await fetch(buildPublicUrl(config, path, { redirect: shopeeRedirectUri(config) }), {
+  const response = await fetchWithTimeout(buildPublicUrl(config, path, { redirect: shopeeRedirectUri(config) }), {
     redirect: 'manual',
   });
   const body = await response.text();

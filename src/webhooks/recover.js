@@ -2,6 +2,7 @@ import { buildPublicUrl } from '../shopee/sign.js';
 import { loadShopeeConfig } from '../shopee/config.js';
 import { handlePush } from './handle.js';
 import { isReadOnly } from '../stock-sync.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 /**
  * The safety net for pushes that never arrived.
@@ -20,7 +21,7 @@ const PUSH_CODES = { 3: 'order status', 4: 'tracking no' };
 
 async function shopeePush(path, { method = 'GET', body } = {}) {
   const config = loadShopeeConfig();
-  const response = await fetch(buildPublicUrl(config, path), {
+  const response = await fetchWithTimeout(buildPublicUrl(config, path), {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,

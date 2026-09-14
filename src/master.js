@@ -101,11 +101,11 @@ export const PRODUCTS = [
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },
   {
-    sku: 'Inside-Out-Protocol', name: 'Inside Out Protocol', category: 'bundle',
+    sku: 'Inside-Out-Protocol', aliases: ['The-IO30-Protocol90+30'], name: 'Inside Out Protocol', category: 'bundle',
     components: [{ sku: 'OMC-90-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }],
   },
   {
-    sku: 'Inside-Out-60-Protocol180+30', name: 'Inside Out Protocol 60 Days',
+    sku: 'Inside-Out-60-Protocol180+30', aliases: ['The-IO60-Protocol180+30'], name: 'Inside Out Protocol 60 Days',
     variant: 'Caps 180 + Oil 30ml', category: 'bundle',
     components: [{ sku: 'OMC-180-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }],
   },

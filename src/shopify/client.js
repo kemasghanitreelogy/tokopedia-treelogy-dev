@@ -1,4 +1,5 @@
 import { loadShopifyConfig, requireShopify } from './config.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 /**
  * Admin GraphQL client.
@@ -30,7 +31,7 @@ export async function shopifyGraphql(query, variables = {}, config = loadShopify
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     let response;
     try {
-      response = await fetch(url, {
+      response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'X-Shopify-Access-Token': config.token,

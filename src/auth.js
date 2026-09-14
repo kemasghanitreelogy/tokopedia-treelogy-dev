@@ -1,6 +1,7 @@
 import { AUTHORIZE_URL, TOKOPEDIA_AUTHORIZE_URL } from './config.js';
 import { updateEnv } from './env-file.js';
 import { saveTokenBundle, loadTokenBundle } from './token-store.js';
+import { fetchWithTimeout, TIMEOUTS } from './http.js';
 
 const TOKEN_GET_PATH = '/api/v2/token/get';
 const TOKEN_REFRESH_PATH = '/api/v2/token/refresh';
@@ -40,7 +41,7 @@ async function callAuth(baseUrl, path, params) {
       url.searchParams.set(key, String(value));
     }
   }
-  const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+  const response = await fetchWithTimeout(url, { headers: { 'Content-Type': 'application/json' } });
   const text = await response.text();
 
   let payload;

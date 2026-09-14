@@ -5,6 +5,7 @@ import { listProducts } from './setup.js';
 import { fetchProductImages, sizedUrl } from '../shopify/images.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { loadConfig } from '../config.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 /**
  * Put the product pictures where the people who use them can see them.
@@ -36,7 +37,8 @@ export async function saveImageManifest(manifest) {
 export const imageKey = (url) => crypto.createHash('sha1').update(String(url).replace(/\?.*$/, '')).digest('hex').slice(0, 16);
 
 async function download(url) {
-  const response = await fetch(url);
+  // A 2-megapixel product photo is legitimately slower than a JSON call.
+  const response = await fetchWithTimeout(url, { timeout: TIMEOUTS.download });
   if (!response.ok) throw new Error(`gambar tidak bisa diunduh: HTTP ${response.status}`);
   const type = response.headers.get('content-type') ?? '';
   if (!/image\/(jpeg|jpg|png)/.test(type)) throw new Error(`format ${type || 'tak dikenal'} - Jurnal hanya menerima jpg/png`);

@@ -6,6 +6,7 @@ import { loadShopeeConfig } from '../shopee/config.js';
 import { shopifyGraphql } from '../shopify/client.js';
 import { isShopifyConfigured } from '../shopify/config.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 /**
  * Telling each platform where to push.
@@ -48,7 +49,7 @@ export const webhookUrl = (platform, config) => `${baseUrl(config)}${WEBHOOK_PAT
 
 export async function shopeeStatus() {
   const config = loadShopeeConfig();
-  const response = await fetch(buildPublicUrl(config, '/api/v2/push/get_push_config'));
+  const response = await fetchWithTimeout(buildPublicUrl(config, '/api/v2/push/get_push_config'));
   const body = await response.json();
   if (body.error) throw new Error(`${body.error}: ${body.message}`);
   return {
@@ -86,7 +87,7 @@ export async function registerShopee({ url = webhookUrl('shopee') } = {}) {
   if (isReadOnly()) throw new ReadOnlyError('konfigurasi push Shopee');
   const config = loadShopeeConfig();
 
-  const response = await fetch(buildPublicUrl(config, '/api/v2/push/set_app_push_config'), {
+  const response = await fetchWithTimeout(buildPublicUrl(config, '/api/v2/push/set_app_push_config'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ callback_url: url, set_push_config_on: SHOPEE_PUSH_CODES }),

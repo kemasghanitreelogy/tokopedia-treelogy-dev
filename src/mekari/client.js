@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { readEnv } from '../env-file.js';
 import { reserveSlot } from '../store/index.js';
 import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
+import { fetchWithTimeout, TIMEOUTS } from '../http.js';
 
 /**
  * Mekari API client.
@@ -193,7 +194,7 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
     try {
       const headers = { Authorization: header, Date: date, Accept: 'application/json' };
       if (!form) headers['Content-Type'] = 'application/json';
-      response = await fetch(`https://${config.host}${path}`, {
+      response = await fetchWithTimeout(`https://${config.host}${path}`, {
         method,
         headers,
         body: form ?? (body === undefined ? undefined : JSON.stringify(body)),

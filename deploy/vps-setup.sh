@@ -25,6 +25,11 @@ if [ -d "$APP/.git" ]; then sudo -u treelogy git -C "$APP" pull -q --ff-only; el
 sudo -u treelogy bash -c "cd $APP && npm ci --omit=dev --no-audit --no-fund --silent"
 
 echo "== env"
+# A file dropped at /tmp/treelogy.env (scp'd from the workstation) is installed and removed.
+if [ -f /tmp/treelogy.env ]; then
+  install -o root -g treelogy -m 640 /tmp/treelogy.env /etc/treelogy/env && rm -f /tmp/treelogy.env
+  echo "env dipasang dari /tmp/treelogy.env"
+fi
 if [ ! -f /etc/treelogy/env ]; then
   cp "$APP/deploy/env.example" /etc/treelogy/env
   echo "!! Isi /etc/treelogy/env dulu (nilai dari Vercel & .env lokal), lalu jalankan skrip ini lagi."

@@ -3,6 +3,7 @@ import { isShopifyConfigured } from './shopify/config.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { ordersInRange, readCoverage, recordCoverage, saveOrders, coversRange } from './db/orders.js';
 import { resolveRange } from './range.js';
+import { cached, invalidate } from './cache.js';
 
 /**
  * Where a reader gets its orders: the database when it can answer, the platforms when it
@@ -50,6 +51,24 @@ function healthySources({ errors, truncated }) {
   });
 }
 
+
+/**
+ * The coverage table, held briefly.
+ *
+ * Reading it is a separate round trip to the orders themselves, and measured from the
+ * Jakarta box that is about 300ms - roughly a third of the time a whole page of orders
+ * took, spent asking a three-row table a question whose answer changes once every fifteen
+ * minutes. Thirty seconds of staleness costs nothing either way: a coverage row that has
+ * just widened only means the dashboard keeps reading the platforms a moment longer, and
+ * one that has just gone stale means it serves a tail the webhooks were maintaining until
+ * half a minute ago.
+ */
+const COVERAGE_TTL_MS = 30_000;
+const coverageNow = () => cached('db:coverage', COVERAGE_TTL_MS, readCoverage);
+
+/** After a write widens the window, the next reader should see it rather than wait it out. */
+export const forgetCoverage = () => invalidate('db:coverage');
+
 /**
  * Orders for a window, in the same shape collectOrders returns.
  *
@@ -64,7 +83,7 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
   const sources = activeSources();
   let coverage = null;
   try {
-    coverage = await readCoverage();
+    coverage = await coverageNow();
   } catch (error) {
     // A database we cannot reach must not take the dashboard down with it; the platforms
     // are still there and the page is still correct, only slower.
@@ -116,6 +135,7 @@ export async function rememberOrders(live, window) {
     for (const source of healthySources(live)) {
       await recordCoverage(source, { from: window.since, through: window.until, note: 'live-read' });
     }
+    forgetCoverage();
   } catch (error) {
     console.warn(`db: pesanan tidak tersimpan - ${error.message}`);
   }

@@ -135,7 +135,16 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
   const failures = [];
   for (const f of aligned.failures) failures.push({ customId: f.name, stage: 'piutang', error: f.error });
 
-  const all = plan.rebuildable.concat(plan.unbuildable);
+  // Only what can be written again.
+  //
+  // This used to delete plan.unbuildable too, and the create loop below only ever walks
+  // rebuildable - so an order whose invoice cannot be built (an unmapped SKU, a negative
+  // price) was deleted from Jurnal and never replaced. A real sale erased, and the sweep
+  // could not restore it because it fails to build for the same reason every time.
+  //
+  // An invoice that cannot be rebuilt stays exactly where it is. It is reported instead,
+  // which is the only honest thing to do about a sale nobody can express yet.
+  const all = plan.rebuildable;
   let alreadyGone = 0;
   let processed = 0;
 

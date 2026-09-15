@@ -1,6 +1,6 @@
 import { collectOrders } from '../omni.js';
 import { saveOrders, recordCoverage, DB_HISTORY_START, DB_HISTORY_START_EPOCH } from './orders.js';
-import { activeSources, SOURCE_CHANNELS } from '../orders-source.js';
+import { activeSources, SOURCE_CHANNELS, sourceOfChannel } from '../orders-source.js';
 import { wibDate } from '../range.js';
 
 /**
@@ -22,6 +22,16 @@ import { wibDate } from '../range.js';
  */
 
 const DAY = 24 * 3600;
+
+/**
+ * What collectOrders calls each source when it had to cut a read short.
+ *
+ * Shopify has no entry because src/omni.js never sets one for it - fetchShopifyOrders
+ * returns a bare array with no truncation flag - so Shopify truncation is currently
+ * undetectable. Saying that here is better than the previous arrangement, which borrowed
+ * Shopee's flag and looked like it was checking something.
+ */
+const TRUNCATION_MARKERS = { tiktok: 'Tokopedia + TikTok Shop', shopee: 'Shopee' };
 
 /** A week at a time: big enough to be few requests, small enough to lose little. */
 export const CHUNK_DAYS = 7;
@@ -89,9 +99,12 @@ export async function backfill({
 
     for (const source of sources) {
       const failed = Boolean(live.errors?.[source]);
-      const cut = source === 'tiktok'
-        ? (live.truncated ?? []).includes('Tokopedia + TikTok Shop')
-        : (live.truncated ?? []).includes('Shopee');
+      // A ternary with two arms for three sources: shopify took the Shopee branch, so a
+      // truncated Shopee read revoked shopify's claim and a truncated Shopify read
+      // revoked nothing. Named explicitly now, and a source with no marker is simply not
+      // detectable as truncated rather than borrowing somebody else's.
+      const marker = TRUNCATION_MARKERS[source];
+      const cut = Boolean(marker) && (live.truncated ?? []).includes(marker);
       if (failed || cut) whole.delete(source);
     }
 
@@ -102,8 +115,12 @@ export async function backfill({
     // An order the database refused is a hole in the window, so the source that produced
     // it loses its claim rather than the operator finding out months later.
     for (const bad of written.rejected ?? []) {
-      const source = bad.channel === 'shopee' ? 'shopee' : bad.channel === 'shopify' ? 'shopify' : 'tiktok';
-      whole.delete(source);
+      const source = sourceOfChannel(bad.channel);
+      // An unrecognised channel used to fall through to 'tiktok', revoking a claim that
+      // had nothing to do with it. Now it revokes every claim, because a rejected order
+      // we cannot even place is a hole of unknown position.
+      if (source) whole.delete(source);
+      else for (const s of sources) whole.delete(s);
     }
 
     const chunk = {

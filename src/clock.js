@@ -1,3 +1,6 @@
+import { readEnv } from './env-file.js';
+import { ENV_PATH, ENV_LOCAL_PATH } from './config.js';
+
 /**
  * The clock the business keeps its books by.
  *
@@ -32,9 +35,27 @@ export const ZONES = {
 
 export const DEFAULT_ZONE = 'Asia/Jakarta';
 
-/** @returns {string} the IANA zone this deployment books by. */
+/** process.env wins, then .env.local, then .env - the order the rest of the code uses. */
+function readSetting(key) {
+  if (process.env[key]) return process.env[key];
+  try {
+    return readEnv(ENV_LOCAL_PATH)[key] || readEnv(ENV_PATH)[key] || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * @returns {string} the IANA zone this deployment books by.
+ *
+ * Resolved the way every other setting in this codebase is - process.env, then .env.local,
+ * then .env - because it was the one variable that read process.env only, in the module
+ * whose entire argument is that the timezone should be one setting. Put BUSINESS_TZ in
+ * .env, where everything else lives, and it was silently ignored; the fallback to Jakarta
+ * made that indistinguishable from a typo.
+ */
 export function zoneName() {
-  const wanted = process.env.BUSINESS_TZ || DEFAULT_ZONE;
+  const wanted = readSetting('BUSINESS_TZ') || DEFAULT_ZONE;
   return ZONES[wanted] ? wanted : DEFAULT_ZONE;
 }
 

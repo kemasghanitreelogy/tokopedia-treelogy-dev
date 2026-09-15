@@ -178,6 +178,21 @@ export async function releaseLock() {
   }
 }
 
+
+/**
+ * Does this error mean Jurnal does not have that invoice?
+ *
+ * It answers 422 "Data not found" where most APIs answer 404. findExisting knew that from
+ * the first live run; voidInvoice did not, so an invoice somebody had already deleted came
+ * back as a hard failure, the ledger entry was never marked voided, and every sweep from
+ * then on retried the same void forever - two requests a time out of ninety a minute, and
+ * a cancelled sale never reconciled.
+ */
+export function isMissingInvoice(error) {
+  if (error?.status === 404) return true;
+  return error?.status === 422 && /not found/i.test(JSON.stringify(error?.body ?? error?.message ?? ''));
+}
+
 /** Does Jurnal already hold this order? Asked by custom_id, which it accepts as an id. */
 export async function findExisting(order, { deadlineAt = null } = {}) {
   try {
@@ -318,7 +333,23 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
     // Already in the books - a concurrent webhook or an earlier run got there first. That
     // is the idempotency working, not a failure; record it and move on.
     if (error.status === 409) {
-      return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: error.body?.id ?? null, total: expectedTotal };
+      // Jurnal's 409 body carries the id of the invoice that already exists, but it is
+      // the only error body in this API shaped that way - every other one is
+      // {message}/{errors}. Recording null when it is not there looked harmless and was
+      // not: an entry with no invoice_id can never be voided when the order is cancelled
+      // (undoneCandidates requires one), can never be restated, and reports as cleanly
+      // synced. A cancelled sale would stay in the books for good.
+      //
+      // So when the body does not name it, we ask - one request, against the custom_id,
+      // which is what that probe is for.
+      const known = error.body?.id ?? (await findExisting(order, { deadlineAt }).catch(() => null))?.id ?? null;
+      if (!known) {
+        return {
+          customId, id: order.id, channel: order.channel, status: 'failed', total: expectedTotal,
+          error: 'Jurnal bilang faktur sudah ada tapi tidak menyebut nomornya - tidak dicatat agar tidak jadi entri tanpa faktur',
+        };
+      }
+      return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: known, total: expectedTotal };
     }
     return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: error.message, monthly: Boolean(error.monthly) };
   }
@@ -365,7 +396,7 @@ export async function voidInvoice(order, entry, { dryRun = true, deadlineAt = nu
     const found = await mekari({ path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
     invoice = found?.sales_invoice ?? found;
   } catch (error) {
-    if (error.status === 404) return { ...base, outcome: 'gone', reason: 'faktur sudah tidak ada di Jurnal' };
+    if (isMissingInvoice(error)) return { ...base, outcome: 'gone', reason: 'faktur sudah tidak ada di Jurnal' };
     return { ...base, outcome: failureOf(error), reason: error.message };
   }
 

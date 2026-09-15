@@ -112,7 +112,13 @@ export async function ordersInRange({ since, until, channels = null } = {}) {
     // Both bounds go in one `and` group: two filters on the same column cannot be two
     // keys of one object, and PostgREST reads this form identically.
     and: `(created_at.gte.${iso(since)},created_at.lte.${iso(until)})`,
-    order: 'created_at.desc',
+    // A unique tiebreaker, not just the timestamp.
+    //
+    // Postgres gives no stable order to rows that compare equal, and marketplace orders
+    // routinely share a second. Paged by offset, a tie group straddling a page boundary
+    // can put one row on both pages and drop its sibling - silently, with no error, on
+    // any window past a thousand orders. The primary key settles it.
+    order: 'created_at.desc,channel.asc,id.asc',
   };
   if (Array.isArray(channels) && channels.length > 0) {
     params.channel = `in.(${channels.map((c) => `"${c}"`).join(',')})`;
@@ -220,10 +226,20 @@ export function coversRange(coverage, { since, until }, sources, now = Date.now(
   if (!coverage || !Array.isArray(sources) || sources.length === 0) return false;
   return sources.every((source) => {
     const window = coverage[source];
-    if (!window || window.from > since) return false;
+    if (!window) return false;
+    // An unreadable bound is not a permissive one. NaN fails every comparison, so a row
+    // whose dates could not be parsed slipped past `from > since` and then past
+    // `through >= until` and was answered by the freshness clause - reading as "covers
+    // everything" on exactly the row we understood least.
+    if (!Number.isFinite(window.from) || !Number.isFinite(window.through)) return false;
+    if (window.from > since) return false;
     if (window.through >= until) return true;
     const at = Date.parse(window.at ?? '');
-    return Number.isFinite(at) && now - at <= STALE_AFTER_MS;
+    if (!Number.isFinite(at)) return false;
+    // Absolute, because the timestamp is written by the database's clock and compared
+    // against ours. A server running even slightly ahead made every row look permanently
+    // fresh, which is the one direction that serves a tail nobody is maintaining.
+    return Math.abs(now - at) <= STALE_AFTER_MS;
   });
 }
 

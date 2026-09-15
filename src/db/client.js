@@ -119,10 +119,24 @@ export async function request(path, {
 
     const text = await response.text();
     let payload = null;
+    let unparseable = false;
     try {
       payload = text ? JSON.parse(text) : null;
     } catch {
       payload = { message: text.slice(0, 400) };
+      unparseable = true;
+    }
+
+    // A 200 carrying something that is not JSON is a proxy, a WAF or a maintenance page,
+    // not an answer. Treated as success it became `[]` further up - and an empty array is
+    // indistinguishable from a day with no sales, so the dashboard would render a blank
+    // day and say nothing was wrong.
+    if (response.ok && unparseable) {
+      last = new SupabaseError(`jawaban bukan JSON dari ${path}: ${String(payload.message).slice(0, 120)}`, { status: response.status });
+      last.retryable = true;
+      if (attempt === retries) throw last;
+      await sleep(attempt * 400);
+      continue;
     }
 
     if (response.ok) return { body: payload, contentRange: response.headers.get('content-range') };

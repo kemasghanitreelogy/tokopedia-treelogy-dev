@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { wibDate, wibDayStart, WIB_OFFSET_SECONDS } from '../src/range.js';
+import { wibDate, wibDayStart, WIB_OFFSET_SECONDS, resolveRange } from '../src/range.js';
 import { jurnalDate } from '../src/mekari/invoice.js';
 import { wibDay } from '../src/forecast/series.js';
 
@@ -37,15 +37,33 @@ test('an order a quarter of an hour before midnight belongs to the day that is e
   assert.equal(wibDay(JUST_BEFORE_MIDNIGHT), '2026-09-15');
 });
 
-test('the three date helpers never disagree, across a whole day of ten-minute steps', () => {
-  // One disagreement anywhere in the 144 steps is one order a recap cannot reconcile.
+test('a marketplace invoice follows the house clock across a whole day of ten-minute steps', () => {
+  // This used to call jurnalDate(at) with no channel, which falls back to the house clock
+  // - so all 144 assertions compared businessDate to itself and would have passed with the
+  // channel mechanism deleted entirely. Named channels now, and the Shopify case below is
+  // what proves the mechanism does something.
   const start = Math.floor(Date.parse('2026-09-14T17:00:00Z') / 1000);
   for (let i = 0; i < 144; i += 1) {
     const at = start + i * 600;
     const expected = wibDate(at);
-    assert.equal(jurnalDate(at), expected, `faktur beda di menit ke-${i * 10}`);
+    for (const channel of ['shopee', 'tokopedia', 'tiktok_shop']) {
+      assert.equal(jurnalDate(at, channel), expected, `${channel} beda di menit ke-${i * 10}`);
+    }
     assert.equal(wibDay(at), expected, `prakiraan beda di menit ke-${i * 10}`);
   }
+});
+
+test('Shopify parts company with the house clock for exactly one hour a night', () => {
+  // The hour that only exists because the store is UTC+8 and the marketplaces are UTC+7.
+  // If this count is not 6 - six ten-minute steps in one hour - the channel mechanism is
+  // either not applied or applied to everybody.
+  const start = Math.floor(Date.parse('2026-09-14T17:00:00Z') / 1000);
+  let differing = 0;
+  for (let i = 0; i < 144; i += 1) {
+    const at = start + i * 600;
+    if (jurnalDate(at, 'shopify') !== jurnalDate(at, 'shopee')) differing += 1;
+  }
+  assert.equal(differing, 6, 'tepat satu jam sehari, tidak lebih dan tidak kurang');
 });
 
 test('a day starts at 17:00 UTC the day before, and covers exactly 24 hours', () => {
@@ -150,4 +168,32 @@ test('away from the boundary every platform agrees, which is most of the day', (
   const days = new Set(['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual'].map((c) => channelDate(noon, c)));
   assert.equal(days.size, 1);
   assert.deepEqual([...days], ['2026-09-15']);
+});
+
+/* ------------------------------------------- the day boundary moves with the label */
+
+test('wibDayStart follows BUSINESS_TZ, not the value it had at import', async () => {
+  // The offset constant was frozen at module load while the date helper read it live, so
+  // the boundary and the label could disagree. Nothing in the suite checked the boundary.
+  const { wibDayStart: dayStart, wibDate: dateOf } = await import('../src/range.js');
+  const before = process.env.BUSINESS_TZ;
+  try {
+    process.env.BUSINESS_TZ = 'Asia/Makassar';
+    const start = dayStart('2026-09-15');
+    assert.equal(dateOf(start), '2026-09-15', 'awal hari harus jatuh pada hari itu sendiri');
+    assert.equal(dateOf(start - 1), '2026-09-14', 'dan satu detik sebelumnya pada hari sebelumnya');
+  } finally {
+    if (before === undefined) delete process.env.BUSINESS_TZ; else process.env.BUSINESS_TZ = before;
+  }
+});
+
+test('a window that ends before it starts is not produced at all', () => {
+  // A range entirely in the future used to give since > until, which then wrote a coverage
+  // row with covered_from after covered_through - after which that source never answered
+  // from the database again.
+  const now = Date.parse('2026-09-15T08:00:00Z');
+  for (const [from, to] of [['2026-09-20', '2026-09-21'], ['2026-12-01', '2026-12-31']]) {
+    const r = resolveRange({ from, to, now });
+    assert.ok(r.since <= r.until, `${from}..${to} menghasilkan rentang terbalik`);
+  }
 });

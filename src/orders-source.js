@@ -35,6 +35,21 @@ export const SOURCE_CHANNELS = {
   shopify: ['shopify'],
 };
 
+
+/**
+ * Which source a channel belongs to. One table, so nothing has to guess again.
+ *
+ * Written out as a chain of ternaries in two places before this, and both got it slightly
+ * wrong: an unrecognised channel fell through to 'tiktok', quietly revoking the wrong
+ * source's coverage claim.
+ */
+export function sourceOfChannel(channel) {
+  for (const [source, channels] of Object.entries(SOURCE_CHANNELS)) {
+    if (channels.includes(channel)) return source;
+  }
+  return null;
+}
+
 /** The sources this deployment is actually expected to have data for. */
 export function activeSources() {
   return isShopifyConfigured() ? ['tiktok', 'shopee', 'shopify'] : ['tiktok', 'shopee'];
@@ -131,8 +146,18 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
  */
 export async function rememberOrders(live, window) {
   try {
-    await saveOrders(live.orders, { source: 'live-read' });
+    const written = await saveOrders(live.orders, { source: 'live-read' });
+    // An order the database refused is a hole in this window, and a claimed window is
+    // never read live again - so the claim would freeze that hole in place for good. The
+    // backfill already refuses the claim in this case; this file used to discard the
+    // rejections entirely, which is the same author disagreeing with himself on the same
+    // day in two files.
+    const rejected = new Set((written.rejected ?? []).map((r) => sourceOfChannel(r.channel)));
     for (const source of healthySources(live)) {
+      if (rejected.has(source)) {
+        console.warn(`db: ${source} tidak diklaim - ${written.rejected.length} pesanan ditolak database`);
+        continue;
+      }
       await recordCoverage(source, { from: window.since, through: window.until, note: 'live-read' });
     }
     forgetCoverage();

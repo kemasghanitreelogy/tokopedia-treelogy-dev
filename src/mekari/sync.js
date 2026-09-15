@@ -287,7 +287,10 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
   }
 
   try {
-    const created = await mekari({ method: 'POST', path: '/public/jurnal/api/v1/sales_invoices', body: payload, deadlineAt });
+    // Safe to retry, unlike batch_create: the single-invoice endpoint rejects a repeated
+    // custom_id with 409 and hands back the existing id, so a retry after a timeout finds
+    // the first attempt rather than making a second copy.
+    const created = await mekari({ method: 'POST', path: '/public/jurnal/api/v1/sales_invoices', body: payload, deadlineAt, retryCreate: true });
     const invoice = created?.sales_invoice ?? created;
     // Jurnal has silently stored a different number than it was sent before - shipping
     // dropped to zero without is_shipped - and the only way to know is to read back what

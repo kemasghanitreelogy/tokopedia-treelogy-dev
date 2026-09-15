@@ -23,6 +23,7 @@ import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from
 import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
 import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
 import { restate } from './mekari/restate.js';
+import { removeDuplicates } from './mekari/dedupe.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -64,6 +65,7 @@ Usage:
   npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
   npm run mekari:coa          Setel akun ongkir & tag di Jurnal, tampilkan kebijakan per sumber (butuh --yes)
   npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
+  npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -1003,6 +1005,44 @@ async function cmdMekariRestate(config, args = []) {
   return 0;
 }
 
+/**
+ * Faktur kembar: cari, tampilkan, lalu hapus salinannya.
+ *
+ * They should not exist - the single-invoice endpoint rejects a repeated custom_id - but
+ * batch_create does not, and a create that timed out at our end after Jurnal had already
+ * written it was retried as if it were a read. The oldest copy is kept, because it is the
+ * one anything else may already be pointing at.
+ */
+async function cmdMekariDedupe(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const since = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || '2026-09-01';
+  const dryRun = !args.includes('--yes');
+
+  const result = await removeDuplicates({
+    since,
+    dryRun,
+    onProgress: (p) => { if (p.removed % 20 === 0) console.log(`  dihapus ${p.removed}/${p.of}`); },
+  });
+
+  console.log(`\n  ${result.scanned} faktur ditelusuri sejak ${since}  ·  ${result.ours} custom_id milik sistem ini`);
+  if (result.groups.length === 0) { console.log(`  ${ok('tidak ada faktur kembar')}\n`); return 0; }
+
+  console.log(`  ${fail(`${result.groups.length} pesanan punya faktur ganda  ·  ${result.extra} salinan berlebih`)}\n`);
+  for (const g of result.groups.slice(0, 10)) {
+    console.log(`    ${g.customId.padEnd(34)} simpan #${g.keep.no ?? g.keep.id}  hapus ${g.drop.map((d) => `#${d.no ?? d.id}`).join(' ')}`);
+  }
+  if (result.groups.length > 10) console.log(`    ...dan ${result.groups.length - 10} lagi`);
+
+  if (dryRun) { console.log(`\n  ${info('dry-run: belum ada yang dihapus. Ulangi dengan --yes')}\n`); return 0; }
+  console.log(`\n  ${result.removed} salinan dihapus`);
+  if (result.failures.length > 0) {
+    console.log(`  ${fail(`${result.failures.length} gagal dihapus`)}`);
+    for (const f of result.failures.slice(0, 5)) console.log(`    ${f.customId} #${f.id}: ${f.error.slice(0, 70)}`);
+  }
+  console.log('');
+  return result.failures.length > 0 ? 1 : 0;
+}
+
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
   console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}`);
@@ -1160,6 +1200,7 @@ const COMMANDS = {
   'mekari:images': cmdMekariImages,
   'mekari:coa': cmdMekariCoa,
   'mekari:restate': cmdMekariRestate,
+  'mekari:dedupe': cmdMekariDedupe,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

@@ -38,6 +38,29 @@ export const isMekariConfigured = (config = loadMekariConfig()) =>
  * until next month or upgrade your package." Retrying this burns nothing useful and
  * backing off does not help; every caller must stop cleanly and somebody must be told.
  */
+/**
+ * A write whose outcome we genuinely do not know.
+ *
+ * A POST that creates records is not idempotent, and a timeout is not a failure - it is
+ * an absence of news. Retrying one is how 472 invoices became 891: every batch_create
+ * timed out at our end after Jurnal had already processed it, the client retried as it
+ * would for a read, and Jurnal made a second copy. batch_create does not enforce
+ * custom_id uniqueness, which is the only thing that would have caught it.
+ *
+ * So a create is never retried now. It raises this instead, and the caller has to find
+ * out what actually happened before doing anything else - which is the only honest
+ * response to not knowing.
+ */
+export class UncertainWriteError extends Error {
+  constructor(message, { method, path } = {}) {
+    super(message);
+    this.name = 'UncertainWriteError';
+    this.uncertain = true;
+    this.method = method;
+    this.path = path;
+  }
+}
+
 export class QuotaExhaustedError extends Error {
   constructor(message) {
     super(message);
@@ -178,7 +201,13 @@ async function takeSlot(interval = MIN_INTERVAL_MS, deadlineAt = null) {
  *   (product image upload). Sent as-is: fetch sets the boundary, and forcing a JSON
  *   content type over it is what turns a valid upload into a 400.
  */
-export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null }) {
+export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null, retryCreate = false }) {
+  // A POST creates something. Retrying one after a timeout or a 5xx risks a second copy,
+  // because the first may well have succeeded - the response is what went missing, not
+  // the work. Callers that know the endpoint de-duplicates (Jurnal's single sales invoice
+  // create answers 409 on a repeated custom_id) may opt back in; batch_create does not,
+  // and must not.
+  const creates = method === 'POST' && !retryCreate;
   if (!isMekariConfigured(config)) throw new MekariError('MEKARI_APP_CLIENT_ID / SECRET belum diisi');
   const canWait = (ms) => deadlineAt === null || Date.now() + ms < deadlineAt;
 
@@ -200,6 +229,12 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
         body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
       });
     } catch (cause) {
+      if (creates) {
+        throw new UncertainWriteError(
+          `${method} ${path} tidak dapat jawaban (${cause.message}) - mungkin sudah tersimpan, tidak diulang`,
+          { method, path },
+        );
+      }
       if (attempt === RETRY_DELAYS_MS.length || !canWait(RETRY_DELAYS_MS[attempt])) {
         throw new MekariError(`tidak terjangkau: ${cause.message}`);
       }
@@ -220,6 +255,12 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
       throw new QuotaExhaustedError(`kuota API bulanan Mekari habis: ${payload?.message ?? payload?.raw ?? ''}`.trim());
     }
     if (response.status === 429) noteRateLimited();
+    if (creates && response.status >= 500) {
+      throw new UncertainWriteError(
+        `${method} ${path} -> HTTP ${response.status} - mungkin sudah tersimpan, tidak diulang`,
+        { method, path },
+      );
+    }
     if ((response.status >= 500 || response.status === 429) && attempt < RETRY_DELAYS_MS.length) {
       // Honour the server's own number when it gives one; ours is only a guess.
       const advised = Number(response.headers.get('retry-after')) * 1000;

@@ -49,6 +49,7 @@
     "mekari:images": "node bin/tts.mjs mekari:images",
     "mekari:coa": "node bin/tts.mjs mekari:coa",
     "mekari:restate": "node bin/tts.mjs mekari:restate",
+    "mekari:dedupe": "node bin/tts.mjs mekari:dedupe",
     "mekari:rebuild": "node bin/tts.mjs mekari:rebuild",
     "history:pull": "node bin/tts.mjs history:pull",
     "db:backfill": "node bin/tts.mjs db:backfill",

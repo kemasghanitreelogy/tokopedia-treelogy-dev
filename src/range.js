@@ -1,3 +1,4 @@
+import { businessDate, businessDayStart, offsetSeconds } from './clock.js';
 /**
  * Date ranges in the seller's own timezone.
  *
@@ -6,7 +7,13 @@
  * the conversion is a constant offset rather than a timezone database lookup.
  */
 
-export const WIB_OFFSET_SECONDS = 7 * 3600;
+/**
+ * Kept under their old names because half the codebase calls them, but the offset itself
+ * is no longer decided here - it is one environment variable in src/clock.js. Whether
+ * this deployment books by WIB or WITA is a business answer, and it was written out as
+ * `7 * 3600` in six files before it had one.
+ */
+export const WIB_OFFSET_SECONDS = offsetSeconds();
 export const MAX_SPAN_DAYS = 90;
 
 const DAY = 24 * 3600;
@@ -32,9 +39,7 @@ export function wibDayStart(dateString) {
 }
 
 /** The WIB calendar date containing an instant, as YYYY-MM-DD. */
-export function wibDate(epochSeconds) {
-  return new Date((epochSeconds + WIB_OFFSET_SECONDS) * 1000).toISOString().slice(0, 10);
-}
+export const wibDate = businessDate;
 
 /**
  * Resolve whatever the query string carried into a concrete window.

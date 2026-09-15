@@ -1,3 +1,4 @@
+import { businessToday, zoneLabel, zoneName } from './clock.js';
 import { CHANNELS, STAGES } from './omni.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
@@ -33,16 +34,16 @@ const STAGE_META = {
   returned: { label: 'Retur', tone: 'bad' },
 };
 
-const todayWib = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+const todayWib = businessToday;
 
 const wibStamp = (iso) =>
   new Date(iso).toLocaleString('id-ID', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: zoneName(),
   }) + ' WIB';
 
 const dateTime = (epochSeconds) =>
   new Date(epochSeconds * 1000).toLocaleString('id-ID', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: zoneName(),
   });
 
 /* Heroicons (24/outline), inlined so the page has no external requests beyond the font. */
@@ -851,7 +852,7 @@ tbody tr:hover{background:var(--panel-2)}
       <span class="logo" aria-hidden="true">T</span>
       <div>
         <h1>${escape(title)}</h1>
-        <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }))} WIB</p>
+        <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: zoneName() }))} ${zoneLabel()}</p>
       </div>
     </div>
     <div class="tools">

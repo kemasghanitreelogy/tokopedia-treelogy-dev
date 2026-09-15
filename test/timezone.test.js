@@ -70,3 +70,43 @@ test('the offset is fixed, because Indonesia has no daylight saving', () => {
     assert.equal(wibDate(at), nextDay, iso);
   }
 });
+
+/* --------------------------------------------- the clock is one setting, not nine */
+
+const { zone, businessDate, businessDayStart, ZONES } = await import('../src/clock.js');
+
+test('WIB and WITA disagree for an hour every night, and that hour is real', () => {
+  // 23:30 Jakarta on the 14th is 00:30 Makassar on the 15th. Measured on this account,
+  // 17 of 719 September orders fall in that hour - about one a day, which is exactly the
+  // size of discrepancy that makes a daily recap refuse to tie out.
+  const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
+  assert.equal(ZONES['Asia/Jakarta'].offsetHours, 7);
+  assert.equal(ZONES['Asia/Makassar'].offsetHours, 8);
+
+  const before = process.env.BUSINESS_TZ;
+  try {
+    process.env.BUSINESS_TZ = 'Asia/Jakarta';
+    assert.equal(businessDate(at), '2026-09-14');
+    assert.equal(zone().label, 'WIB');
+
+    process.env.BUSINESS_TZ = 'Asia/Makassar';
+    assert.equal(businessDate(at), '2026-09-15');
+    assert.equal(zone().label, 'WITA');
+    // The day boundary moves with it, or the range and the date would disagree.
+    assert.equal(new Date(businessDayStart('2026-09-15') * 1000).toISOString(), '2026-09-14T16:00:00.000Z');
+  } finally {
+    if (before === undefined) delete process.env.BUSINESS_TZ; else process.env.BUSINESS_TZ = before;
+  }
+});
+
+test('an unknown or missing zone falls back rather than shifting the books silently', () => {
+  const before = process.env.BUSINESS_TZ;
+  try {
+    process.env.BUSINESS_TZ = 'Mars/Olympus';
+    assert.equal(zone().name, 'Asia/Jakarta');
+    delete process.env.BUSINESS_TZ;
+    assert.equal(zone().name, 'Asia/Jakarta');
+  } finally {
+    if (before === undefined) delete process.env.BUSINESS_TZ; else process.env.BUSINESS_TZ = before;
+  }
+});

@@ -1,3 +1,4 @@
+import { businessDate } from '../clock.js';
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
 import { orderCode, orderPrefix, PREFIXES } from './prefix.js';
@@ -62,7 +63,7 @@ export function customerFor(order) {
 
 /** Jurnal takes dates as YYYY-MM-DD; the books follow the seller's own day, so WIB. */
 export function jurnalDate(epochSeconds) {
-  return new Date((epochSeconds + 7 * 3600) * 1000).toISOString().slice(0, 10);
+  return businessDate(epochSeconds);
 }
 
 /**

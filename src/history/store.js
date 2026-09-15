@@ -1,3 +1,4 @@
+import { businessMonth, offsetSeconds } from '../clock.js';
 import { readDoc, writeDoc, updateDoc } from '../store/index.js';
 
 /**
@@ -66,13 +67,13 @@ export async function loadChannelHistory(channel, manifest) {
 }
 
 /** WIB calendar month of an epoch-seconds instant, as YYYY-MM. */
-export const monthOf = (epochSeconds) => new Date((epochSeconds + 7 * 3600) * 1000).toISOString().slice(0, 7);
+export const monthOf = businessMonth;
 
 /** Epoch bounds of a WIB calendar month. */
 export function monthBounds(month) {
   const [y, m] = month.split('-').map(Number);
-  const since = Date.UTC(y, m - 1, 1) / 1000 - 7 * 3600;
-  const until = Date.UTC(y, m, 1) / 1000 - 7 * 3600 - 1;
+  const since = Date.UTC(y, m - 1, 1) / 1000 - offsetSeconds();
+  const until = Date.UTC(y, m, 1) / 1000 - offsetSeconds() - 1;
   return { since, until };
 }
 

@@ -1,3 +1,4 @@
+import { businessDate, offsetSeconds } from '../clock.js';
 import { findProduct, isBundle } from '../master.js';
 import { loadManifest, loadChannelHistory, monthOf } from '../history/store.js';
 import { DEMAND_STAGES } from '../history/ingest.js';
@@ -19,8 +20,8 @@ import { DEMAND_STAGES } from '../history/ingest.js';
 
 const DAY = 86_400;
 /** WIB calendar day of an instant, as YYYY-MM-DD. */
-export const wibDay = (epochSeconds) => new Date((epochSeconds + 7 * 3600) * 1000).toISOString().slice(0, 10);
-const dayNumber = (epochSeconds) => Math.floor((epochSeconds + 7 * 3600) / DAY);
+export const wibDay = businessDate;
+const dayNumber = (epochSeconds) => Math.floor((epochSeconds + offsetSeconds()) / DAY);
 const dayFromNumber = (n) => new Date(n * DAY * 1000).toISOString().slice(0, 10);
 
 /**
@@ -73,7 +74,7 @@ export function buildSeries(orders, { until = Math.floor(Date.now() / 1000) } = 
     }
   }
 
-  const lastDay = Math.floor((until + 7 * 3600) / DAY);
+  const lastDay = Math.floor((until + offsetSeconds()) / DAY);
   const series = new Map();
   for (const [sku, days] of byDay) {
     const first = Math.min(...days.keys());

@@ -269,6 +269,37 @@ export function syncOverview({ orders, ledger, depositTo = null }) {
 }
 
 /**
+ * Post the invoice, and never let an optional field keep a sale out of the books.
+ *
+ * Jurnal validates the buyer's email more strictly than the standard does. It rejected
+ * fitriana__adhisti@yahoo.com - a perfectly legal address, refused for its double
+ * underscore - with a 422, and that one order sat outside the books through five
+ * consecutive recovery runs because of a field nobody needs to file accounts.
+ *
+ * The email is a convenience. The invoice is the record. So when Jurnal objects to the
+ * email specifically, it is dropped and the invoice is posted without it, and the fact is
+ * returned so the caller can say so rather than quietly losing the buyer's address.
+ * Anything else it objects to still fails, loudly, as it should.
+ */
+async function postInvoice(payload, { deadlineAt = null } = {}) {
+  const path = '/public/jurnal/api/v1/sales_invoices';
+  try {
+    return await mekari({ method: 'POST', path, body: payload, deadlineAt, retryCreate: true });
+  } catch (error) {
+    const complainsAboutEmail = error?.status === 422
+      && /email/i.test(JSON.stringify(error?.body ?? ''))
+      && payload.sales_invoice.email;
+    if (!complainsAboutEmail) throw error;
+
+    const without = { sales_invoice: { ...payload.sales_invoice } };
+    delete without.sales_invoice.email;
+    const result = await mekari({ method: 'POST', path, body: without, deadlineAt, retryCreate: true });
+    console.warn(`mekari: email ${payload.sales_invoice.email} ditolak Jurnal - faktur dibuat tanpa email`);
+    return result;
+  }
+}
+
+/**
  * Post one order. Returns what happened rather than throwing, so a single bad order
  * cannot stop the rest of the run.
  */
@@ -311,7 +342,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
     // Safe to retry, unlike batch_create: the single-invoice endpoint rejects a repeated
     // custom_id with 409 and hands back the existing id, so a retry after a timeout finds
     // the first attempt rather than making a second copy.
-    const created = await mekari({ method: 'POST', path: '/public/jurnal/api/v1/sales_invoices', body: payload, deadlineAt, retryCreate: true });
+    const created = await postInvoice(payload, { deadlineAt });
     const invoice = created?.sales_invoice ?? created;
     // Jurnal has silently stored a different number than it was sent before - shipping
     // dropped to zero without is_shipped - and the only way to know is to read back what

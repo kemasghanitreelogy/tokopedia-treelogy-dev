@@ -640,3 +640,31 @@ test('only a platform that already took the money produces a paid invoice', () =
   assert.equal(manual.term_name, 'Net 7');
   assert.deepEqual(manual.tags, ['Consignment']);
 });
+
+/* ------------------------------------------------ the ledger can actually forget */
+
+test('saving takes the union, so only forgetting can remove', async () => {
+  // saveSyncLedger merges on purpose - two writers each adding an order must not erase
+  // each other - and the cost is that a removal written through it comes straight back.
+  // A restatement deleted 75 invoices from Jurnal and the stored count never moved.
+  const { loadSyncLedger, saveSyncLedger, forgetSyncLedgerEntries } = await import('../src/mekari/sync.js');
+
+  await saveSyncLedger({ version: 1, orders: { 'TRL-shopee-A': { invoice_id: 1 }, 'TRL-shopee-B': { invoice_id: 2 } } });
+  const held = await loadSyncLedger();
+  assert.ok(held.orders['TRL-shopee-A'] && held.orders['TRL-shopee-B']);
+
+  // Deleting from a copy and saving it does nothing at all.
+  delete held.orders['TRL-shopee-A'];
+  await saveSyncLedger(held);
+  assert.ok((await loadSyncLedger()).orders['TRL-shopee-A'], 'gabungan mengembalikannya - itu memang perilakunya');
+
+  assert.equal(await forgetSyncLedgerEntries(['TRL-shopee-A']), 1);
+  const after = await loadSyncLedger();
+  assert.equal(after.orders['TRL-shopee-A'], undefined);
+  assert.ok(after.orders['TRL-shopee-B'], 'yang lain tidak boleh ikut hilang');
+
+  // Forgetting something already gone is not an error, so a retry is free.
+  assert.equal(await forgetSyncLedgerEntries(['TRL-shopee-A']), 0);
+  assert.equal(await forgetSyncLedgerEntries([]), 0);
+  await forgetSyncLedgerEntries(['TRL-shopee-B']);
+});

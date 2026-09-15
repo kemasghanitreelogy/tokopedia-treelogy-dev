@@ -1,5 +1,5 @@
 import { mekari } from './client.js';
-import { loadSyncLedger, saveSyncLedger } from './sync.js';
+import { loadSyncLedger, saveSyncLedger, forgetSyncLedgerEntries } from './sync.js';
 import { buildInvoice, verifyInvoice, customIdFor, InvoiceError } from './invoice.js';
 import { ordersInRange } from '../db/orders.js';
 import { isAutoPaid, receivableFor } from './sources.js';
@@ -134,8 +134,10 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
       }
     }
     delete ledger.orders[item.customId];
-    // Saved as we go: a run that stops halfway must not claim invoices still exist.
-    await saveSyncLedger(ledger);
+    // Removed as we go, and through the one call that can actually remove: a run that
+    // stops halfway must not leave the ledger claiming invoices that are already gone,
+    // because the sweep trusts it and would never re-post those orders.
+    await forgetSyncLedgerEntries([item.customId]);
     onProgress({ stage: 'hapus', customId: item.customId, deleted, of: plan.rebuildable.length + plan.unbuildable.length });
   }
 

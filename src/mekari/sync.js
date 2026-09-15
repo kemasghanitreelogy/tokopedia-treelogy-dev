@@ -98,6 +98,37 @@ export async function saveSyncLedger(ledger) {
   ledger.contacts = merged.contacts;
 }
 
+/**
+ * Forget entries, which saveSyncLedger cannot do and must not learn to.
+ *
+ * That function takes the union of what is stored and what the caller holds, on purpose:
+ * two writers each adding their own order must not erase each other, and that is the
+ * common case by far. The cost is that a removal written through it does not survive -
+ * the merge puts the entry straight back.
+ *
+ * Which is exactly what happened during a restatement: 75 invoices deleted from Jurnal,
+ * 75 entries removed locally, and the stored count never moved. The end state came out
+ * right only because the rewrite overwrote each entry with its new invoice id a few
+ * minutes later. Interrupted in between, the ledger would have pointed at invoices that
+ * no longer existed, and the sweep - which trusts it - would have considered those orders
+ * booked and never posted them again. Silently missing sales.
+ *
+ * So removal is its own operation, transactional, and says what it means.
+ */
+export async function forgetSyncLedgerEntries(customIds) {
+  const doomed = new Set(customIds ?? []);
+  if (doomed.size === 0) return 0;
+  let removed = 0;
+  await updateDoc(LEDGER_PATHNAME, (current) => {
+    const orders = { ...(current?.orders ?? {}) };
+    for (const id of doomed) {
+      if (id in orders) { delete orders[id]; removed += 1; }
+    }
+    return { ...(current ?? {}), version: 1, orders, updated_at: new Date().toISOString() };
+  }, { version: 1, orders: {} });
+  return removed;
+}
+
 export const LOCK_PATHNAME = 'mekari/sync.lock';
 const LOCK_TTL_MS = 5 * 60 * 1000;
 

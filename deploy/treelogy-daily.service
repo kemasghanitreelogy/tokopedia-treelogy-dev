@@ -31,6 +31,8 @@ ExecStart=-/usr/bin/node bin/tts.mjs forecast --notify
 # Ulasan Tokopedia dibaca dari storefront (Open API tidak punya endpoint baca). Beberapa
 # permintaan berjarak ~1 detik; ulasan baru <= 3 bintang dikirim ke Telegram satu per satu.
 ExecStart=-/usr/bin/node bin/tokopedia.mjs reviews --notify
+# Ulasan Shopee lewat Open API (product/get_comment), per produk, termasuk yang tanpa teks.
+ExecStart=-/usr/bin/node bin/shopee.mjs reviews --notify
 # Snapshot Redis to disk and keep a dated copy; 30 days retained. BGSAVE is asynchronous,
 # so wait for it to finish before copying.
 ExecStart=/bin/sh -c 'mkdir -p /opt/treelogy/backup && redis-cli BGSAVE >/dev/null && while [ "$(redis-cli INFO persistence | tr -d "\r" | grep rdb_bgsave_in_progress | cut -d: -f2)" = "1" ]; do sleep 1; done && cp /var/lib/redis/dump.rdb /opt/treelogy/backup/treelogy-$(date +%%F).rdb && find /opt/treelogy/backup -name "*.rdb" -mtime +30 -delete'

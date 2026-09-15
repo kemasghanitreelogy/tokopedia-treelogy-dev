@@ -2,7 +2,8 @@ import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
-import { loadReviews, selectReviews, reviewStats } from '../src/tokopedia/reviews.js';
+import { selectReviews, reviewStats } from '../src/tokopedia/reviews.js';
+import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -528,11 +529,13 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Reviews are a document the nightly Tokopedia sync wrote; reading it costs one
-    // lookup and never touches the storefront from a web request.
+    // Reviews are documents the nightly syncs wrote; reading them costs two lookups and
+    // never touches a marketplace from a web request.
     if (view === 'reviews') {
-      const doc = await cached('tokopedia-reviews', 60_000, () => loadReviews().catch(() => null));
+      const doc = await cached('reviews', 60_000, () => loadAllReviews().catch(() => null));
+      const channelParam = url.searchParams.get('channel') ?? '';
       const filter = {
+        channel: REVIEW_CHANNELS[channelParam] ? channelParam : '',
         rating: url.searchParams.get('rating') ?? '',
         days: url.searchParams.get('days') ?? '',
         sku: url.searchParams.get('sku') ?? '',
@@ -540,6 +543,7 @@ export default async function handler(req, res) {
       };
       const days = Number(filter.days) || 0;
       const reviews = doc ? selectReviews(doc, {
+        channel: filter.channel || undefined,
         ratings: filter.rating ? filter.rating.split(',').map(Number).filter((n) => n >= 1 && n <= 5) : undefined,
         sku: filter.sku || undefined,
         sinceEpoch: days ? Math.floor(Date.now() / 1000) - days * 86400 : undefined,

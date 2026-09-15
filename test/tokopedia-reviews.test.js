@@ -213,7 +213,7 @@ test('a sync stores reviews with exact times, and a second sync only pays for wh
   assert.equal(stats.unreplied, 3);
 
   const csv = toCsv(selectReviews(doc));
-  assert.match(csv.split('\n')[0], /^id,created_at,time_precision,rating,sku/);
+  assert.match(csv.split('\n')[0], /^channel,id,created_at,time_precision,rating,sku/);
   assert.equal(csv.trim().split('\n').length, 4);
 
   await deleteDoc(REVIEWS_DOC);
@@ -242,13 +242,23 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
     videoAttachments: [{ attachmentID: '77', videoUrl: 'https://signed/v.mp4' }],
   }), { shopId: '1', nowEpoch: NOW });
   const fine = normalizeShopReview(shopRaw('10', { replyText: 'Terima kasih', replyTime: '1 hari lalu' }), { shopId: '1', nowEpoch: NOW });
+  const syncedAt = new Date(NOW * 1000).toISOString();
   const doc = {
-    shopId: '1', shopName: 'Treelogy Moringa', syncedAt: new Date(NOW * 1000).toISOString(),
-    summary: { score: 5, totalRatings: 2732, totalWritten: 361, aggregatedWithTikTok: true, distribution: { 5: 2670, 4: 53, 3: 4, 2: 5, 1: 0 }, topics: [] },
-    reviews: { 9: { ...low, createdAtPrecision: 'exact' }, 10: fine },
+    syncedAt,
+    channels: {
+      tokopedia: { syncedAt, shopName: 'Treelogy Moringa', summary: { score: 5, totalRatings: 2732, totalWritten: 361, aggregatedWithTikTok: true, distribution: { 5: 2670, 4: 53, 3: 4, 2: 5, 1: 0 }, topics: [] } },
+      shopee: { syncedAt, shopName: '', summary: { score: 4.98, totalRatings: 1000, totalWritten: 84, distribution: { 5: 980, 4: 18, 3: 2, 2: 0, 1: 0 } } },
+    },
+    reviews: { 'tokopedia:9': { ...low, createdAtPrecision: 'exact' }, 'tokopedia:10': fine, 'shopee:5': { ...fine, id: '5', channel: 'shopee', productUrl: 'https://shopee.co.id/product/1/2', text: 'mantap sekali', reply: null } },
   };
   const html = renderReviews({ doc, stats: reviewStats(doc, { nowEpoch: NOW }), reviews: selectReviews(doc), filter: { rating: '1,2,3' }, ...common });
-  assert.match(html, /Ulasan Tokopedia/);
+  assert.match(html, /<title>Ulasan /);
+  assert.match(html, /stat__n[^"]*">5 · 2\.732<\/span>\s*<span class="stat__l">Tokopedia/, 'one figure per channel');
+  assert.match(html, /stat__n[^"]*">4\.98 · 1\.000<\/span>\s*<span class="stat__l">Shopee/);
+  assert.match(html, /rv__ch--shopee/);
+  assert.match(html, /href="https:\/\/shopee\.co\.id\/product\/1\/2"/, 'Shopee product links have no /review suffix');
+  assert.match(html, /3\.650/, 'the star distribution sums both channels (2.670 + 980)');
+  assert.match(html, /<option value="shopee"/);
   assert.match(html, /aria-label="2 dari 5 bintang"/);
   assert.match(html, /rv__stars--low/);
   assert.match(html, /Paket &lt;b&gt;penyok&lt;\/b&gt;/, 'buyer text is untrusted HTML');
@@ -257,7 +267,7 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
   assert.match(html, /Belum dibalas/);
   assert.match(html, /Dibalas/);
   assert.match(html, /2\.732/, 'rating count in Indonesian digits');
-  assert.match(html, /penilaian gabungan Tokopedia \+ TikTok Shop/);
+  assert.match(html, /gabungan dengan TikTok Shop/);
   assert.match(html, /OMC-270-001/);
   assert.match(html, /<option value="1,2,3" selected>/, 'the filter form reflects the current filter');
   assert.match(html, /class="viewtab is-on" href="\?view=reviews/);
@@ -269,7 +279,7 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
   assert.match(html, /<dialog id="rv-lightbox"/);
   assert.match(html, /getElementById\('rv-lightbox'\)/);
   assert.match(html, /href="https:\/\/signed\/v\.mp4"/, 'videos link out');
-  assert.match(html, /1 berfoto/);
+  assert.match(html, /3 ulasan · 1 berfoto/);
   assert.match(html, /rv--low/);
   assert.doesNotMatch(html, /[\u{1F300}-\u{1FAFF}]/u, 'no emoji icons');
 });

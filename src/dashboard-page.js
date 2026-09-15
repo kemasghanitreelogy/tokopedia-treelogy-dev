@@ -8,6 +8,7 @@ import { pending, nextAction } from './fulfillment.js';
 import { orderCode } from './mekari/prefix.js';
 import { SOURCE_OPTIONS, SELLABLE } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
+import { REVIEW_CHANNELS } from './reviews/combined.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
@@ -751,6 +752,9 @@ tbody tr:hover{background:var(--panel-2)}
 .rv__sku{display:flex; align-items:center; gap:.5rem; min-width:0; flex-wrap:wrap}
 .rv__chip{font-size:.72rem; padding:.18rem .5rem; border-radius:6px; background:var(--panel-2); border:1px solid var(--line); color:var(--fg); white-space:nowrap}
 .rv__chip--none{color:var(--dim); border-style:dashed}
+.rv__ch{display:inline-flex; align-items:center; gap:.35rem; font-size:.72rem; font-weight:500; color:var(--muted); white-space:nowrap}
+.rv__ch-dot{width:.55rem; height:.55rem; border-radius:50%; background:var(--ch); box-shadow:0 0 0 2px color-mix(in srgb,var(--ch) 22%,transparent)}
+.rv__status{display:flex; gap:.35rem; align-items:center; justify-self:end}
 .rv__product{display:inline-flex; align-items:center; gap:.25rem; font-size:.78rem; color:var(--muted); text-decoration:none; min-width:0; max-width:28rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:color var(--t-fast) var(--ease-out)}
 a.rv__product:hover{color:var(--accent)}
 .rv__ext{width:.8rem; height:.8rem; flex:0 0 auto; opacity:.7}
@@ -1921,6 +1925,12 @@ const REVIEW_RATING_OPTIONS = [
   ['', 'Semua bintang'], ['1,2,3', '≤ 3 bintang'], ['4', '4 bintang'], ['5', '5 bintang'],
 ];
 const REVIEW_DAYS_OPTIONS = [['', 'Sepanjang waktu'], ['7', '7 hari'], ['30', '30 hari'], ['90', '90 hari'], ['365', '1 tahun']];
+const REVIEW_CHANNEL_OPTIONS = [['', 'Semua kanal'], ...Object.entries(REVIEW_CHANNELS).map(([id, m]) => [id, m.label])];
+
+const channelBadge = (channel) => {
+  const meta = REVIEW_CHANNELS[channel] ?? REVIEW_CHANNELS.tokopedia;
+  return `<span class="rv__ch rv__ch--${escape(channel)}" style="--ch:${meta.accent}"><span class="rv__ch-dot" aria-hidden="true"></span>${escape(meta.label)}</span>`;
+};
 
 const initialOf = (name) => {
   const s = String(name ?? '').trim();
@@ -1935,9 +1945,11 @@ function reviewCard(r, mediaUrl) {
         r.createdAtPrecision === 'approx' ? ' <span class="rv__approx" title="perkiraan dari teks relatif">~</span>' : ''}`
     : '<span class="dim">&mdash;</span>';
   const name = r.anonymous ? 'Anonim' : r.reviewerName || 'Pembeli';
+  const channel = r.channel ?? 'tokopedia';
   const productLabel = r.variantName ? `${r.variantName}` : r.productName;
+  const productHref = channel === 'tokopedia' ? `${r.productUrl}/review` : r.productUrl;
   const product = r.productUrl
-    ? `<a class="rv__product" href="${escape(r.productUrl)}/review" target="_blank" rel="noopener" title="${escape(r.productName)}">${escape(productLabel)}${rvSvg('external', 'rv__ext')}</a>`
+    ? `<a class="rv__product" href="${escape(productHref)}" target="_blank" rel="noopener" title="${escape(r.productName)}">${escape(productLabel)}${rvSvg('external', 'rv__ext')}</a>`
     : `<span class="rv__product" title="${escape(r.productName)}">${escape(productLabel)}</span>`;
 
   const photos = (r.images ?? []).map((img, i, all) => `
@@ -1963,10 +1975,11 @@ function reviewCard(r, mediaUrl) {
         </div>
         ${rvStars(r.rating, low)}
         <div class="rv__sku">
+          ${channelBadge(channel)}
           ${r.sku ? `<span class="rv__chip mono">${escape(r.sku)}</span>` : '<span class="rv__chip rv__chip--none">tanpa SKU</span>'}
           ${product}
         </div>
-        ${status}
+        <div class="rv__status">${r.hidden ? '<span class="rv__pill">Disembunyikan</span>' : ''}${status}</div>
       </header>
       <div class="rv__body">
         ${r.text ? `<p class="rv__text">${escape(r.text)}</p>` : '<p class="rv__text rv__text--none">Tanpa teks, hanya bintang.</p>'}
@@ -2017,24 +2030,29 @@ const REVIEW_LIGHTBOX_SCRIPT = `
 })();`;
 
 /**
- * Reviews view: what buyers wrote on Tokopedia, newest first, photos included.
+ * Reviews view: what buyers wrote on Tokopedia and Shopee, newest first, photos included.
  *
- * The page only reads the document the nightly sync wrote; a click here never crawls the
- * storefront. Photos come from our own cache (see media.js), so they do not break when
- * Tokopedia's signed URLs expire. Low ratings are the reason the page exists: they are
- * marked on the card, counted in the strip, and one filter click away.
+ * The page only reads the documents the nightly syncs wrote; a click here never touches
+ * a marketplace. Photos come from our own cache (see media.js), so they do not break
+ * when Tokopedia's signed URLs expire. Low ratings are the reason the page exists: they
+ * are marked on the card, counted in the strip, and one filter click away.
  */
 export function renderReviews({ doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash, mediaUrl = defaultMediaUrl }) {
   if (!doc?.syncedAt) {
     return shell({
-      title: 'Ulasan Tokopedia', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
+      title: 'Ulasan', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
       hideRangeControls: true,
-      body: `<p class="empty">Belum ada ulasan tersimpan. Jalankan <span class="mono">npm run tokopedia:reviews</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
+      body: `<p class="empty">Belum ada ulasan tersimpan. Jalankan <span class="mono">npm run tokopedia:reviews</span> dan <span class="mono">npm run shopee:reviews</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
     });
   }
 
-  const s = doc.summary ?? {};
-  const dist = s.distribution ?? {};
+  const channels = doc.channels ?? {};
+  // Star counts across both marketplaces: Tokopedia's come from its shop summary (the
+  // storefront lists only written reviews), Shopee's from the ratings themselves.
+  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const c of Object.values(channels)) {
+    for (const [star, n] of Object.entries(c.summary?.distribution ?? {})) dist[star] = (dist[star] ?? 0) + (n ?? 0);
+  }
   const distTotal = Object.values(dist).reduce((a, b) => a + b, 0);
   const distRows = [5, 4, 3, 2, 1].map((n) => {
     const count = dist[n] ?? 0;
@@ -2074,33 +2092,49 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
       <button type="button" class="rv__lb-btn rv__lb-next" aria-label="Foto berikutnya">${rvSvg('chevronR')}</button>
     </dialog>`;
 
+  const channelStats = Object.entries(REVIEW_CHANNELS)
+    .filter(([id]) => channels[id]?.syncedAt)
+    .map(([id, meta]) => {
+      const c = channels[id];
+      const score = c.summary?.score ? String(c.summary.score) : '—';
+      return stat(meta.label, `${score} · ${(c.summary?.totalRatings ?? 0).toLocaleString('id-ID')}`, 'ok');
+    })
+    .join('');
+  const syncNotes = Object.entries(REVIEW_CHANNELS)
+    .map(([id, meta]) => channels[id]?.syncedAt ? `${meta.label} ${wibStamp(channels[id].syncedAt)}` : `${meta.label} belum disinkronkan`)
+    .join(' · ');
+  const tokopediaLink = `<a href="https://www.tokopedia.com/${escape(loadTokopediaSlug())}/review" target="_blank" rel="noopener">${escape(channels.tokopedia?.shopName || 'Tokopedia')}${rvSvg('external', 'rv__ext')}</a>`;
+  const shopeeNote = channels.shopee?.syncedAt
+    ? `Shopee lewat Open API resmi, <b>termasuk penilaian tanpa teks</b>.`
+    : 'Shopee belum disinkronkan.';
+
   return shell({
-    title: 'Ulasan Tokopedia',
+    title: 'Ulasan',
     range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
     hideRangeControls: true,
     script: REVIEW_LIGHTBOX_SCRIPT,
     kpis: `
       <div class="strip">
-        ${stat('Rating toko', s.score ? String(s.score) : '—', 'ok')}
-        ${stat('Penilaian', (s.totalRatings ?? 0).toLocaleString('id-ID'))}
-        ${stat('Tertulis', String(stats.written.count))}
+        ${channelStats}
+        ${stat('Ulasan', String(stats.written.count))}
         ${stat('≤ 3 bintang', String(stats.written.low), stats.written.low ? 'flag' : '')}
         ${stat('Belum dibalas', String(stats.unreplied), stats.unreplied ? 'flag' : '')}
         ${stat('30 hari', `${stats.last30Days.count} · ${stats.last30Days.average ?? '—'}`, stats.last30Days.low ? 'stop' : '')}
         <span class="strip__grow"></span>
-        <span class="note">Sinkron ${escape(wibStamp(doc.syncedAt))}${s.aggregatedWithTikTok ? ' · penilaian gabungan Tokopedia + TikTok Shop' : ''}</span>
+        <span class="note">Sinkron ${escape(syncNotes)}</span>
       </div>`,
     body: `
       <section class="rv__top">
         <div class="rv__dist" aria-label="Sebaran bintang">${distRows}</div>
         <div class="rv__about">
-          <p>Dibaca dari halaman toko <a href="https://www.tokopedia.com/${escape(loadTokopediaSlug())}/review" target="_blank" rel="noopener">${escape(doc.shopName || 'Tokopedia')}${rvSvg('external', 'rv__ext')}</a>.
-          Hanya ulasan yang <b>ditulis</b> yang muncul sebagai kartu; penilaian bintang tanpa teks hanya masuk hitungan.
-          Foto disimpan di server sendiri, jadi tetap terbuka walau tautan Tokopedia kedaluwarsa. Tanggal dengan <b>~</b> adalah perkiraan.</p>
+          <p>Tokopedia dibaca dari halaman toko ${tokopediaLink}: hanya ulasan yang <b>ditulis</b> yang muncul sebagai kartu, penilaian bintang tanpa teks hanya masuk hitungan${channels.tokopedia?.summary?.aggregatedWithTikTok ? ' (gabungan dengan TikTok Shop)' : ''}.
+          ${shopeeNote}
+          Foto disimpan di server sendiri, jadi tetap terbuka walau tautan marketplace kedaluwarsa. Tanggal dengan <b>~</b> adalah perkiraan.</p>
         </div>
       </section>
       <form class="rv__filters" method="get" role="search" aria-label="Saring ulasan">
         <input type="hidden" name="view" value="reviews">
+        <label class="rv__field"><span>Kanal</span><select name="channel">${options(REVIEW_CHANNEL_OPTIONS, filter.channel)}</select></label>
         <label class="rv__field"><span>Bintang</span><select name="rating">${options(REVIEW_RATING_OPTIONS, filter.rating)}</select></label>
         <label class="rv__field"><span>Rentang</span><select name="days">${options(REVIEW_DAYS_OPTIONS, filter.days)}</select></label>
         <label class="rv__field"><span>SKU</span><select name="sku"><option value="">Semua SKU</option>${skuOptions}</select></label>
@@ -2114,7 +2148,9 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
         <thead><tr><th>SKU</th><th class="num">Ulasan</th><th class="num">Rata-rata</th><th class="num">≤ 3★</th></tr></thead>
         <tbody>${skuRows}</tbody>
       </table></div>
-      <div class="foot"><span>${stats.written.count} ulasan tertulis tersimpan &middot; ekspor: <span class="mono">npm run tokopedia:reviews:export</span></span></div>
+      <div class="foot"><span>${stats.written.count} ulasan tersimpan${
+        Object.entries(stats.byChannel ?? {}).map(([id, b]) => ` &middot; ${escape(REVIEW_CHANNELS[id]?.label ?? id)} ${b.count}`).join('')
+      } &middot; ekspor: <span class="mono">npm run reviews:export</span></span></div>
       ${lightbox}`,
   });
 }

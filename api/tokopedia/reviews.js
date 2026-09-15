@@ -1,12 +1,13 @@
 import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../../src/dashboard-auth.js';
-import { loadReviews, selectReviews, reviewStats } from '../../src/tokopedia/reviews.js';
+import { selectReviews, reviewStats } from '../../src/tokopedia/reviews.js';
+import { loadAllReviews, REVIEW_CHANNELS } from '../../src/reviews/combined.js';
 
 /**
- * Stored Tokopedia reviews as JSON, for the dashboard and for anything else that wants
- * them. Read-only: the sync runs from the CLI on its own schedule, and a web request
- * never triggers a crawl.
+ * Stored reviews from both marketplaces as JSON, for the dashboard and for anything
+ * else that wants them. Read-only: the syncs run from the CLI on their own schedule,
+ * and a web request never triggers a crawl.
  *
- * Query: ?rating=1,2,3  ?sku=OMC-180-001  ?product=<id>  ?days=30  ?text=1  ?limit=50  ?stats=1
+ * Query: ?channel=shopee|tokopedia  ?rating=1,2,3  ?sku=OMC-180-001  ?product=<id>  ?days=30  ?text=1  ?limit=50  ?stats=1
  * Auth: the dashboard session cookie, or ?key=<dashboard token>.
  */
 export default async function handler(req, res) {
@@ -24,10 +25,12 @@ export default async function handler(req, res) {
   const key = url.searchParams.get('key');
   if (!sessionValid(session) && !(key !== null && tokenMatches(key))) return send(401, { ok: false, error: 'butuh sesi dashboard' });
 
-  const doc = await loadReviews();
+  const doc = await loadAllReviews();
   const days = Number(url.searchParams.get('days')) || 0;
   const ratings = url.searchParams.get('rating')?.split(',').map(Number).filter((n) => n >= 1 && n <= 5);
+  const channel = url.searchParams.get('channel');
   const reviews = selectReviews(doc, {
+    channel: REVIEW_CHANNELS[channel] ? channel : undefined,
     ratings,
     sku: url.searchParams.get('sku') ?? undefined,
     productId: url.searchParams.get('product') ?? undefined,
@@ -38,10 +41,8 @@ export default async function handler(req, res) {
 
   return send(200, {
     ok: true,
-    shopId: doc.shopId,
-    shopName: doc.shopName,
     syncedAt: doc.syncedAt,
-    summary: doc.summary,
+    channels: doc.channels,
     stats: url.searchParams.get('stats') === '1' ? reviewStats(doc) : undefined,
     count: reviews.length,
     reviews,

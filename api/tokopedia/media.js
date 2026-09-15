@@ -1,11 +1,11 @@
 import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../../src/dashboard-auth.js';
-import { loadReviews } from '../../src/tokopedia/reviews.js';
+import { loadAllReviews } from '../../src/reviews/combined.js';
 import { readCached, fetchMedia, attachmentIndex, safeId, safeSize } from '../../src/tokopedia/media.js';
 import { cached } from '../../src/cache.js';
 
 /**
- * One review photo, from our cache; fetched from Tokopedia the first time it is asked
- * for, using the freshest signed URL the last sync recorded.
+ * One review photo, from our cache; fetched from the marketplace the first time it is
+ * asked for, using the freshest URL the last sync recorded.
  *
  * Query: ?id=<attachment id>&s=thumb|full. Auth: the dashboard session, or ?key=.
  */
@@ -29,14 +29,14 @@ export default async function handler(req, res) {
 
   let media = await readCached(id, size);
   if (!media) {
-    const doc = await cached('tokopedia-reviews', 60_000, () => loadReviews().catch(() => null));
+    const doc = await cached('reviews', 60_000, () => loadAllReviews().catch(() => null));
     const entry = attachmentIndex(doc).get(id);
     if (!entry) return fail(404, 'lampiran tidak dikenal');
     try {
       media = await fetchMedia({ id, size, url: entry[size] });
     } catch (error) {
       console.warn(`tokopedia/media ${id} ${size}: ${error.message}`);
-      return fail(502, 'foto tidak bisa diambil dari Tokopedia saat ini');
+      return fail(502, 'foto tidak bisa diambil dari marketplace saat ini');
     }
   }
 

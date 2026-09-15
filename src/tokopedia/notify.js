@@ -3,19 +3,21 @@ import { LOW_RATING_MAX } from './reviews.js';
 
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 const clip = (text, max = 400) => (text.length > max ? `${text.slice(0, max)}…` : text);
+const CHANNEL_LABEL = { tokopedia: 'Tokopedia', shopee: 'Shopee' };
+const channelLabel = (channel) => CHANNEL_LABEL[channel] ?? 'Tokopedia';
 
 /** One message per low review: the thing a person wants to see the morning it lands. */
 export function formatLowReview(review) {
   const who = review.anonymous ? 'anonim' : review.reviewerName || 'pembeli';
   const product = [review.productName, review.variantName].filter(Boolean).join(' · ');
   const lines = [
-    `<b>Ulasan Tokopedia ${stars(review.rating)}</b> (${review.rating}/5)`,
+    `<b>Ulasan ${channelLabel(review.channel)} ${stars(review.rating)}</b> (${review.rating}/5)`,
     escapeHtml(product) + (review.sku ? ` <code>${escapeHtml(review.sku)}</code>` : ''),
     review.text ? `“${escapeHtml(clip(review.text))}”` : '(tanpa teks)',
     review.badRatingReason ? `Alasan: ${escapeHtml(review.badRatingReason)}` : null,
     `— ${escapeHtml(who)}, ${escapeHtml(review.createdAtRelative || review.createdAt || '')}`,
     review.reply ? 'Sudah dibalas.' : 'Belum dibalas.',
-    review.productUrl ? `<a href="${escapeHtml(review.productUrl)}/review">buka ulasan produk</a>` : null,
+    review.productUrl ? `<a href="${escapeHtml(review.productUrl)}${review.channel === 'shopee' ? '' : '/review'}">buka produk</a>` : null,
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -28,10 +30,11 @@ export function formatDigest(result) {
     .filter(([, c]) => c)
     .map(([n, c]) => `${c}×${n}★`)
     .join(', ');
+  const label = channelLabel(result.channel);
   const lines = [
     result.initial
-      ? `<b>Tokopedia: ${added.length} ulasan diimpor</b> (${dist}) — sinkron pertama, riwayat lama tidak dilaporkan satu per satu.`
-      : `<b>Tokopedia: ${added.length} ulasan baru</b> (${dist})`,
+      ? `<b>${label}: ${added.length} ulasan diimpor</b> (${dist}) — sinkron pertama, riwayat lama tidak dilaporkan satu per satu.`
+      : `<b>${label}: ${added.length} ulasan baru</b> (${dist})`,
     summary ? `Rating toko ${summary.score} dari ${summary.totalRatings} penilaian, ${summary.totalWritten} tertulis.` : null,
     result.updated.length ? `${result.updated.length} ulasan lama berubah (balasan/teks).` : null,
   ];
@@ -48,11 +51,11 @@ export async function notifyReviewSync(result, { threshold = LOW_RATING_MAX, sen
   const sent = [];
   const alerts = result.initial ? [] : result.added.filter((r) => r.rating <= threshold);
   for (const review of alerts) {
-    const outcome = await send(formatLowReview(review), { key: `tokopedia-review-${review.id}` });
+    const outcome = await send(formatLowReview(review), { key: `${review.channel ?? 'tokopedia'}-review-${review.id}` });
     if (outcome.sent) sent.push(review.id);
   }
   if (result.added.length) {
-    const outcome = await send(formatDigest(result), { key: `tokopedia-review-digest-${result.syncedAt}` });
+    const outcome = await send(formatDigest(result), { key: `${result.channel ?? 'tokopedia'}-review-digest-${result.syncedAt}` });
     if (outcome.sent) sent.push('digest');
   }
   return sent;

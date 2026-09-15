@@ -59,7 +59,7 @@ export const PRODUCTS = [
   { sku: 'OMO-60-001', name: 'Moringa Seed Oil', variant: '60 ml', category: 'oil', aliases: ['OMO60', '1731010063360886747'] },
 
   // --- Set & aksesori
-  { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS'] },
+  { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS', 'Ritual-Set'] },
   { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop'] },
   { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set', aliases: ['Bamboo Whisk - 120 prongs'] },
   { sku: 'The-Inside-&-Out30', name: 'Inside Out Moringa Protocol', variant: '30 hari', category: 'set' },

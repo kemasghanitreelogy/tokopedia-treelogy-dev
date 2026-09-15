@@ -56,16 +56,29 @@ npm run doctor      # verify end to end
 | `npm run api -- <METHOD> <path> [k=v ...]` | Signed call to any endpoint |
 | `npm run tokopedia:doctor` | Shop rating, rating counts and star distribution, read from the storefront |
 | `npm run tokopedia:reviews [-- --quick --notify]` | Sync every written Tokopedia review into the store; low ratings to Telegram |
-| `npm run tokopedia:reviews:list -- --rating=1,2,3 --days=30` | Stored reviews, newest first, with filters |
-| `npm run tokopedia:reviews:stats` | Per star, per SKU, last 30 days, unreplied |
-| `npm run tokopedia:reviews:export -- --csv` | Write stored reviews to `state/tokopedia-reviews.csv` (or `--json`) |
-| `npm run tokopedia:reviews:media` | Download every stored review photo into `state/tokopedia-media` |
+| `npm run shopee:reviews [-- --quick --notify]` | Sync every Shopee rating and review (text or not) into the store |
+| `npm run reviews:list -- --channel=shopee --rating=1,2,3 --days=30` | Stored reviews from both marketplaces, newest first, with filters |
+| `npm run reviews:stats` | Per channel, per star, per SKU, last 30 days, unreplied |
+| `npm run reviews:export -- --csv` | Write stored reviews to `state/reviews.csv` (or `--json`) |
+| `npm run reviews:media` | Download every stored review photo into the media cache |
 | `npm test` | Offline tests |
 
-### Tokopedia reviews
+### Reviews (Tokopedia + Shopee)
 
-The seller Open API (TikTok Shop's) can only *import* reviews; it has no call that
-reads them. The storefront does read them, so `src/tokopedia/` speaks to the same
+Both marketplaces' reviews land in the state store, one document per channel
+(`tokopedia/reviews.json`, `shopee/reviews.json`), and are read together by
+`src/reviews/combined.js`: the dashboard's "Ulasan" view, `bin/reviews.mjs` and
+`GET /api/tokopedia/reviews` all show one list with a channel on every record.
+
+**Shopee** goes through the official Open API: `product/get_comment`, walked per
+listing because the shop-wide cursor stops at the newest thousand. It returns every
+rating, including the majority that carry no text, with exact times, replies and
+photos; variant names and SKUs come from `get_model_list`, where each model carries
+the master SKU code. The shop summary (score, distribution) is counted from those
+ratings, since Shopee has no shop-rating call.
+
+**Tokopedia**: the seller Open API (TikTok Shop's) can only *import* reviews; it has
+no call that reads them. The storefront does read them, so `src/tokopedia/` speaks to the same
 GraphQL gateway the shop's public review tab uses (`gql.tokopedia.com`), with the
 queries lifted verbatim from the storefront bundle:
 
@@ -79,18 +92,19 @@ requests, spaced at least 700 ms apart. Ratings without text are not items in ei
 list; they exist only in the summary counts (`isAggregatedWithTTS` means those counts
 include TikTok Shop).
 
-Stored under `tokopedia/reviews.json` in the state store; read back by the CLI, by the
-dashboard's "Ulasan" view and by `GET /api/tokopedia/reviews` (dashboard session or
-`?key=`; query `rating`, `sku`, `product`, `days`, `text`, `limit`, `stats=1`). The
-nightly unit runs `bin/tokopedia.mjs reviews --notify`. Override the shop with
-`TOKOPEDIA_SHOP_ID` and `TOKOPEDIA_SHOP_SLUG`.
+`GET /api/tokopedia/reviews` takes the dashboard session or `?key=` and the query
+`channel`, `rating`, `sku`, `product`, `days`, `text`, `limit`, `stats=1`. The nightly
+unit runs `bin/tokopedia.mjs reviews --notify` and `bin/shopee.mjs reviews --notify`;
+new reviews at or under three stars go to Telegram one by one, the first import of a
+channel as a single digest. Override the Tokopedia shop with `TOKOPEDIA_SHOP_ID` and
+`TOKOPEDIA_SHOP_SLUG`.
 
-Review photos come through signed Tokopedia URLs that expire in about three days, so
-they are cached on disk under `state/tokopedia-media` (or `TOKOPEDIA_MEDIA_DIR`; on the
-VPS it must be `/opt/treelogy/state/tokopedia-media`, the only path the sandboxed web
-service may write) by attachment id: the sync fetches photos of new reviews, `GET /api/tokopedia/media?id=&s=`
-serves them to the dashboard and fetches on demand whatever is missing, and
-`tokopedia:reviews:media` warms the whole cache.
+Review photos (Tokopedia's come through signed URLs that expire in about three days)
+are cached on disk under `state/tokopedia-media` (or `TOKOPEDIA_MEDIA_DIR`; on the VPS
+it must be `/opt/treelogy/state/tokopedia-media`, the only path the sandboxed web
+service may write) by attachment id: each sync fetches photos of new reviews,
+`GET /api/tokopedia/media?id=&s=` serves them to the dashboard and fetches on demand
+whatever is missing, and `reviews:media` warms the whole cache.
 
 ```bash
 npm run orders                       # 20 most recent orders
@@ -207,7 +221,9 @@ src/tokopedia/gql.js     storefront GraphQL transport: pacing, retries, error sh
 src/tokopedia/reviews.js review crawl, exact-time enrichment, SKU match, store, stats, CSV
 src/tokopedia/notify.js  Telegram messages for low ratings and the sync digest
 src/tokopedia/cli.js     bin/tokopedia.mjs commands
-api/tokopedia/reviews.js stored reviews as JSON (read-only)
+src/shopee/reviews.js    Shopee ratings via get_comment per listing, SKUs from get_model_list
+src/reviews/combined.js  both channels as one set; src/reviews/cli.js is bin/reviews.mjs
+api/tokopedia/reviews.js stored reviews as JSON (read-only); api/tokopedia/media.js the photo cache
 test/                    offline tests
 claudedocs/              implementation plan
 ```

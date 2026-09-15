@@ -213,6 +213,7 @@ export function normalizeShopReview(raw, { shopId, nowEpoch }) {
   const replyApprox = raw.replyText ? parseRelativeTime(raw.replyTime, nowEpoch) : null;
   return {
     id: String(raw.id),
+    channel: 'tokopedia',
     shopId: String(shopId),
     productId: String(product.productID ?? ''),
     productName: product.productName ?? '',
@@ -409,6 +410,7 @@ export async function syncReviews(options = {}) {
   }
 
   return {
+    channel: 'tokopedia',
     shopId: String(shopId),
     syncedAt: nowIso,
     // The first sync imports history; nothing in it is news.
@@ -429,11 +431,12 @@ export const sortNewest = (reviews) =>
   [...reviews].sort((a, b) => (b.createdAtEpoch ?? 0) - (a.createdAtEpoch ?? 0) || b.id.localeCompare(a.id));
 
 /**
- * @param {object} doc  the stored document
- * @param {{ratings?: number[], sku?: string, productId?: string, sinceEpoch?: number, withText?: boolean, limit?: number}} filter
+ * @param {object} doc  a stored document, or the combined one from reviews/combined.js
+ * @param {{ratings?: number[], channel?: string, sku?: string, productId?: string, sinceEpoch?: number, withText?: boolean, limit?: number}} filter
  */
-export function selectReviews(doc, { ratings, sku, productId, sinceEpoch, withText, limit } = {}) {
+export function selectReviews(doc, { ratings, channel, sku, productId, sinceEpoch, withText, limit } = {}) {
   let list = sortNewest(Object.values(doc.reviews ?? {}));
+  if (channel) list = list.filter((r) => (r.channel ?? 'tokopedia') === channel);
   if (ratings?.length) list = list.filter((r) => ratings.includes(r.rating));
   if (sku) list = list.filter((r) => r.sku === sku);
   if (productId) list = list.filter((r) => r.productId === String(productId));
@@ -456,6 +459,7 @@ export function reviewStats(doc, { nowEpoch = Math.floor(Date.now() / 1000) } = 
   const overall = bucket();
   const last30 = bucket();
   const bySku = new Map();
+  const byChannel = new Map();
   const byRating = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   let unreplied = 0;
   for (const r of all) {
@@ -464,6 +468,9 @@ export function reviewStats(doc, { nowEpoch = Math.floor(Date.now() / 1000) } = 
     const key = r.sku ?? `(tanpa SKU) ${r.productName}`;
     if (!bySku.has(key)) bySku.set(key, bucket());
     add(bySku.get(key), r);
+    const channel = r.channel ?? 'tokopedia';
+    if (!byChannel.has(channel)) byChannel.set(channel, bucket());
+    add(byChannel.get(channel), r);
     if (r.rating in byRating) byRating[r.rating]++;
     if (!r.reply) unreplied++;
   }
@@ -472,6 +479,7 @@ export function reviewStats(doc, { nowEpoch = Math.floor(Date.now() / 1000) } = 
     last30Days: finish(last30),
     byRating,
     bySku: Object.fromEntries([...bySku].map(([k, b]) => [k, finish(b)]).sort((a, b) => b[1].count - a[1].count)),
+    byChannel: Object.fromEntries([...byChannel].map(([k, b]) => [k, finish(b)])),
     unreplied,
     summary: doc.summary ?? null,
     syncedAt: doc.syncedAt ?? null,
@@ -485,10 +493,11 @@ const csvCell = (value) => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-export const CSV_COLUMNS = ['id', 'created_at', 'time_precision', 'rating', 'sku', 'product', 'variant', 'reviewer', 'text', 'reply', 'images', 'videos', 'likes', 'url'];
+export const CSV_COLUMNS = ['channel', 'id', 'created_at', 'time_precision', 'rating', 'sku', 'product', 'variant', 'reviewer', 'text', 'reply', 'images', 'videos', 'likes', 'url'];
 
 export function toCsv(reviews) {
   const rows = reviews.map((r) => [
+    r.channel ?? 'tokopedia',
     r.id,
     r.createdAt ?? '',
     r.createdAtPrecision,

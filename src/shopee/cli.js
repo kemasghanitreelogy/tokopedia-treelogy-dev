@@ -7,6 +7,9 @@ import { loadTokenBundle, saveTokenBundle, SHOPEE_TOKENS_PATHNAME, BlobNotConfig
 import { openBrowser } from '../open-browser.js';
 import { ok, fail, warn, info, mask, humanTime } from '../format.js';
 import { fetchWithTimeout, TIMEOUTS } from '../http.js';
+import { syncShopeeReviews } from './reviews.js';
+import { notifyReviewSync } from '../tokopedia/notify.js';
+import { LOW_RATING_MAX } from '../tokopedia/reviews.js';
 
 const USAGE = `shopee - Shopee Open API v2 client
 
@@ -18,7 +21,36 @@ Usage:
   npm run shopee:shop         Shop info - proves the shop-scoped signature works
   npm run shopee:orders       Orders created in the last 14 days
   npm run shopee:items        Active listings
+  npm run shopee:reviews      Sync every rating and review into the store (--quick, --notify, --json)
+                              Read them back with npm run reviews:list / reviews:stats / reviews:export
 `;
+
+async function cmdReviews(config, args) {
+  const quiet = args.includes('--json');
+  const log = quiet ? () => {} : (line) => console.log(info(line));
+  const result = await syncShopeeReviews({ quick: args.includes('--quick'), log });
+
+  if (quiet) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(ok(`${result.total} penilaian tersimpan (${result.listed} dibaca), ${result.requests} permintaan`));
+    console.log(info(`baru ${result.added.length}, berubah ${result.updated.length}; rating ${result.summary.score} dari ${result.summary.totalRatings}, ${result.summary.totalWritten} dengan teks/foto`));
+    if (result.media) {
+      const m = result.media;
+      console.log(info(`foto: ${m.fetched} diunduh, ${m.cached} sudah ada, ${m.failed} gagal${m.deferred ? `, ${m.deferred} ditunda` : ''}`));
+    }
+    const low = result.added.filter((r) => r.rating <= LOW_RATING_MAX);
+    if (low.length) {
+      console.log(warn(`${low.length} penilaian baru <= ${LOW_RATING_MAX} bintang:`));
+      for (const r of low) console.log(`  ${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}  ${r.createdAt?.slice(0, 10)}  ${r.sku ?? '-'}  ${r.variantName || r.productName}  "${r.text.slice(0, 120)}"`);
+    }
+  }
+  if (args.includes('--notify')) {
+    const sent = await notifyReviewSync(result);
+    if (!quiet) console.log(sent.length ? ok(`Telegram: ${sent.length} pesan`) : info('Telegram: tidak ada yang perlu dikirim'));
+  }
+  return 0;
+}
 
 /**
  * The shop credentials, from wherever they actually live.
@@ -156,6 +188,7 @@ const COMMANDS = {
   shop: async (config) => show(await getShopInfo(config, await requireAuth(config))),
   orders: async (config) => show(await getOrderList(config, await requireAuth(config))),
   items: async (config) => show(await getItemList(config, await requireAuth(config))),
+  reviews: cmdReviews,
 };
 
 export async function run(argv) {

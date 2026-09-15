@@ -10,7 +10,8 @@
   "bin": {
     "tts": "./bin/tts.mjs",
     "shopee": "./bin/shopee.mjs",
-    "tokopedia": "./bin/tokopedia.mjs"
+    "tokopedia": "./bin/tokopedia.mjs",
+    "reviews": "./bin/reviews.mjs"
   },
   "scripts": {
     "tts": "node bin/tts.mjs",
@@ -41,10 +42,12 @@
     "tokopedia": "node bin/tokopedia.mjs",
     "tokopedia:doctor": "node bin/tokopedia.mjs doctor",
     "tokopedia:reviews": "node bin/tokopedia.mjs reviews",
-    "tokopedia:reviews:list": "node bin/tokopedia.mjs reviews:list",
-    "tokopedia:reviews:stats": "node bin/tokopedia.mjs reviews:stats",
-    "tokopedia:reviews:export": "node bin/tokopedia.mjs reviews:export",
-    "tokopedia:reviews:media": "node bin/tokopedia.mjs reviews:media",
+    "shopee:reviews": "node bin/shopee.mjs reviews",
+    "reviews": "node bin/reviews.mjs",
+    "reviews:list": "node bin/reviews.mjs list",
+    "reviews:stats": "node bin/reviews.mjs stats",
+    "reviews:export": "node bin/reviews.mjs export",
+    "reviews:media": "node bin/reviews.mjs media",
     "mekari:setup": "node bin/tts.mjs mekari:setup",
     "mekari:plan": "node bin/tts.mjs mekari:plan",
     "mekari:sync": "node bin/tts.mjs mekari:sync",

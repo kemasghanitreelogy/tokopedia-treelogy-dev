@@ -924,10 +924,11 @@ async function cmdMekariCoa(config, args = []) {
 
   const result = await setUpChartOfAccounts({ dryRun });
 
-  const now = result.currentShipping;
-  const right = now?.number === result.shipping.number;
   console.log(`\n  ${result.company.name}`);
-  console.log(`  ongkir penjualan sekarang: ${now ? `${now.number} ${now.name}` : '(tidak terbaca)'}  ${right ? ok('sudah benar') : warn(`seharusnya ${result.shipping.number} ${result.shipping.name}`)}\n`);
+  // The company setting is reported but no longer relied on: postage travels as a line
+  // against a product whose sell account is 5030, which the API does permit.
+  console.log(`  ongkir ditagih lewat produk "${'Ongkos Kirim'}" -> akun ${result.shipping.number} ${result.shipping.name}`);
+  console.log(`  ${info(`setelan bawaan Jurnal (${result.currentShipping?.number ?? '?'} ${result.currentShipping?.name ?? ''}) tidak dipakai lagi`)}\n`);
   console.log(`  ${'SUMBER'.padEnd(14)}${'TAG'.padEnd(14)}${'PIUTANG'.padEnd(10)}${'TERMIN'.padEnd(9)}PEMBAYARAN`);
   for (const row of await describePolicy()) {
     console.log(`  ${row.label.padEnd(14)}${row.tag.padEnd(14)}${row.receivable.padEnd(10)}${`Net ${row.termDays}`.padEnd(9)}${row.autoPaid ? ok('otomatis lunas') : warn('manual')}`);
@@ -938,12 +939,7 @@ async function cmdMekariCoa(config, args = []) {
     console.log(`\n  ${info('dry-run: belum ada yang disetel. Ulangi dengan --yes')}\n`);
     return 0;
   }
-  if (result.companyPatched) {
-    console.log(`\n  ${ok(`akun ongkir penjualan disetel ke ${result.shipping.number}`)}`);
-  } else if (!right) {
-    console.log(`\n  ${warn('Jurnal menolak mengubah akun ongkir lewat API:')} ${result.companyNote.slice(0, 90)}`);
-    console.log(`  ${info(`ubah manual sekali di Jurnal: Pengaturan → Akun → akun pengiriman penjualan → ${result.shipping.number} ${result.shipping.name}`)}`);
-  }
+  console.log(`\n  ${ok(`produk ongkir: ${result.shippingProduct}`)}`);
   if (result.tagsCreated.length > 0) console.log(`  ${ok(`tag dibuat: ${result.tagsCreated.join(', ')}`)}`);
   console.log('');
   return 0;

@@ -50,8 +50,26 @@ export const SOURCES = {
   DW: { label: 'Walk in', tag: 'Walk in', receivable: '1502', termDays: 7, autoPaid: false },
 };
 
-/** Where delivery charged to the buyer belongs. Set once, on the company, not per invoice. */
+/**
+ * Where delivery charged to the buyer belongs - and how it gets there.
+ *
+ * Jurnal has a company-level "sales shipping account" and it is set to 7-70099 Other
+ * Income, which is why every invoice credited the postage to other income instead of to
+ * delivery. The public API will not change it: the documented PATCH on /companies/{id}
+ * comes back 400 "Invalid HTTP parameters" with the documented body, with the full
+ * record, and with shipping_sale set alongside it - while a body without the `company`
+ * wrapper is refused as 406 and PUT as 405, which together prove the shape is right and
+ * the field simply is not permitted.
+ *
+ * So the postage does not travel in Jurnal's shipping field at all. It travels as a line
+ * on the invoice, against a product whose own sell account is 5030 - which puts the
+ * credit exactly where the business asked for it, using only fields the API does accept,
+ * and without depending on a setting somebody has to remember to keep.
+ */
 export const SHIPPING_ACCOUNT_NUMBER = '5030';
+
+/** The product that carries postage. Its sell account is what decides where the money lands. */
+export const SHIPPING_PRODUCT = { code: 'ONGKIR', name: 'Ongkos Kirim' };
 
 /** Every receivable account this system books into, for the one-time setup check. */
 export const RECEIVABLE_NUMBERS = [...new Set(Object.values(SOURCES).map((s) => s.receivable))].sort();

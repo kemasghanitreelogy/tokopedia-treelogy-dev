@@ -1,7 +1,7 @@
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
 import { orderCode, orderPrefix, PREFIXES } from './prefix.js';
-import { termDaysFor, isAutoPaid, sourceOf } from './sources.js';
+import { termDaysFor, isAutoPaid, sourceOf, SHIPPING_PRODUCT } from './sources.js';
 
 /**
  * Turning an order into a Jurnal sales invoice.
@@ -143,6 +143,21 @@ export function buildInvoice({ order, depositTo = null }) {
   const shipping = rupiah(finance.shipping);
   if (shipping < 0) throw new InvoiceError(`${order.id}: ongkir negatif`);
 
+  // Postage rides as a line, not in Jurnal's shipping field.
+  //
+  // The field credits whatever the company's sales shipping account is, that account is
+  // 7-70099 Other Income, and the API refuses to change it - so using the field means
+  // booking delivery as other income forever. A line against a product whose sell account
+  // is 5030 puts the credit where it belongs, using only what the API accepts.
+  if (shipping > 0) {
+    lines.push({
+      quantity: 1,
+      rate: shipping,
+      product_code: SHIPPING_PRODUCT.code,
+      description: SHIPPING_PRODUCT.name,
+    });
+  }
+
   const date = jurnalDate(order.createdAt);
   // A typed-in transaction names its own source; the four online channels are named by
   // the channel table.
@@ -164,7 +179,9 @@ export function buildInvoice({ order, depositTo = null }) {
     custom_id: customIdFor(order),
     reference_no: code,
     transaction_lines_attributes: lines,
-    shipping_price: shipping,
+    // Zero, deliberately: the money is on a line above. The delivery block is still turned
+    // on below so the address and the waybill are still recorded against the invoice.
+    shipping_price: 0,
     // Written on every invoice rather than typed in afterwards. A tag that depends on
     // somebody remembering is a tag that is right for a fortnight and then silently is
     // not, and it is the only thing that lets one receivable be read back by channel.
@@ -214,17 +231,22 @@ export function buildInvoice({ order, depositTo = null }) {
 export function verifyInvoice(payload, expectedTotal) {
   const invoice = payload.sales_invoice;
   const lines = invoice.transaction_lines_attributes;
+  // Every rupiah is in the lines now, postage included, so this is the whole invoice.
   const goods = lines.reduce((n, l) => n + l.rate * l.quantity, 0);
   const shipping = invoice.shipping_price ?? 0;
   const total = goods + shipping;
+  // Checked before the total, because it is the more precise diagnosis of the same
+  // symptom: anything in Jurnal's own shipping field is credited to the company's sales
+  // shipping account, which is Other Income, which is the thing this arrangement exists
+  // to stop. Reported as "put it on a line" rather than as "the total is off by 15,000".
+  if (shipping !== 0) {
+    throw new InvoiceError('ongkir harus lewat baris produk, bukan shipping_price');
+  }
   if (total !== expectedTotal) {
     throw new InvoiceError(`total faktur ${total} tidak sama dengan ${expectedTotal}`);
   }
-  // Postage that is charged but not declared shipped is stored as zero by Jurnal, so the
-  // invoice would be short. Catching it here is the difference between a refusal and a
-  // wrong number in the accounts.
-  if ((shipping > 0 || invoice.shipping_address) && invoice.is_shipped !== true) {
-    throw new InvoiceError('ongkir dan alamat tidak akan tersimpan tanpa is_shipped');
+  if (invoice.shipping_address && invoice.is_shipped !== true) {
+    throw new InvoiceError('alamat kirim tidak akan tersimpan tanpa is_shipped');
   }
   if (lines.some((l) => l.discount !== undefined)) {
     throw new InvoiceError('diskon per baris dibaca Jurnal sebagai persen - harus dilipat ke rate');

@@ -132,15 +132,13 @@ export async function setUpChartOfAccounts({ dryRun = true, deadlineAt = null } 
     companyNote = error.message;
   }
 
-  const shippingProduct = await ensureShippingProduct({ deadlineAt });
-
   const created = [];
   for (const name of missingTags) {
     await mekari({ method: 'POST', path: TAGS_PATH, deadlineAt, body: { tag: { name } } });
     created.push(name);
   }
 
-  return { dryRun: false, company, accounts, shipping, companyPatched, companyNote, currentShipping: current, shippingProduct, tagsCreated: created, tagsPresent: TAGS.length - missingTags.length };
+  return { dryRun: false, company, accounts, shipping, companyPatched, companyNote, currentShipping: current, tagsCreated: created, tagsPresent: TAGS.length - missingTags.length };
 }
 
 /**
@@ -163,3 +161,37 @@ export async function describePolicy() {
 }
 
 export { RECEIVABLE_NUMBERS, SHIPPING_ACCOUNT_NUMBER };
+
+/**
+ * Is Jurnal currently set to credit delivery to 5030?
+ *
+ * Postage travels in Jurnal's own shipping field, and which account that field credits is
+ * a company setting this API cannot write - so the setting is the one part of this policy
+ * that lives outside the code and can be changed by a person without anybody noticing.
+ * That is exactly the kind of fact worth checking rather than assuming: it was
+ * 7-70099 Other Income for months, and every invoice quietly credited delivery there.
+ *
+ * Cached for an hour. A sync that finds it wrong defers the invoices carrying postage
+ * rather than booking them into the wrong account, which is recoverable; posting them is
+ * not, short of deleting and rewriting the lot.
+ */
+const SHIPPING_CHECK_TTL_MS = 60 * 60 * 1000;
+let shippingChecked = 0;
+let shippingOk = null;
+
+export async function shippingAccountReady({ force = false, deadlineAt = null } = {}) {
+  if (!force && shippingOk !== null && Date.now() - shippingChecked < SHIPPING_CHECK_TTL_MS) return shippingOk;
+  try {
+    const company = await activeCompany({ deadlineAt });
+    const current = await currentShippingAccount(company.id, { deadlineAt });
+    shippingOk = { ok: current?.number === SHIPPING_ACCOUNT_NUMBER, current, wanted: SHIPPING_ACCOUNT_NUMBER };
+  } catch (error) {
+    // Unable to check is not the same as wrong. Say so, and let the caller decide.
+    shippingOk = { ok: null, current: null, wanted: SHIPPING_ACCOUNT_NUMBER, error: error.message };
+  }
+  shippingChecked = Date.now();
+  return shippingOk;
+}
+
+/** For tests and for a run that wants a fresh answer. */
+export const forgetShippingCheck = () => { shippingOk = null; shippingChecked = 0; };

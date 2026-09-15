@@ -436,31 +436,25 @@ test('verification refuses a payload that still carries a line discount', () => 
   assert.throws(() => verifyInvoice(built, built.expectedTotal), /persen/);
 });
 
-test('postage travels as a line, so it lands in 5030 instead of other income', () => {
-  // Jurnal's own shipping field credits whatever the company's sales shipping account is,
-  // that account is 7-70099 Other Income, and the API refuses to change it. A line
-  // against a product whose sell account is 5030 is the only route left open.
+test('postage uses Jurnal\'s own delivery field, and is short without is_shipped', () => {
+  // The field reads properly - under the subtotal, not as a product nobody sells - but
+  // which account it credits is a company setting this API cannot write. The sync refuses
+  // to post an order carrying postage while that setting is wrong; see postOrder.
   const withPostage = buildInvoice({
     order: order({ finance: { lines: [{ sku: 'OMC-90-001', qty: 1, unitPrice: 455_000, unitDiscount: 0 }], shipping: 15_000 } }),
   });
   const invoice = withPostage.sales_invoice;
-
-  assert.equal(invoice.shipping_price, 0, 'field ongkir Jurnal harus kosong');
-  const postage = invoice.transaction_lines_attributes.at(-1);
-  assert.equal(postage.product_code, 'ONGKIR');
-  assert.equal(postage.rate, 15_000);
-  assert.equal(postage.quantity, 1);
-  // The total is unchanged by where the money travels - that is the whole point.
+  assert.equal(invoice.shipping_price, 15_000);
+  assert.equal(invoice.is_shipped, true);
   assert.equal(withPostage.expectedTotal, 470_000);
+  // Postage is not a product line: one product ordered is one line on the invoice.
+  assert.equal(invoice.transaction_lines_attributes.length, 1);
   verifyInvoice(withPostage, withPostage.expectedTotal);
 
-  // An order with no postage gets no postage line.
-  const free = buildInvoice({ order: order({ finance: { lines: [{ sku: 'OMC-90-001', qty: 1, unitPrice: 455_000, unitDiscount: 0 }], shipping: 0 } }) });
-  assert.ok(free.sales_invoice.transaction_lines_attributes.every((l) => l.product_code !== 'ONGKIR'));
-
-  // Anything put back in Jurnal's field would be credited to other income again.
-  invoice.shipping_price = 15_000;
-  assert.throws(() => verifyInvoice(withPostage, withPostage.expectedTotal), /shipping_price/);
+  // Jurnal stores the postage as zero without this flag, and the invoice goes into the
+  // books short by exactly the delivery charge. Five did, before the check existed.
+  invoice.is_shipped = false;
+  assert.throws(() => verifyInvoice(withPostage, withPostage.expectedTotal), /is_shipped/);
 });
 
 test('the delivery block is still turned on, so the address survives', () => {

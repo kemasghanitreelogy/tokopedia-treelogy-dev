@@ -924,11 +924,17 @@ async function cmdMekariCoa(config, args = []) {
 
   const result = await setUpChartOfAccounts({ dryRun });
 
+  const now = result.currentShipping;
+  const right = now?.number === result.shipping.number;
   console.log(`\n  ${result.company.name}`);
-  // The company setting is reported but no longer relied on: postage travels as a line
-  // against a product whose sell account is 5030, which the API does permit.
-  console.log(`  ongkir ditagih lewat produk "${'Ongkos Kirim'}" -> akun ${result.shipping.number} ${result.shipping.name}`);
-  console.log(`  ${info(`setelan bawaan Jurnal (${result.currentShipping?.number ?? '?'} ${result.currentShipping?.name ?? ''}) tidak dipakai lagi`)}\n`);
+  console.log(`  akun pengiriman penjualan: ${now ? `${now.number} ${now.name}` : '(tidak terbaca)'}  ${right ? ok('sudah benar') : fail(`harus ${result.shipping.number} ${result.shipping.name}`)}`);
+  if (!right) {
+    // Not a warning to be scrolled past: while this is wrong, every order carrying
+    // postage is held back rather than booked into the wrong account.
+    console.log(`  ${warn('selama ini belum diubah, pesanan berongkir DITAHAN dan tidak dibukukan')}`);
+    console.log(`  ${info('ubah di Jurnal: ikon roda gigi → Pengaturan → cari "pengiriman" → akun pengiriman penjualan')}`);
+  }
+  console.log('');
   console.log(`  ${'SUMBER'.padEnd(14)}${'TAG'.padEnd(14)}${'PIUTANG'.padEnd(10)}${'TERMIN'.padEnd(9)}PEMBAYARAN`);
   for (const row of await describePolicy()) {
     console.log(`  ${row.label.padEnd(14)}${row.tag.padEnd(14)}${row.receivable.padEnd(10)}${`Net ${row.termDays}`.padEnd(9)}${row.autoPaid ? ok('otomatis lunas') : warn('manual')}`);
@@ -939,7 +945,7 @@ async function cmdMekariCoa(config, args = []) {
     console.log(`\n  ${info('dry-run: belum ada yang disetel. Ulangi dengan --yes')}\n`);
     return 0;
   }
-  console.log(`\n  ${ok(`produk ongkir: ${result.shippingProduct}`)}`);
+
   if (result.tagsCreated.length > 0) console.log(`  ${ok(`tag dibuat: ${result.tagsCreated.join(', ')}`)}`);
   console.log('');
   return 0;

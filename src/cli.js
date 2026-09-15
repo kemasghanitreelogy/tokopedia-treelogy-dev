@@ -25,6 +25,7 @@ import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
 import { restate } from './mekari/restate.js';
 import { removeDuplicates } from './mekari/dedupe.js';
 import { reconcileLedger } from './mekari/reconcile.js';
+import { settleOpenInvoices } from './mekari/settle.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -68,6 +69,7 @@ Usage:
   npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
+  npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -1075,6 +1077,42 @@ async function cmdMekariReconcile(config, args = []) {
   return 0;
 }
 
+/**
+ * Pay off the invoices that were raised before there was an account to pay them into.
+ *
+ * Only the sources the platform really does settle. A consignment shop is open because
+ * nobody has paid yet, and marking that paid would be inventing a payment.
+ */
+async function cmdMekariSettle(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const since = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || null;
+  const dryRun = !args.includes('--yes');
+
+  const r = await settleOpenInvoices({
+    since,
+    dryRun,
+    onProgress: (p) => { if (p.paid % 10 === 0) console.log(`  dilunasi ${p.paid}/${p.of}`); },
+  });
+
+  console.log(`\n  ${r.open} faktur masih terbuka  ·  akun tujuan ${r.deposit}\n`);
+  console.log(`  ${r.settle.length} akan dilunasi (kanal online, uangnya sudah di platform):`);
+  for (const i of r.settle.slice(0, 12)) console.log(`    #${i.no}  ${i.date}  ${rupiah(i.remaining).padStart(14)}  ${i.channel}`);
+  if (r.settle.length > 12) console.log(`    ...dan ${r.settle.length - 12} lagi`);
+  if (r.leave.length > 0) {
+    console.log(`\n  ${info(`${r.leave.length} dibiarkan terbuka - sumbernya memang ditagih manual:`)}`);
+    for (const i of r.leave.slice(0, 6)) console.log(`    #${i.no}  ${i.date}  ${rupiah(i.remaining).padStart(14)}  ${i.channel ?? 'manual'}`);
+  }
+
+  if (dryRun) { console.log(`\n  ${info('dry-run: belum ada pembayaran dicatat. Ulangi dengan --yes')}\n`); return 0; }
+  console.log(`\n  ${ok(`${r.paid} faktur dilunasi`)}`);
+  if (r.failures.length > 0) {
+    console.log(`  ${fail(`${r.failures.length} gagal`)}`);
+    for (const f of r.failures.slice(0, 5)) console.log(`    #${f.no}: ${f.error.slice(0, 80)}`);
+  }
+  console.log('');
+  return r.failures.length > 0 ? 1 : 0;
+}
+
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
   console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}`);
@@ -1234,6 +1272,7 @@ const COMMANDS = {
   'mekari:restate': cmdMekariRestate,
   'mekari:dedupe': cmdMekariDedupe,
   'mekari:reconcile': cmdMekariReconcile,
+  'mekari:settle': cmdMekariSettle,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

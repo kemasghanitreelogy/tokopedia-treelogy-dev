@@ -9,7 +9,8 @@
   },
   "bin": {
     "tts": "./bin/tts.mjs",
-    "shopee": "./bin/shopee.mjs"
+    "shopee": "./bin/shopee.mjs",
+    "tokopedia": "./bin/tokopedia.mjs"
   },
   "scripts": {
     "tts": "node bin/tts.mjs",
@@ -37,6 +38,12 @@
     "shopee:shop": "node bin/shopee.mjs shop",
     "shopee:orders": "node bin/shopee.mjs orders",
     "shopee:items": "node bin/shopee.mjs items",
+    "tokopedia": "node bin/tokopedia.mjs",
+    "tokopedia:doctor": "node bin/tokopedia.mjs doctor",
+    "tokopedia:reviews": "node bin/tokopedia.mjs reviews",
+    "tokopedia:reviews:list": "node bin/tokopedia.mjs reviews:list",
+    "tokopedia:reviews:stats": "node bin/tokopedia.mjs reviews:stats",
+    "tokopedia:reviews:export": "node bin/tokopedia.mjs reviews:export",
     "mekari:setup": "node bin/tts.mjs mekari:setup",
     "mekari:plan": "node bin/tts.mjs mekari:plan",
     "mekari:sync": "node bin/tts.mjs mekari:sync",

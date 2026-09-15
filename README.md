@@ -54,7 +54,35 @@ npm run doctor      # verify end to end
 | `npm run track -- <order_id>` | Carrier timeline plus package detail for one order |
 | `npm run doctor` | Eight-step health check, including the live deployment |
 | `npm run api -- <METHOD> <path> [k=v ...]` | Signed call to any endpoint |
+| `npm run tokopedia:doctor` | Shop rating, rating counts and star distribution, read from the storefront |
+| `npm run tokopedia:reviews [-- --quick --notify]` | Sync every written Tokopedia review into the store; low ratings to Telegram |
+| `npm run tokopedia:reviews:list -- --rating=1,2,3 --days=30` | Stored reviews, newest first, with filters |
+| `npm run tokopedia:reviews:stats` | Per star, per SKU, last 30 days, unreplied |
+| `npm run tokopedia:reviews:export -- --csv` | Write stored reviews to `state/tokopedia-reviews.csv` (or `--json`) |
 | `npm test` | Offline tests |
+
+### Tokopedia reviews
+
+The seller Open API (TikTok Shop's) can only *import* reviews; it has no call that
+reads them. The storefront does read them, so `src/tokopedia/` speaks to the same
+GraphQL gateway the shop's public review tab uses (`gql.tokopedia.com`), with the
+queries lifted verbatim from the storefront bundle:
+
+- `ReviewList` (shop-level) lists every written review with product and variant, but
+  only a relative time ("4 hari lalu").
+- `productReviewList` (product-level) carries the exact epoch time, in pages of 50.
+
+A sync walks the shop list, then fetches exact times only for reviews that lack one,
+and stops paging a product as soon as they are covered. The whole shop is a handful of
+requests, spaced at least 700 ms apart. Ratings without text are not items in either
+list; they exist only in the summary counts (`isAggregatedWithTTS` means those counts
+include TikTok Shop).
+
+Stored under `tokopedia/reviews.json` in the state store; read back by the CLI and by
+`GET /api/tokopedia/reviews` (dashboard session or `?key=`; query `rating`, `sku`,
+`product`, `days`, `text`, `limit`, `stats=1`). The nightly unit runs
+`bin/tokopedia.mjs reviews --notify`. Override the shop with `TOKOPEDIA_SHOP_ID` and
+`TOKOPEDIA_SHOP_SLUG`.
 
 ```bash
 npm run orders                       # 20 most recent orders
@@ -167,6 +195,11 @@ src/token-store.js       private Blob bundle read/write
 src/page.js              server-rendered callback pages (HTML-escaped)
 src/open-browser.js      launch the approval page without a shell
 src/format.js            masking and human-readable timestamps
+src/tokopedia/gql.js     storefront GraphQL transport: pacing, retries, error shapes
+src/tokopedia/reviews.js review crawl, exact-time enrichment, SKU match, store, stats, CSV
+src/tokopedia/notify.js  Telegram messages for low ratings and the sync digest
+src/tokopedia/cli.js     bin/tokopedia.mjs commands
+api/tokopedia/reviews.js stored reviews as JSON (read-only)
 test/                    offline tests
 claudedocs/              implementation plan
 ```

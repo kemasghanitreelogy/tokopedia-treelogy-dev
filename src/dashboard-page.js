@@ -72,7 +72,7 @@ const svg = (name, cls = '') =>
 
 export const VIEWS = {
   orders: 'Pesanan', process: 'Proses', picklist: 'Picklist', labels: 'Label',
-  stock: 'Stok', products: 'Produk', jurnal: 'Jurnal', forecast: 'Prakiraan',
+  stock: 'Stok', products: 'Produk', jurnal: 'Jurnal', forecast: 'Prakiraan', reviews: 'Ulasan',
 };
 
 function viewNav(current, rangeQuery) {
@@ -699,6 +699,19 @@ tbody tr:hover{background:var(--panel-2)}
 .fc__why{font-size:.7rem; color:var(--dim)}
 .fc__note{padding:.9rem 1rem; border-bottom:1px solid var(--line); font-size:.78rem; color:var(--muted); line-height:1.5}
 .fc__note b{color:var(--fg)}
+
+/* ------------------------------------------------- ulasan ------------------- */
+.rv__stars{color:#d9a400; letter-spacing:.05em; white-space:nowrap; font-size:.9rem}
+.rv__stars--low{color:var(--stop, #c0392b)}
+.rv__text{max-width:36rem; white-space:pre-wrap; line-height:1.45}
+.rv__meta{display:block; font-size:.72rem; color:var(--muted); margin-top:.2rem}
+.rv__reply{display:block; font-size:.74rem; color:var(--muted); margin-top:.35rem; padding-left:.6rem; border-left:2px solid var(--line); max-width:36rem}
+.rv__filters{display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.7rem 1rem; border-bottom:1px solid var(--line); font-size:.8rem}
+.rv__filters label{display:inline-flex; gap:.35rem; align-items:center; color:var(--muted)}
+.rv__filters select{font:inherit; font-size:.8rem; padding:.2rem .4rem; border:1px solid var(--line); border-radius:6px; background:var(--card, #fff); color:var(--fg)}
+.rv__filters button{font:inherit; font-size:.8rem; padding:.25rem .7rem; border:1px solid var(--line); border-radius:6px; background:var(--card, #fff); color:var(--fg); cursor:pointer}
+.rv__dist{display:grid; grid-template-columns:auto 1fr auto; gap:.25rem .6rem; align-items:center; font-size:.76rem; padding:.7rem 1rem; border-bottom:1px solid var(--line)}
+.rv__dist .bar{height:.5rem}
 
 /* ------------------------------------------------- transaksi manual ---------- */
 /* A data-entry form, so it is built for one hand on the keyboard: every field is
@@ -1795,6 +1808,122 @@ export function renderForecast({ forecast, range, errors, shopeeShop, generatedA
       <div class="foot"><span>${(forecast.rows ?? []).length} SKU komponen</span></div>`,
   });
 }
+
+const stars = (n, low) =>
+  `<span class="rv__stars ${low ? 'rv__stars--low' : ''}" aria-label="${n} dari 5 bintang">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`;
+
+const REVIEW_RATING_OPTIONS = [
+  ['', 'Semua bintang'], ['1,2,3', '≤ 3 bintang'], ['4', '4 bintang'], ['5', '5 bintang'],
+];
+const REVIEW_DAYS_OPTIONS = [['', 'Sepanjang waktu'], ['7', '7 hari'], ['30', '30 hari'], ['90', '90 hari'], ['365', '1 tahun']];
+
+/**
+ * Reviews view: what buyers wrote on Tokopedia, newest first, with the shop's rating.
+ *
+ * The page only reads the document the nightly sync wrote; a click here never crawls the
+ * storefront. Low ratings are the reason the page exists, so they lead the strip and
+ * the filter defaults to showing them first when there are any in the window.
+ */
+export function renderReviews({ doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash }) {
+  if (!doc?.syncedAt) {
+    return shell({
+      title: 'Ulasan Tokopedia', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
+      hideRangeControls: true,
+      body: `<p class="empty">Belum ada ulasan tersimpan. Jalankan <span class="mono">npm run tokopedia:reviews</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
+    });
+  }
+
+  const s = doc.summary ?? {};
+  const dist = s.distribution ?? {};
+  const distTotal = Object.values(dist).reduce((a, b) => a + b, 0);
+  const distRows = [5, 4, 3, 2, 1].map((n) => {
+    const count = dist[n] ?? 0;
+    const pct = distTotal ? Math.round((count / distTotal) * 1000) / 10 : 0;
+    return `<span class="mono">${n}★</span>
+      <div class="bar" role="img" aria-label="${n} bintang: ${count}"><span class="seg ${n <= 3 ? 'seg--bad' : 'seg--good'}" style="flex:${count}"></span><span class="seg" style="flex:${Math.max(distTotal - count, 0)}; background:transparent"></span></div>
+      <span class="mono dim">${count.toLocaleString('id-ID')} · ${pct}%</span>`;
+  }).join('');
+
+  const skuOptions = Object.entries(stats.bySku ?? {})
+    .filter(([sku]) => !sku.startsWith('(tanpa SKU)'))
+    .map(([sku, b]) => `<option value="${escape(sku)}" ${filter.sku === sku ? 'selected' : ''}>${escape(sku)} (${b.count})</option>`)
+    .join('');
+  const options = (list, current) =>
+    list.map(([v, label]) => `<option value="${v}" ${(current ?? '') === v ? 'selected' : ''}>${escape(label)}</option>`).join('');
+
+  const rows = reviews.map((r) => {
+    const low = r.rating <= 3;
+    const when = r.createdAt
+      ? `${dateTime(r.createdAtEpoch)}${r.createdAtPrecision === 'approx' ? ' <span class="dim" title="perkiraan dari teks relatif">~</span>' : ''}`
+      : '<span class="dim">&mdash;</span>';
+    const who = r.anonymous ? '<span class="dim">anonim</span>' : escape(r.reviewerName || 'pembeli');
+    const media = [r.images?.length ? `${r.images.length} foto` : '', r.videos?.length ? `${r.videos.length} video` : ''].filter(Boolean).join(', ');
+    const productLink = r.productUrl ? `<a href="${escape(r.productUrl)}/review" target="_blank" rel="noopener">${escape(r.variantName || r.productName)}</a>` : escape(r.variantName || r.productName);
+    return `<tr>
+      <td class="mono">${when}</td>
+      <td>${stars(r.rating, low)}</td>
+      <td><span class="pick__n">${r.sku ? escape(r.sku) : '<span class="dim">tanpa SKU</span>'}</span><span class="pick__s">${productLink}</span></td>
+      <td>
+        <div class="rv__text">${r.text ? escape(r.text) : '<span class="dim">(tanpa teks)</span>'}</div>
+        <span class="rv__meta">${who}${r.badRatingReason ? ` &middot; ${escape(r.badRatingReason)}` : ''}${media ? ` &middot; ${escape(media)}` : ''}${r.likes ? ` &middot; ${r.likes} terbantu` : ''}</span>
+        ${r.reply ? `<span class="rv__reply">${escape(r.reply.text)}</span>` : ''}
+      </td>
+      <td>${r.reply ? '<span class="mini mini--done">Dibalas</span>' : `<span class="mini ${low ? 'mini--bad' : 'mini--warn'}">Belum dibalas</span>`}</td>
+    </tr>`;
+  }).join('');
+
+  const skuRows = Object.entries(stats.bySku ?? {}).map(([sku, b]) => `<tr>
+      <td>${sku.startsWith('(tanpa SKU)') ? `<span class="dim">${escape(sku)}</span>` : `<span class="mono">${escape(sku)}</span>`}</td>
+      <td class="num mono">${b.count}</td>
+      <td class="num mono">${b.average ?? '&mdash;'}</td>
+      <td class="num mono ${b.low ? 'stop' : ''}">${b.low}</td>
+    </tr>`).join('');
+
+  return shell({
+    title: 'Ulasan Tokopedia',
+    range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
+    hideRangeControls: true,
+    kpis: `
+      <div class="strip">
+        ${stat('Rating toko', s.score ? String(s.score) : '—', 'ok')}
+        ${stat('Penilaian', (s.totalRatings ?? 0).toLocaleString('id-ID'))}
+        ${stat('Tertulis', String(stats.written.count))}
+        ${stat('≤ 3 bintang', String(stats.written.low), stats.written.low ? 'flag' : '')}
+        ${stat('Belum dibalas', String(stats.unreplied), stats.unreplied ? 'flag' : '')}
+        ${stat('30 hari', `${stats.last30Days.count} · ${stats.last30Days.average ?? '—'}`, stats.last30Days.low ? 'stop' : '')}
+        <span class="strip__grow"></span>
+        <span class="note">Sinkron ${escape(wibStamp(doc.syncedAt))}${s.aggregatedWithTikTok ? ' · penilaian gabungan Tokopedia + TikTok Shop' : ''}</span>
+      </div>`,
+    body: `
+      <div class="fc__note">
+        Dibaca dari halaman toko <a href="https://www.tokopedia.com/${escape(loadTokopediaSlug())}/review" target="_blank" rel="noopener">${escape(doc.shopName || 'Tokopedia')}</a>.
+        Hanya ulasan yang <b>ditulis</b> yang ada di daftar; penilaian bintang tanpa teks hanya masuk hitungan di atas.
+        Tanggal dengan <b>~</b> adalah perkiraan dari teks &ldquo;n hari lalu&rdquo;.
+      </div>
+      <div class="rv__dist">${distRows}</div>
+      <form class="rv__filters" method="get">
+        <input type="hidden" name="view" value="reviews">
+        <label>Bintang <select name="rating">${options(REVIEW_RATING_OPTIONS, filter.rating)}</select></label>
+        <label>Rentang <select name="days">${options(REVIEW_DAYS_OPTIONS, filter.days)}</select></label>
+        <label>SKU <select name="sku"><option value="">Semua SKU</option>${skuOptions}</select></label>
+        <label><input type="checkbox" name="text" value="1" ${filter.text ? 'checked' : ''}> hanya yang ada teks</label>
+        <button type="submit">Saring</button>
+        <span class="dim">${reviews.length} ulasan</span>
+      </form>
+      ${rows ? `<div class="scroll"><table class="dense">
+        <thead><tr><th>Waktu</th><th>Bintang</th><th>Produk</th><th>Ulasan</th><th>Balasan</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>` : '<p class="empty">Tidak ada ulasan yang cocok dengan saringan.</p>'}
+      <div class="fc__note"><b>Per SKU</b> &mdash; seluruh ulasan tersimpan, bukan hanya yang disaring.</div>
+      <div class="scroll"><table class="dense">
+        <thead><tr><th>SKU</th><th class="num">Ulasan</th><th class="num">Rata-rata</th><th class="num">≤ 3★</th></tr></thead>
+        <tbody>${skuRows}</tbody>
+      </table></div>
+      <div class="foot"><span>${stats.written.count} ulasan tertulis tersimpan &middot; ekspor: <span class="mono">npm run tokopedia:reviews:export</span></span></div>`,
+  });
+}
+
+const loadTokopediaSlug = () => process.env.TOKOPEDIA_SHOP_SLUG || 'treelogy-moringa';
 
 /**
  * Label view: pick the parcels to print, get one PDF sized for the thermal printer.

@@ -1,7 +1,8 @@
 import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { loadReviews, selectReviews, reviewStats } from '../src/tokopedia/reviews.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -523,6 +524,32 @@ export default async function handler(req, res) {
       console.log(`dashboard/forecast: ${forecast?.rows?.length ?? 0} sku`);
       send(200, renderForecast({
         forecast, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
+      }));
+      return;
+    }
+
+    // Reviews are a document the nightly Tokopedia sync wrote; reading it costs one
+    // lookup and never touches the storefront from a web request.
+    if (view === 'reviews') {
+      const doc = await cached('tokopedia-reviews', 60_000, () => loadReviews().catch(() => null));
+      const filter = {
+        rating: url.searchParams.get('rating') ?? '',
+        days: url.searchParams.get('days') ?? '',
+        sku: url.searchParams.get('sku') ?? '',
+        text: url.searchParams.get('text') === '1',
+      };
+      const days = Number(filter.days) || 0;
+      const reviews = doc ? selectReviews(doc, {
+        ratings: filter.rating ? filter.rating.split(',').map(Number).filter((n) => n >= 1 && n <= 5) : undefined,
+        sku: filter.sku || undefined,
+        sinceEpoch: days ? Math.floor(Date.now() / 1000) - days * 86400 : undefined,
+        withText: filter.text,
+        limit: 500,
+      }) : [];
+      console.log(`dashboard/reviews: ${reviews.length} of ${Object.keys(doc?.reviews ?? {}).length}`);
+      send(200, renderReviews({
+        doc, stats: doc ? reviewStats(doc) : null, reviews, filter,
+        range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
       return;
     }

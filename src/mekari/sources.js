@@ -51,25 +51,32 @@ export const SOURCES = {
 };
 
 /**
- * Where delivery charged to the buyer belongs - and how it gets there.
+ * Where delivery charged to the buyer is booked, and why it is not 5030.
  *
- * Jurnal has a company-level "sales shipping account" and it is set to 7-70099 Other
- * Income, which is why every invoice credited the postage to other income instead of to
- * delivery. The public API will not change it: the documented PATCH on /companies/{id}
- * comes back 400 "Invalid HTTP parameters" with the documented body, with the full
- * record, and with shipping_sale set alongside it - while a body without the `company`
- * wrapper is refused as 406 and PUT as 405, which together prove the shape is right and
- * the field simply is not permitted.
+ * The business asked for 5030 Delivery to Customer and this went a long way trying to get
+ * it there. What the investigation actually established, in order:
  *
- * So the postage does not travel in Jurnal's shipping field at all. It travels as a line
- * on the invoice, against a product whose own sell account is 5030 - which puts the
- * credit exactly where the business asked for it, using only fields the API does accept,
- * and without depending on a setting somebody has to remember to keep.
+ *   - The account a sales invoice credits for postage is not on the invoice payload at
+ *     all. It is a company-level mapping, "Sales Shipping" under Company Settings →
+ *     Account Mapping.
+ *   - That mapping cannot be written through the public API. PATCH /companies/{id} returns
+ *     400 "Invalid HTTP parameters" for the documented body, for the full record, and even
+ *     when setting the field to the value it already holds - while the same body without
+ *     the `company` wrapper is refused 406 and PUT is refused 405, which together prove
+ *     the request shape was right and the field simply is not writable.
+ *   - In the UI the field is locked, and Jurnal describes it as "accumulate total shipping
+ *     income from your sales transactions". It wants an income account. 5030 is category
+ *     Cost of Sales, so it is not offered.
+ *
+ * So postage stays in 7-70099 Other Income, by decision rather than by neglect. The two
+ * ways round it were both refused on their merits: billing postage as a product put a
+ * thing nobody sells into the product list and into every per-product sales report, and a
+ * separate shipping-income account was not what the business wanted either.
+ *
+ * This constant is what the books actually do. If the mapping is ever unlocked, changing
+ * it here and in Jurnal is the whole of the work.
  */
-export const SHIPPING_ACCOUNT_NUMBER = '5030';
-
-/** The product that carries postage. Its sell account is what decides where the money lands. */
-export const SHIPPING_PRODUCT = { code: 'ONGKIR', name: 'Ongkos Kirim' };
+export const SHIPPING_ACCOUNT_NUMBER = '7-70099';
 
 /** Every receivable account this system books into, for the one-time setup check. */
 export const RECEIVABLE_NUMBERS = [...new Set(Object.values(SOURCES).map((s) => s.receivable))].sort();

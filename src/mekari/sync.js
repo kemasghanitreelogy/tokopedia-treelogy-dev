@@ -4,7 +4,6 @@ import { buildInvoice, verifyInvoice, customIdFor, customerFor, CUSTOMER_NAMES }
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
 import { accountMap } from './accounts.js';
-import { shippingAccountReady } from './coa.js';
 import { receivableFor } from './sources.js';
 /**
  * The Jurnal account id this order's buyer should be created against.
@@ -222,26 +221,6 @@ export function syncOverview({ orders, ledger, depositTo = null }) {
  * cannot stop the rest of the run.
  */
 export async function postOrder(order, { depositTo = null, dryRun = true, deadlineAt = null } = {}) {
-  // Postage goes into Jurnal's own shipping field, and which account that field credits
-  // is a company setting this API cannot write - so it is the one part of the policy a
-  // person can change without anybody noticing. It was 7-70099 Other Income for months.
-  //
-  // An order carrying postage is therefore held rather than posted while the setting is
-  // wrong. Holding is recoverable - the next sweep picks it up the moment the setting is
-  // right - and posting is not, short of deleting and rewriting the invoice.
-  if (Number(order.finance?.shipping) > 0) {
-    const shipping = await shippingAccountReady();
-    if (shipping?.ok === false) {
-      return {
-        customId: customIdFor(order),
-        id: order.id,
-        channel: order.channel,
-        status: 'deferred',
-        error: `akun pengiriman penjualan di Jurnal masih ${shipping.current?.number ?? '?'} ${shipping.current?.name ?? ''} - ubah ke ${shipping.wanted} dulu`,
-      };
-    }
-  }
-
   const customId = customIdFor(order);
   let payload;
   let expectedTotal;

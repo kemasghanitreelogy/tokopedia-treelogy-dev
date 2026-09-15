@@ -24,6 +24,7 @@ import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
 import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
 import { restate } from './mekari/restate.js';
 import { removeDuplicates } from './mekari/dedupe.js';
+import { reconcileLedger } from './mekari/reconcile.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -66,6 +67,7 @@ Usage:
   npm run mekari:coa          Setel akun ongkir & tag di Jurnal, tampilkan kebijakan per sumber (butuh --yes)
   npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
+  npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -1043,6 +1045,36 @@ async function cmdMekariDedupe(config, args = []) {
   return result.failures.length > 0 ? 1 : 0;
 }
 
+/**
+ * Make the ledger say what Jurnal actually holds.
+ *
+ * The rebuild cannot: it merges with the stored ledger winning, so an entry pointing at a
+ * deleted invoice is exactly what it can never repair - and that entry is what tells the
+ * sweep the order is booked. Jurnal is the books; this is a cache of them, so Jurnal wins.
+ */
+async function cmdMekariReconcile(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || '2026-09-01';
+  const dryRun = !args.includes('--yes');
+
+  const r = await reconcileLedger({ from, dryRun });
+
+  console.log(`\n  sejak ${from}  ·  ${r.ordersInWindow} pesanan di database  ·  ${r.inJurnal} faktur di Jurnal  ·  ${r.inLedger} entri ledger\n`);
+  console.log(`  ${r.corrected.length} nomor faktur dikoreksi  ·  ${r.forgotten.length} entri dilupakan (fakturnya tidak ada di Jurnal)`);
+  for (const row of r.forgotten.slice(0, 8)) console.log(`    lupakan ${row.customId} (dulu #${row.was ?? '-'})`);
+  if (r.forgotten.length > 8) console.log(`    ...dan ${r.forgotten.length - 8} lagi`);
+
+  // What the sweep will have to write afterwards, which is the number that matters.
+  const akanDitulis = r.forgotten.length;
+  if (dryRun) {
+    console.log(`\n  setelah ini sapuan akan menulis ulang ${akanDitulis} faktur yang hilang`);
+    console.log(`\n  ${info('dry-run: ledger belum diubah. Ulangi dengan --yes')}\n`);
+    return 0;
+  }
+  console.log(`\n  ${ok('ledger sekarang menggambarkan isi Jurnal')}\n`);
+  return 0;
+}
+
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
   console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}`);
@@ -1201,6 +1233,7 @@ const COMMANDS = {
   'mekari:coa': cmdMekariCoa,
   'mekari:restate': cmdMekariRestate,
   'mekari:dedupe': cmdMekariDedupe,
+  'mekari:reconcile': cmdMekariReconcile,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

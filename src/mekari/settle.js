@@ -20,6 +20,35 @@ import { jurnalDateToIso } from './rebuild.js';
 
 const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
 const PAYMENTS_PATH = '/public/jurnal/api/v1/receive_payments';
+const METHODS_PATH = '/public/jurnal/api/v1/payment_methods';
+
+/**
+ * How the money arrived. Jurnal requires it and will not guess.
+ *
+ * The first attempt sent neither and all fourteen payments were refused with a 422 whose
+ * body said exactly that - "Payment method must be sent" - while the error surfaced only
+ * as "HTTP 422", which is the third time today a Jurnal rejection was readable and went
+ * unread. Marketplace settlements land in the bank, so Bank Transfer; the account offers
+ * Cash, Check, Bank Transfer and Credit Card.
+ */
+const DEFAULT_METHOD = 'Bank Transfer';
+const methodName = () => process.env.MEKARI_PAYMENT_METHOD || DEFAULT_METHOD;
+
+let methodCache = null;
+
+/** The id Jurnal knows this method by; both name and id are required on a payment. */
+async function paymentMethod({ deadlineAt = null } = {}) {
+  if (methodCache) return methodCache;
+  const wanted = methodName();
+  const result = await mekari({ path: METHODS_PATH, deadlineAt });
+  const rows = result?.payment_methods ?? [];
+  const hit = rows.find((m) => String(m.name ?? '').toLowerCase() === wanted.toLowerCase());
+  if (!hit) {
+    throw new Error(`metode pembayaran "${wanted}" tidak ada di Jurnal - yang tersedia: ${rows.map((m) => m.name).join(', ')}`);
+  }
+  methodCache = { id: hit.id, name: hit.name };
+  return methodCache;
+}
 const PAGE_SIZE = 50;
 
 const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
@@ -83,6 +112,7 @@ export async function settleOpenInvoices({ since = null, dryRun = true, onProgre
   if (dryRun) return { dryRun: true, deposit, open: open.length, settle, leave, paid: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('catat pembayaran faktur');
 
+  const method = await paymentMethod();
   let paid = 0;
   const failures = [];
   for (const invoice of settle) {
@@ -96,6 +126,8 @@ export async function settleOpenInvoices({ since = null, dryRun = true, onProgre
           receive_payment: {
             transaction_date: invoice.date,
             deposit_to_name: deposit,
+            payment_method_id: method.id,
+            payment_method_name: method.name,
             // Keyed so a re-run cannot pay the same invoice twice, the way the invoice
             // create is keyed. This is the only protection against a double payment.
             custom_id: `TRLPAY-${invoice.customId}`,
@@ -113,5 +145,5 @@ export async function settleOpenInvoices({ since = null, dryRun = true, onProgre
       failures.push({ no: invoice.no, customId: invoice.customId, error: error.message });
     }
   }
-  return { dryRun: false, deposit, open: open.length, settle, leave, paid, failures };
+  return { dryRun: false, deposit, method, open: open.length, settle, leave, paid, failures };
 }

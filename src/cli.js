@@ -1094,7 +1094,7 @@ async function cmdMekariSettle(config, args = []) {
     onProgress: (p) => { if (p.paid % 10 === 0) console.log(`  dilunasi ${p.paid}/${p.of}`); },
   });
 
-  console.log(`\n  ${r.open} faktur masih terbuka  ·  akun tujuan ${r.deposit}\n`);
+  console.log(`\n  ${r.open} faktur masih terbuka  ·  akun tujuan ${r.deposit}  ·  metode ${r.method?.name ?? '?'}\n`);
   console.log(`  ${r.settle.length} akan dilunasi (kanal online, uangnya sudah di platform):`);
   for (const i of r.settle.slice(0, 12)) console.log(`    #${i.no}  ${i.date}  ${rupiah(i.remaining).padStart(14)}  ${i.channel}`);
   if (r.settle.length > 12) console.log(`    ...dan ${r.settle.length - 12} lagi`);

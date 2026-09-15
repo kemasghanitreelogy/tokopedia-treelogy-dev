@@ -510,12 +510,17 @@ test('a transient failure is deferred, a real one is failed', async () => {
 
 /* ------------------------------------------------------------- kuota & 409 */
 
-test('the request budget stops before the fortieth call, and a 429 opens a cool-down', async () => {
-  const { budgetWaitMs, noteRateLimited, resetBudget, REQUESTS_PER_MINUTE } = await import('../src/mekari/client.js');
+test('the request budget stays under the account ceiling, and a 429 opens a cool-down', async () => {
+  const { budgetWaitMs, noteRateLimited, resetBudget, REQUESTS_PER_MINUTE, MIN_WRITE_INTERVAL_MS } = await import('../src/mekari/client.js');
   resetBudget();
-  // Measured live: 40 unpaced requests went through, then everything was 429 for the rest
-  // of the minute. The budget keeps a margin under that for webhooks on other instances.
-  assert.ok(REQUESTS_PER_MINUTE < 40);
+  // The account's ceiling is 100 requests a minute. The budget keeps a margin under it,
+  // because three processes on the box share it through Redis and a request this bucket
+  // never sees - a redirect, a retry inside fetch - spends the same quota.
+  assert.ok(REQUESTS_PER_MINUTE < 100, 'harus di bawah plafon akun');
+  assert.ok(REQUESTS_PER_MINUTE >= 80, 'tapi tidak menyisakan separuh kapasitas menganggur');
+  // The bucket must be the thing that binds, not the per-call spacing; otherwise raising
+  // the budget changes nothing and the pacing quietly stays the real limit.
+  assert.ok(Math.floor(60_000 / MIN_WRITE_INTERVAL_MS) > REQUESTS_PER_MINUTE, 'jeda tulis tidak boleh lebih ketat dari anggaran');
   assert.equal(budgetWaitMs(1_000_000), 0);
   resetBudget();
   noteRateLimited(2_000_000);

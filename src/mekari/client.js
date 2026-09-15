@@ -108,14 +108,19 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 export const MIN_INTERVAL_MS = Number(process.env.MEKARI_MIN_INTERVAL_MS) || 350;
 /**
- * Writes are paced far harder than reads.
+ * Writes are paced harder than reads, but no longer three times harder than the limit.
  *
- * Measured against the live account: creating products at ~3/second got 19 through before
- * a 429 that five retries could not outlast. Reads never tripped it. Backfilling a month
- * is a one-off that can afford to take an hour; tripping the limiter halfway through and
- * having to work out what landed cannot.
+ * Measured against the live account when this was written: creating products at ~3/second
+ * got 19 through before a 429 that five retries could not outlast. That measurement stands
+ * - bursting still trips it - but the conclusion drawn from it was too cautious. The
+ * account's documented ceiling is 100 requests a minute, and 1100ms between writes caps a
+ * run at 54, so half the available rate was being left unused. A restatement that should
+ * take seven minutes took thirty-six.
+ *
+ * 650ms still refuses a burst while leaving the bucket below as what actually governs -
+ * the interval allows 92 a minute, the bucket 90, so the bucket is the one that binds.
  */
-export const MIN_WRITE_INTERVAL_MS = Number(process.env.MEKARI_MIN_WRITE_INTERVAL_MS) || 1100;
+export const MIN_WRITE_INTERVAL_MS = Number(process.env.MEKARI_MIN_WRITE_INTERVAL_MS) || 650;
 let nextSlot = 0;
 
 /**
@@ -127,8 +132,18 @@ let nextSlot = 0;
  * matters is how many this process has made in the last minute. This bucket keeps it
  * under the line, and a 429 that slips through anyway opens a cool-down so the rest of
  * the run fails fast as "deferred" instead of each call discovering the same closed door.
+ *
+ * The 40 was the measurement; the account's documented ceiling is 100 a minute. Both are
+ * kept here because they are different kinds of fact and the gap between them matters: 34
+ * was a guess derived from one observation, and it made every long job three times slower
+ * than it needed to be.
+ *
+ * 90 rather than 100 on purpose. Three processes on this box spend the same budget and
+ * coordinate through Redis, whose clock and ours differ by a little; a request that is not
+ * counted here - a retry inside fetch, a redirect - spends quota all the same. The ten
+ * left over are what stops a rounding error becoming a 429 in the middle of a restatement.
  */
-export const REQUESTS_PER_MINUTE = Number(process.env.MEKARI_REQUESTS_PER_MINUTE) || 34;
+export const REQUESTS_PER_MINUTE = Number(process.env.MEKARI_REQUESTS_PER_MINUTE) || 90;
 const WINDOW_MS = 60_000;
 const recent = [];
 let cooldownUntil = 0;

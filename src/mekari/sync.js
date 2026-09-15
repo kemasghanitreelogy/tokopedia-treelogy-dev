@@ -133,35 +133,41 @@ export const LOCK_PATHNAME = 'mekari/sync.lock';
 const LOCK_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Best-effort mutual exclusion between overlapping runs.
+ * Mutual exclusion between overlapping runs, through the state store.
  *
- * Blob has no compare-and-set, so this cannot be a real lock - two runs that start in
- * the same instant will both take it. It exists to stop the common case, a cron tick
- * firing while the previous one is still working through a backlog. The guarantee that
- * actually protects the books is the custom_id probe before every create.
+ * It used to be written straight to Blob, and when state moved behind the store the Blob
+ * helpers went with it - leaving this function calling a `blobToken()` that no longer
+ * existed in its scope. Nothing caught it because the webhook path passes lock:false, so
+ * only `mekari:sync --yes` ever reached the broken line, and it failed with a bare
+ * "blobToken is not defined" that says nothing about locking.
+ *
+ * Now it is one transactional update on the store, which on Redis is a genuine
+ * compare-and-set rather than the read-then-write it was before. A run that crashes
+ * mid-batch would otherwise hold the lock for good, so the holder expires; and the thing
+ * that actually protects the books is still the custom_id probe before every create, not
+ * this.
  */
 export async function acquireLock(owner = `${Date.now()}-${Math.random().toString(36).slice(2)}`) {
-  const token = blobToken();
-  if (!token) return { acquired: true, owner, held: false };
-
   try {
-    const existing = await get(LOCK_PATHNAME, { access: 'private', useCache: false, token });
-    if (existing) {
-      const held = JSON.parse(await new Response(existing.stream).text());
-      // A run that crashed mid-batch would otherwise hold the lock forever.
-      if (Date.now() - Number(held.at ?? 0) < LOCK_TTL_MS) {
-        return { acquired: false, owner: held.owner ?? null, since: held.at ?? null, held: true };
+    const now = Date.now();
+    let outcome = { acquired: false, owner: null, since: null, held: false };
+    await updateDoc(LOCK_PATHNAME, (current) => {
+      const heldBy = current?.owner ?? null;
+      const since = Number(current?.at ?? 0);
+      const fresh = heldBy && now - since < LOCK_TTL_MS;
+      if (fresh) {
+        outcome = { acquired: false, owner: heldBy, since, held: true };
+        return current;
       }
-    }
+      outcome = { acquired: true, owner, held: true };
+      return { owner, at: now };
+    }, { owner: null, at: 0 });
+    return outcome;
   } catch {
-    // An unreadable lock is treated as absent; worst case two runs race and the
-    // custom_id probe makes the second one a no-op.
+    // A store we cannot reach must not stop the books being written. Two runs racing is
+    // survivable - the custom_id probe makes the loser a no-op - and not posting is not.
+    return { acquired: true, owner, held: false };
   }
-
-  await put(LOCK_PATHNAME, JSON.stringify({ owner, at: Date.now() }), {
-    access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
-  });
-  return { acquired: true, owner, held: true };
 }
 
 export async function releaseLock() {

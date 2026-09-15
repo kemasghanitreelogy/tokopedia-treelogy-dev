@@ -673,3 +673,26 @@ test('saving takes the union, so only forgetting can remove', async () => {
   assert.equal(await forgetSyncLedgerEntries([]), 0);
   await forgetSyncLedgerEntries(['TRL-shopee-B']);
 });
+
+/* ------------------------------------------------------ the sync lock actually locks */
+
+test('the lock holds, refuses a second run, and is released', async () => {
+  // It used to write straight to Blob, and when state moved behind the store the Blob
+  // helpers went with it - leaving this calling a blobToken() no longer in scope. Nothing
+  // caught it: the webhook path passes lock:false, so only `mekari:sync --yes` reached
+  // the broken line, and it failed with a bare "blobToken is not defined".
+  const { acquireLock, releaseLock } = await import('../src/mekari/sync.js');
+
+  const first = await acquireLock('satu');
+  assert.equal(first.acquired, true);
+  assert.equal(first.owner, 'satu');
+
+  const second = await acquireLock('dua');
+  assert.equal(second.acquired, false, 'run kedua harus ditolak selagi yang pertama memegang');
+  assert.equal(second.owner, 'satu', 'dan harus menyebut siapa yang memegang');
+
+  await releaseLock();
+  const third = await acquireLock('tiga');
+  assert.equal(third.acquired, true, 'setelah dilepas kunci bisa diambil lagi');
+  await releaseLock();
+});

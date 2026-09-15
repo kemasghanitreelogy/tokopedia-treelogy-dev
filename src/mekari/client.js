@@ -216,6 +216,29 @@ async function takeSlot(interval = MIN_INTERVAL_MS, deadlineAt = null) {
  *   (product image upload). Sent as-is: fetch sets the boundary, and forcing a JSON
  *   content type over it is what turns a valid upload into a 400.
  */
+/**
+ * What Jurnal actually said went wrong.
+ *
+ * Its error bodies come in several shapes: {message}, {errors}, a bare {raw}, and -
+ * for validation - {error_full_messages: [...]} alongside a field-keyed object like
+ * {address: "too long, (maximum of 250 characters)"}. Only the first two were being read.
+ */
+export function describeFailure(payload) {
+  if (!payload) return '';
+  if (Array.isArray(payload.error_full_messages) && payload.error_full_messages.length > 0) {
+    return payload.error_full_messages.join('; ');
+  }
+  if (payload.message) return payload.message;
+  if (payload.errors) return payload.errors;
+  if (payload.raw) return payload.raw;
+  // A field-keyed validation body with no summary: report the fields and their complaints
+  // rather than an empty string, which is what made these look like bodyless refusals.
+  const fields = Object.entries(payload)
+    .filter(([key, value]) => typeof value === 'string' && value && key !== 'id')
+    .map(([key, value]) => `${key}: ${value}`);
+  return fields.length > 0 ? fields.join('; ') : '';
+}
+
 export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null, retryCreate = false }) {
   // A POST creates something. Retrying one after a timeout or a 5xx risks a second copy,
   // because the first may well have succeeded - the response is what went missing, not
@@ -288,7 +311,15 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
     }
 
     if (!response.ok) {
-      const detail = payload?.message ?? payload?.errors ?? payload?.raw ?? '';
+      // error_full_messages first, because that is where Jurnal actually puts the reason.
+      //
+      // Three separate failures today were refused with a 422 whose body said exactly what
+      // was wrong - an address over 250 characters, an email its validator disliked, a
+      // missing payment method - and every one of them reached the log as "POST -> HTTP
+      // 422" and nothing else, because this line looked only at `message` and `errors`.
+      // Each cost a separate investigation to learn something the response had already
+      // said. A failure that will not name itself is barely better than a silent one.
+      const detail = describeFailure(payload);
       throw new MekariError(
         `${method} ${path} -> HTTP ${response.status}${detail ? `: ${JSON.stringify(detail).slice(0, 200)}` : ''}`,
         { status: response.status, body: payload },

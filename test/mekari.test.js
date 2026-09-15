@@ -725,3 +725,31 @@ test('a long address is trimmed to fit, and verify refuses one that is not', asy
   invoice.sales_invoice.address = long;
   assert.throws(() => verifyInvoice(invoice, invoice.expectedTotal), /250 karakter/);
 });
+
+/* ------------------------------------- a rejection must say what it was rejected for */
+
+test('Jurnal error bodies are read in every shape it sends them', async () => {
+  // Three failures in one day reached the log as "POST -> HTTP 422" and nothing else,
+  // because only `message` and `errors` were being read - while the reason sat in
+  // error_full_messages, or in a field-keyed body with no summary at all.
+  const { describeFailure } = await import('../src/mekari/client.js');
+
+  assert.equal(
+    describeFailure({ error_full_messages: ['Address too long, (maximum of 250 characters)'] }),
+    'Address too long, (maximum of 250 characters)',
+  );
+  assert.equal(
+    describeFailure({ error_full_messages: ['Payment method must be sent', 'Payment method name must be sent'] }),
+    'Payment method must be sent; Payment method name must be sent',
+  );
+  // A field-keyed validation body with no summary: the fields are the message.
+  assert.equal(
+    describeFailure({ address: 'too long, (maximum of 250 characters)', id: null }),
+    'address: too long, (maximum of 250 characters)',
+  );
+  assert.equal(describeFailure({ message: 'Monthly limit exceeded.' }), 'Monthly limit exceeded.');
+  assert.equal(describeFailure({ raw: '<html>502</html>' }), '<html>502</html>');
+  // Nothing to say is still nothing to say - but it must not throw.
+  assert.equal(describeFailure(null), '');
+  assert.equal(describeFailure({ id: 123 }), '');
+});

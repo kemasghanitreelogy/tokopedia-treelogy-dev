@@ -49,9 +49,15 @@ export async function findDuplicates({ since = null, deadlineAt = null } = {}) {
       if (since && day && day < since) { reachedStart = true; continue; }
       const customId = String(invoice.custom_id ?? '');
       if (!/^TRL-/.test(customId)) continue;
-      const list = byCustomId.get(customId) ?? [];
-      list.push({ id: invoice.id, no: invoice.transaction_no, date: day, amount: Math.round(Number(invoice.original_amount) || 0) });
-      byCustomId.set(customId, list);
+      // Keyed by invoice id, not pushed onto a list.
+      //
+      // Paging through a list while deleting from it shifts rows between pages, so the
+      // same invoice can be read twice - and a list would then show it as a duplicate of
+      // itself, keep one copy and delete "the other", which is the same row. That is not
+      // hypothetical: it removed around five hundred invoices before it was caught.
+      const seen = byCustomId.get(customId) ?? new Map();
+      seen.set(invoice.id, { id: invoice.id, no: invoice.transaction_no, date: day, amount: Math.round(Number(invoice.original_amount) || 0) });
+      byCustomId.set(customId, seen);
     }
 
     const pages = Number(result?.total_pages) || 1;
@@ -59,9 +65,15 @@ export async function findDuplicates({ since = null, deadlineAt = null } = {}) {
   }
 
   const groups = [...byCustomId.entries()]
-    .filter(([, list]) => list.length > 1)
-    // Oldest first, so the keeper is at the head and the rest are what goes.
-    .map(([customId, list]) => ({ customId, keep: [...list].sort((a, b) => a.id - b.id)[0], drop: [...list].sort((a, b) => a.id - b.id).slice(1) }));
+    .filter(([, seen]) => seen.size > 1)
+    .map(([customId, seen]) => {
+      // Oldest first: the keeper is the one anything else may already point at.
+      const sorted = [...seen.values()].sort((a, b) => a.id - b.id);
+      return { customId, keep: sorted[0], drop: sorted.slice(1) };
+    })
+    // A group whose "copies" are the keeper itself is not a group. Belt and braces on top
+    // of the Map above, because the cost of getting this wrong is a deleted invoice.
+    .filter((g) => g.drop.length > 0 && g.drop.every((d) => d.id !== g.keep.id));
 
   return {
     scanned,
@@ -75,6 +87,9 @@ export async function findDuplicates({ since = null, deadlineAt = null } = {}) {
  * @param {{since?: string|null, dryRun?: boolean, onProgress?: Function}} options
  */
 export async function removeDuplicates({ since = null, dryRun = true, onProgress = () => {} } = {}) {
+  // The whole scan completes before a single delete is sent. Interleaving them is what
+  // made rows shift under the pagination in the first place; a plan built from one
+  // consistent read cannot describe an invoice as its own duplicate.
   const found = await findDuplicates({ since });
   if (dryRun) return { ...found, dryRun: true, removed: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('hapus faktur kembar');
@@ -83,6 +98,7 @@ export async function removeDuplicates({ since = null, dryRun = true, onProgress
   const failures = [];
   for (const group of found.groups) {
     for (const copy of group.drop) {
+      if (copy.id === group.keep.id) continue; // cannot happen; the cost if it did is the invoice
       try {
         await mekari({ method: 'DELETE', path: `${INVOICES_PATH}/${copy.id}` });
         removed += 1;

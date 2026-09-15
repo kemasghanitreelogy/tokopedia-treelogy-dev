@@ -966,6 +966,7 @@ async function cmdMekariRestate(config, args = []) {
     from,
     dryRun,
     onProgress: (p) => {
+      if (p.stage === 'piutang' && p.changed % 50 === 0) console.log(`  piutang pelanggan dipindah ${p.changed}/${p.of}`);
       if (p.stage === 'buat') console.log(`  ditulis ${p.created}/${p.of}`);
     },
   });
@@ -978,12 +979,13 @@ async function cmdMekariRestate(config, args = []) {
   }
 
   if (dryRun) {
-    console.log(`\n  perkiraan biaya API: ${result.apiCalls} panggilan (${result.doomed} hapus + ${Math.ceil(result.rebuildable.length / 50)} batch tulis)`);
+    console.log(`\n  ${result.receivables.size} pelanggan perlu dipindahkan ke piutang sumbernya`);
+    console.log(`  perkiraan biaya API: ${result.apiCalls} panggilan (5 baca pelanggan + ${result.receivables.size} pindah + ${result.doomed} hapus + ${Math.ceil(result.rebuildable.length / 50)} batch tulis)`);
     console.log(`\n  ${info('dry-run: tidak ada yang dihapus. Ulangi dengan --yes')}\n`);
     return 0;
   }
 
-  console.log(`\n  ${result.deleted} dihapus  ·  ${result.created} ditulis ulang  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  console.log(`\n  ${result.aligned.changed} pelanggan dipindah  ·  ${result.deleted} dihapus  ·  ${result.created} ditulis ulang  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
   if (result.failures.length > 0) {
     console.log(`  ${fail(`${result.failures.length} gagal:`)}`);
     for (const f of result.failures.slice(0, 10)) console.log(`    ${f.customId} (${f.stage}): ${f.error}`);

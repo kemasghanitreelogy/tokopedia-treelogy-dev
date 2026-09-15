@@ -2,7 +2,9 @@ import { mekari } from './client.js';
 import { loadSyncLedger, saveSyncLedger } from './sync.js';
 import { buildInvoice, verifyInvoice, customIdFor, InvoiceError } from './invoice.js';
 import { ordersInRange } from '../db/orders.js';
-import { isAutoPaid } from './sources.js';
+import { isAutoPaid, receivableFor } from './sources.js';
+import { alignReceivables } from './receivables.js';
+import { customerFor } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { wibDayStart, wibDate } from '../range.js';
 
@@ -66,17 +68,25 @@ export async function planRestatement({ from }) {
     }
   }
 
+  // Which customer belongs in which receivable. Most of the cost of a restatement lives
+  // here rather than in the invoices: the account is a property of the customer, so 462
+  // invoices are 450 customers to move first.
+  const receivables = new Map();
+  for (const item of rebuildable) receivables.set(customerFor(item.order), receivableFor(item.order));
+
   return {
     from,
     since,
     until,
+    receivables,
     ordersInWindow: orders.length,
     ledgerEntries: entries.length,
     doomed: doomed.length,
     rebuildable,
     unbuildable,
-    // What the operator actually pays for: one delete each, then one request per fifty.
-    apiCalls: doomed.length + Math.ceil(rebuildable.length / BATCH),
+    // What the operator actually pays for: five to read the customers, one patch each,
+    // one delete each, then one request per fifty written back.
+    apiCalls: 5 + receivables.size + doomed.length + Math.ceil(rebuildable.length / BATCH),
     autoPaid: rebuildable.filter((r) => isAutoPaid(r.order)).length,
   };
 }
@@ -96,9 +106,21 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
   if (dryRun) return { ...plan, dryRun: true, deleted: 0, created: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('restate faktur Jurnal');
 
+  // Customers first, and before a single invoice is touched.
+  //
+  // The order matters and is not arbitrary: an invoice posts its receivable at the moment
+  // it is created, from whatever account the customer carries then. Rewrite the invoices
+  // before moving the customers and all 462 land in 1100 again - the whole exercise
+  // spent, and nothing changed.
+  const aligned = await alignReceivables(plan.receivables, {
+    dryRun: false,
+    onProgress: (p) => onProgress({ stage: 'piutang', ...p }),
+  });
+
   const ledger = await loadSyncLedger();
   let deleted = 0;
   const failures = [];
+  for (const f of aligned.failures) failures.push({ customId: f.name, stage: 'piutang', error: f.error });
 
   for (const item of plan.rebuildable.concat(plan.unbuildable)) {
     try {
@@ -153,7 +175,7 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
     onProgress({ stage: 'buat', created, of: plan.rebuildable.length });
   }
 
-  return { ...plan, dryRun: false, deleted, created, failures };
+  return { ...plan, dryRun: false, aligned, deleted, created, failures };
 }
 
 export { wibDate };

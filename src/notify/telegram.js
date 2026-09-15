@@ -1,4 +1,5 @@
 import { readEnv } from '../env-file.js';
+import { wibDate } from '../range.js';
 import { fetchWithTimeout } from '../http.js';
 import { ENV_PATH, ENV_LOCAL_PATH, publicBaseUrl } from '../config.js';
 
@@ -172,7 +173,10 @@ export async function notifyStockRisk(forecast, options = {}) {
 
   // Keyed on the day and the SKUs, so the same set is not repeated within a day but a
   // newly critical product still gets through.
-  const key = `stock|${new Date().toISOString().slice(0, 10)}|${rows.map((r) => r.sku).sort().join(',')}`;
+  // Keyed on the Jakarta day, not the UTC one: a "once a day" alert keyed on UTC resets
+  // at 07:00 local, which is the middle of the working morning rather than the boundary
+  // anybody thinks in.
+  const key = `stock|${wibDate(Math.floor(Date.now() / 1000))}|${rows.map((r) => r.sku).sort().join(',')}`;
   return sendTelegram(lines.join('\n'), { ...options, key });
 }
 

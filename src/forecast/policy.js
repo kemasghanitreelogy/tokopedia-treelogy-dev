@@ -1,3 +1,4 @@
+import { wibDate } from '../range.js';
 /**
  * Turning a forecast into a decision.
  *
@@ -53,8 +54,10 @@ export function stockPolicy({ forecasts, onHand = 0, onOrder = 0, policy = DEFAU
 
   // Days until the median forecast eats the stock on hand. Infinite when nothing sells.
   const daysOfCover = daily > 0 ? Math.floor(onHand / daily) : null;
-  const stockoutOn = (days) => (days === null ? null
-    : new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10));
+  // WIB, like every other date a person reads here. toISOString alone gives the UTC day,
+  // which between midnight and 07:00 Jakarta is yesterday - so a stockout date shown to
+  // somebody placing an order in the morning would have been a day early.
+  const stockoutOn = (days) => (days === null ? null : wibDate(Math.floor(Date.now() / 1000) + days * 86_400));
   // The pessimistic case: demand at the top of the interval.
   const fastDaily = daily + dailySpread;
   const daysOfCoverFast = fastDaily > 0 ? Math.floor(onHand / fastDaily) : null;

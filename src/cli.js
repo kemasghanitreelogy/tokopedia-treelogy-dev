@@ -21,6 +21,8 @@ import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from './mekari/setup.js';
 import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
+import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
+import { restate } from './mekari/restate.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -60,6 +62,8 @@ Usage:
   npm run notify:test         Kirim pesan uji ke Telegram
   npm run images              Tarik gambar produk & varian dari Shopify ke dashboard
   npm run mekari:images       Unggah gambar produk Shopify ke Jurnal & dashboard (butuh --yes)
+  npm run mekari:coa          Setel akun ongkir & tag di Jurnal, tampilkan kebijakan per sumber (butuh --yes)
+  npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -910,6 +914,78 @@ async function cmdMekariImages(config, args = []) {
   return result.failed ? 1 : 0;
 }
 
+/**
+ * The two settings that live in Jurnal rather than here, plus the policy table printed so
+ * a person can check it against what the business actually decided.
+ */
+async function cmdMekariCoa(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const dryRun = !args.includes('--yes');
+
+  const result = await setUpChartOfAccounts({ dryRun });
+
+  console.log(`\n  ${result.company.name}  ·  ongkir ke ${result.shipping.number} ${result.shipping.name}\n`);
+  console.log(`  ${'SUMBER'.padEnd(14)}${'TAG'.padEnd(14)}${'PIUTANG'.padEnd(10)}${'TERMIN'.padEnd(9)}PEMBAYARAN`);
+  for (const row of await describePolicy()) {
+    console.log(`  ${row.label.padEnd(14)}${row.tag.padEnd(14)}${row.receivable.padEnd(10)}${`Net ${row.termDays}`.padEnd(9)}${row.autoPaid ? ok('otomatis lunas') : warn('manual')}`);
+  }
+
+  if (dryRun) {
+    if (result.tagsToCreate.length > 0) console.log(`\n  ${info(`tag yang akan dibuat: ${result.tagsToCreate.join(', ')}`)}`);
+    console.log(`\n  ${info('dry-run: belum ada yang disetel. Ulangi dengan --yes')}\n`);
+    return 0;
+  }
+  console.log(`\n  ${ok(`akun ongkir disetel ke ${result.shipping.number}`)}`);
+  if (result.tagsCreated.length > 0) console.log(`  ${ok(`tag dibuat: ${result.tagsCreated.join(', ')}`)}`);
+  console.log('');
+  return 0;
+}
+
+/**
+ * Re-book what was written under the old rules.
+ *
+ * Destructive by nature - Jurnal cannot move an invoice between receivables, so restating
+ * means deleting and writing again, and the old invoice numbers do not come back. The
+ * plan is always printed first and --yes is always required.
+ */
+async function cmdMekariRestate(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || '2026-09-01';
+  const dryRun = !args.includes('--yes');
+  const t0 = Date.now();
+
+  const result = await restate({
+    from,
+    dryRun,
+    onProgress: (p) => {
+      if (p.stage === 'buat') console.log(`  ditulis ${p.created}/${p.of}`);
+    },
+  });
+
+  console.log(`\n  sejak ${from}  ·  ${result.ordersInWindow} pesanan di database  ·  ${result.doomed} faktur milik sistem ini\n`);
+  console.log(`  ${result.rebuildable.length} bisa ditulis ulang  ·  ${result.autoPaid} di antaranya otomatis lunas`);
+  if (result.unbuildable.length > 0) {
+    console.log(`  ${warn(`${result.unbuildable.length} tidak bisa dibangun ulang - akan dihapus dan tidak ditulis kembali:`)}`);
+    for (const row of result.unbuildable.slice(0, 8)) console.log(`    ${row.customId}: ${row.error}`);
+  }
+
+  if (dryRun) {
+    console.log(`\n  perkiraan biaya API: ${result.apiCalls} panggilan (${result.doomed} hapus + ${Math.ceil(result.rebuildable.length / 50)} batch tulis)`);
+    console.log(`\n  ${info('dry-run: tidak ada yang dihapus. Ulangi dengan --yes')}\n`);
+    return 0;
+  }
+
+  console.log(`\n  ${result.deleted} dihapus  ·  ${result.created} ditulis ulang  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  if (result.failures.length > 0) {
+    console.log(`  ${fail(`${result.failures.length} gagal:`)}`);
+    for (const f of result.failures.slice(0, 10)) console.log(`    ${f.customId} (${f.stage}): ${f.error}`);
+    console.log('');
+    return 1;
+  }
+  console.log(`  ${ok('selesai')}\n`);
+  return 0;
+}
+
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
   console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}`);
@@ -1065,6 +1141,8 @@ const COMMANDS = {
   'notify:test': cmdNotifyTest,
   images: cmdImages,
   'mekari:images': cmdMekariImages,
+  'mekari:coa': cmdMekariCoa,
+  'mekari:restate': cmdMekariRestate,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

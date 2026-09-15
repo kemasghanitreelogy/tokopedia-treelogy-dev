@@ -1,6 +1,7 @@
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
-import { orderCode, orderPrefix, termDaysFor, PREFIXES } from './prefix.js';
+import { orderCode, orderPrefix, PREFIXES } from './prefix.js';
+import { termDaysFor, isAutoPaid, sourceOf } from './sources.js';
 
 /**
  * Turning an order into a Jurnal sales invoice.
@@ -149,9 +150,11 @@ export function buildInvoice({ order, depositTo = null }) {
   // The business writes every order with its source prefix, so the books do too.
   const code = orderCode(order);
 
+  const source = sourceOf(order);
   const invoice = {
     transaction_date: date,
-    // Net 14 for every source except consignment, which is Net 7.
+    // Net 14 where the platform already took the money, Net 7 where somebody has to chase
+    // it. The source table decides; nothing here knows which is which.
     due_date: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600),
     person_name: customerFor(order),
     // Jurnal needs a term it already holds, or the invoice shows as "Custom" with no
@@ -162,6 +165,10 @@ export function buildInvoice({ order, depositTo = null }) {
     reference_no: code,
     transaction_lines_attributes: lines,
     shipping_price: shipping,
+    // Written on every invoice rather than typed in afterwards. A tag that depends on
+    // somebody remembering is a tag that is right for a fortnight and then silently is
+    // not, and it is the only thing that lets one receivable be read back by channel.
+    tags: [source.tag],
     // The buyer's name is masked by the marketplaces, so it belongs in the memo rather
     // than as a contact that could never be reached.
     memo: [channel, code, order.note].filter(Boolean).join(' · '),
@@ -185,7 +192,12 @@ export function buildInvoice({ order, depositTo = null }) {
 
   // Marking the invoice paid on deposit keeps receivables clean: a marketplace order is
   // settled before it ever ships, so leaving it open would overstate what is owed.
-  if (depositTo) {
+  //
+  // Only for the sources where that is actually true. A consignment shop, a walk-in, a
+  // WhatsApp order - the money for those arrives later, by transfer or in person, and
+  // marking them paid on the day they were raised would empty the receivable that exists
+  // precisely so somebody can chase them.
+  if (depositTo && isAutoPaid(order)) {
     invoice.deposit_to_name = depositTo;
     invoice.deposit = goods + shipping;
   }
@@ -219,6 +231,12 @@ export function verifyInvoice(payload, expectedTotal) {
   }
   if (payload.sales_invoice.deposit !== undefined && payload.sales_invoice.deposit !== total) {
     throw new InvoiceError(`deposit ${payload.sales_invoice.deposit} tidak sama dengan total ${total}`);
+  }
+  // An untagged invoice is not a cosmetic problem: the per-source receivables are only
+  // readable back by channel because of the tag, and one missing tag is a sale that
+  // disappears from whichever report the business actually looks at.
+  if (!Array.isArray(invoice.tags) || invoice.tags.length === 0) {
+    throw new InvoiceError('faktur tanpa tag sumber');
   }
   return total;
 }

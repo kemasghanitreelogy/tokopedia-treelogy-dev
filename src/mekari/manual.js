@@ -1,3 +1,4 @@
+import { SOURCES } from './sources.js';
 import { MANUAL_SOURCES, PREFIXES, isManualSource } from './prefix.js';
 import { findProduct, PRODUCTS } from '../master.js';
 import { InvoiceError } from './invoice.js';
@@ -20,7 +21,11 @@ const MAX_LINES = 40;
 export const SOURCE_OPTIONS = MANUAL_SOURCES.map((prefix) => ({
   prefix,
   label: PREFIXES[prefix].label,
-  termDays: PREFIXES[prefix].termDays,
+  // From the source table, which is where terms live now. Every typed-in source settles
+  // on seven days: these are the sales somebody has to chase, which is exactly why they
+  // are not given the fortnight a marketplace gets for money it has already taken.
+  termDays: SOURCES[prefix].termDays,
+  tag: SOURCES[prefix].tag,
 }));
 
 /** Products worth offering, newest naming first; gifts are sellable too (as a zero line). */

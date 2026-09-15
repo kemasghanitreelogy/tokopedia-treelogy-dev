@@ -10,13 +10,34 @@ import { loadSyncLedger, saveSyncLedger } from './sync.js';
  * store was suspended - an inconvenience rather than a disaster: walk the invoices, and
  * every order that was ever posted is known again, with its invoice id and amount.
  */
-export async function rebuildLedgerFromJurnal({ dryRun = true } = {}) {
+/**
+ * Jurnal writes dates as DD/MM/YYYY, which Date.parse reads as month-first or not at all.
+ * Getting this wrong would silently stop the walk on the first page for most of the year.
+ */
+export function jurnalDateToIso(value) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value ?? '').trim());
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/**
+ * @param {{dryRun?: boolean, since?: string|null}} options
+ *   `since` is a WIB calendar date; pages are walked newest-first and the walk stops as
+ *   soon as one ends before it. On books with a year of history that is the difference
+ *   between five requests and fifty, and requests are the scarce thing here.
+ */
+export async function rebuildLedgerFromJurnal({ dryRun = true, since = null } = {}) {
   const found = {};
   let page = 1;
   let pages = 1;
   for (;;) {
-    const r = await mekari({ path: `/public/jurnal/api/v1/sales_invoices?page=${page}&page_size=100` });
-    for (const inv of r.sales_invoices ?? []) {
+    const r = await mekari({
+      path: `/public/jurnal/api/v1/sales_invoices?page=${page}&page_size=100&sort_key=transaction_date&sort_order=desc`,
+    });
+    const rows = r.sales_invoices ?? [];
+    let reachedStart = false;
+    for (const inv of rows) {
+      const iso = jurnalDateToIso(inv.transaction_date);
+      if (since && iso && iso < since) { reachedStart = true; continue; }
       const customId = String(inv.custom_id ?? '');
       const m = /^TRL-([a-z_]+)-(.+)$/.exec(customId);
       if (!m) continue;
@@ -30,7 +51,7 @@ export async function rebuildLedgerFromJurnal({ dryRun = true } = {}) {
       };
     }
     pages = Number(r.total_pages) || 1;
-    if (page >= pages) break;
+    if (reachedStart || page >= pages || rows.length === 0) break;
     page += 1;
   }
 
@@ -41,5 +62,5 @@ export async function rebuildLedgerFromJurnal({ dryRun = true } = {}) {
     current.orders = { ...found, ...(current.orders ?? {}) };
     await saveSyncLedger(current);
   }
-  return { dryRun, inJurnal: Object.keys(found).length, before, added: added.length, pages };
+  return { dryRun, since, inJurnal: Object.keys(found).length, before, added: added.length, pagesRead: page, pages };
 }

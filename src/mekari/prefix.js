@@ -11,24 +11,30 @@
  * neutral SHF when detection cannot tell.
  */
 
-/** Payment terms per source, in days. Consignment settles a week earlier than the rest. */
-export const DEFAULT_TERM_DAYS = 14;
-
+/**
+ * The prefixes themselves, and only what a prefix is.
+ *
+ * Payment terms used to live here too, alongside a copy of the same fact in the source
+ * table - two places to change and one of them always forgotten. Terms, tags, receivables
+ * and whether the platform already took the money are all properties of the *source*, and
+ * they live together in sources.js. This file answers one question: what does an order
+ * code start with.
+ */
 export const PREFIXES = {
-  SP: { label: 'Shopee', channel: 'shopee', termDays: 14 },
-  SHF: { label: 'Shopify', channel: 'shopify', termDays: 14 },
-  TP: { label: 'Tokopedia', channel: 'tokopedia', termDays: 14 },
-  TT: { label: 'TikTok Shop', channel: 'tiktok_shop', termDays: 14 },
+  SP: { label: 'Shopee', channel: 'shopee' },
+  SHF: { label: 'Shopify', channel: 'shopify' },
+  TP: { label: 'Tokopedia', channel: 'tokopedia' },
+  TT: { label: 'TikTok Shop', channel: 'tiktok_shop' },
   // Sources that never reach this system automatically. They are listed so the one table
   // describes the whole convention, and so a manual invoice can be looked up here.
-  CS: { label: 'Consignment', channel: null, termDays: 7 },
-  LB: { label: 'La Brisa', channel: null, termDays: 14 },
-  DP: { label: 'WhatsApp / direct sales', channel: null, termDays: 14 },
-  DW: { label: 'Walk-in', channel: null, termDays: 14 },
-  WS: { label: 'Wholesale', channel: null, termDays: 14 },
+  CS: { label: 'Consignment', channel: null },
+  LB: { label: 'La Brisa', channel: null },
+  DP: { label: 'WhatsApp / direct sales', channel: null },
+  DW: { label: 'Walk-in', channel: null },
+  WS: { label: 'Wholesale', channel: null },
   // Shopify splits by how the buyer paid.
-  WA: { label: 'Shopify via Xendit', channel: 'shopify', termDays: 14 },
-  WX: { label: 'Shopify Payments', channel: 'shopify', termDays: 14 },
+  WA: { label: 'Shopify via Xendit', channel: 'shopify' },
+  WX: { label: 'Shopify Payments', channel: 'shopify' },
 };
 
 const BY_CHANNEL = { shopee: 'SP', tokopedia: 'TP', tiktok_shop: 'TT', shopify: 'SHF' };
@@ -87,6 +93,3 @@ export function orderCode(order) {
   const bare = String(order.id ?? '').replace(/^#/, '');
   return `${orderPrefix(order)}-${bare}`;
 }
-
-/** Payment term in days for an order's source. */
-export const termDaysFor = (order) => PREFIXES[orderPrefix(order)]?.termDays ?? DEFAULT_TERM_DAYS;

@@ -3,6 +3,25 @@ import { mekari, isMekariConfigured, MekariError, QuotaExhaustedError } from './
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
+import { accountMap } from './accounts.js';
+import { receivableFor } from './sources.js';
+/**
+ * The Jurnal account id this order's buyer should be created against.
+ *
+ * Resolved from the account number, which is cached for a day, so this costs nothing per
+ * order. Returns null rather than throwing when the chart cannot be read: a contact
+ * created without an explicit receivable falls back to Jurnal's company default, which is
+ * recoverable, whereas refusing to create the contact loses the sale entirely.
+ */
+async function receivableIdFor(order) {
+  try {
+    const accounts = await accountMap();
+    return accounts[receivableFor(order)]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 
 /**
  * Posting orders into Jurnal, exactly once.
@@ -231,7 +250,7 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
   // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now
   // names its own buyer, so the contact is made to exist first.
   try {
-    await ensureContact(customerFor(order), { deadlineAt });
+    await ensureContact(customerFor(order), { deadlineAt, receivableId: await receivableIdFor(order) });
   } catch (error) {
     return { customId, id: order.id, channel: order.channel, status: failureOf(error), error: `kontak gagal: ${error.message}`, monthly: Boolean(error.monthly) };
   }
@@ -445,7 +464,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
  * same total check, same idempotency key - because a manual sale is a sale.
  */
 export async function postManual({ order, depositTo = null, dryRun = true }) {
-  if (!dryRun && order.customer) await ensureContact(order.customer);
+  if (!dryRun && order.customer) await ensureContact(order.customer, { receivableId: await receivableIdFor(order) });
   const result = await runSync({ orders: [order], depositTo, dryRun, limit: 1, lock: false });
   return result.results[0] ?? { status: 'failed', error: 'tidak ada yang diproses' };
 }

@@ -160,7 +160,8 @@ test('the read-only brake stops a live post before any request is built', async 
 
 /* ----------------------------------------------------------- order-code prefixes */
 
-const { orderCode, orderPrefix, shopifyPrefix, termDaysFor, PREFIXES } = await import('../src/mekari/prefix.js');
+const { orderCode, orderPrefix, shopifyPrefix, PREFIXES } = await import('../src/mekari/prefix.js');
+const { SOURCES, termDaysFor, isAutoPaid, tagFor, receivableFor, uncoveredPrefixes } = await import('../src/mekari/sources.js');
 
 test('each channel gets the prefix the business already uses for it', () => {
   assert.equal(orderCode({ channel: 'shopee', id: '260911QF5PA82R' }), 'SP-260911QF5PA82R');
@@ -234,13 +235,45 @@ test('the term names one Jurnal actually holds, and agrees with the due date', (
   assert.equal(online.due_date, jurnalDate(order().createdAt + 14 * 24 * 3600));
 });
 
-test('payment terms are Net 14, except consignment at Net 7', () => {
+test('a platform that already took the money gets Net 14; everything chased gets Net 7', () => {
+  // The split is not about size or channel, it is about who is holding the money on the
+  // day the invoice is raised.
   assert.equal(termDaysFor({ channel: 'shopee' }), 14);
-  assert.equal(PREFIXES.CS.termDays, 7);
-  for (const [code, meta] of Object.entries(PREFIXES)) {
-    assert.ok(meta.termDays > 0, `${code} tanpa termin`);
-    assert.ok(meta.label, `${code} tanpa arti`);
+  assert.equal(termDaysFor({ channel: 'tiktok_shop' }), 14);
+  assert.equal(termDaysFor({ channel: 'shopify' }), 14);
+  for (const prefix of ['CS', 'LB', 'DP', 'DW', 'WS']) {
+    assert.equal(SOURCES[prefix].termDays, 7, prefix);
+    assert.equal(SOURCES[prefix].autoPaid, false, prefix);
   }
+  for (const prefix of ['SP', 'TP', 'TT', 'SHF', 'WA', 'WX']) {
+    assert.equal(SOURCES[prefix].termDays, 14, prefix);
+    assert.equal(SOURCES[prefix].autoPaid, true, prefix);
+  }
+});
+
+test('every source names a receivable and a tag, and no prefix falls through', () => {
+  // A prefix with no source silently books into the web shop's receivable, which is how a
+  // wholesale sale ends up in the wrong account and balances anyway.
+  assert.deepEqual(uncoveredPrefixes(), []);
+  for (const [prefix, source] of Object.entries(SOURCES)) {
+    assert.match(source.receivable, /^1(50[1-5])$/, prefix);
+    assert.ok(source.tag, `${prefix} tanpa tag`);
+    assert.ok(PREFIXES[prefix]?.label, `${prefix} tanpa arti`);
+  }
+});
+
+test('the receivable follows the source the business asked for', () => {
+  assert.equal(receivableFor({ channel: 'shopee' }), '1503');
+  assert.equal(receivableFor({ channel: 'tokopedia' }), '1504');
+  // TikTok Shop settles through Tokopedia's receivable and carries its tag: one API, one
+  // entity, one number.
+  assert.equal(receivableFor({ channel: 'tiktok_shop' }), '1504');
+  assert.equal(tagFor({ channel: 'tiktok_shop' }), 'Tokopedia');
+  assert.equal(receivableFor({ channel: 'shopify' }), '1505');
+  // Wholesale and consignment share one receivable by decision, not by accident.
+  assert.equal(SOURCES.WS.receivable, SOURCES.CS.receivable);
+  // WhatsApp, La Brisa and a walk-in are all the general consumer.
+  for (const prefix of ['DP', 'LB', 'DW']) assert.equal(SOURCES[prefix].receivable, '1502', prefix);
 });
 
 test('due date is the transaction date plus the term, in WIB', () => {
@@ -350,7 +383,7 @@ test('used codes are read back out of the ledger', () => {
 
 test('the form is offered exactly the five offline sources and real SKUs', () => {
   assert.deepEqual(SOURCE_OPTIONS.map((o) => o.prefix), ['CS', 'LB', 'DP', 'DW', 'WS']);
-  assert.equal(SOURCE_OPTIONS.find((o) => o.prefix === 'CS').termDays, 7);
+  for (const option of SOURCE_OPTIONS) assert.equal(option.termDays, 7, option.prefix);
   assert.ok(SELLABLE.length > 0);
   for (const product of SELLABLE) assert.ok(findProductForTest(product.sku), product.sku);
 });
@@ -552,4 +585,44 @@ test('readiness proven within a day is not proven again', async () => {
   const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const result = await ensureReady({ dryRun: false, readyAt: fresh });
   assert.equal(result.skipped, 'sudah dipastikan dalam 24 jam terakhir');
+});
+
+/* ------------------------------------------------- per-source booking policy */
+
+const { jurnalDateToIso } = await import('../src/mekari/rebuild.js');
+
+test('Jurnal dates are read day-first, because Date.parse reads them month-first', () => {
+  // 09/11/2026 is 9 November in Jurnal and 11 September to Date.parse. A walk that stops
+  // at a date would have stopped on the wrong page for most of the year.
+  assert.equal(jurnalDateToIso('09/11/2026'), '2026-11-09');
+  assert.equal(jurnalDateToIso('15/09/2026'), '2026-09-15');
+  assert.equal(jurnalDateToIso('2026-09-15'), null);
+  assert.equal(jurnalDateToIso(''), null);
+});
+
+test('an invoice carries its source tag, and refuses to exist without one', () => {
+  const online = buildInvoice({ order: order() });
+  assert.deepEqual(online.sales_invoice.tags, ['Shopee']);
+  verifyInvoice(online, online.expectedTotal);
+
+  // The tag is the only thing that makes one receivable readable back by channel, so a
+  // missing one is a sale that vanishes from the report the business actually opens.
+  const untagged = { sales_invoice: { ...online.sales_invoice, tags: [] } };
+  assert.throws(() => verifyInvoice(untagged, online.expectedTotal), /tanpa tag/);
+});
+
+test('only a platform that already took the money produces a paid invoice', () => {
+  const paid = buildInvoice({ order: order(), depositTo: 'BCA' }).sales_invoice;
+  assert.equal(paid.deposit_to_name, 'BCA');
+
+  // A consignment shop pays later, by transfer. Marking it paid on the day it was raised
+  // would empty the receivable that exists precisely so somebody can chase it.
+  const manual = buildInvoice({
+    order: { ...order(), channel: 'manual', id: 'CS-260901-001' },
+    depositTo: 'BCA',
+  }).sales_invoice;
+  assert.equal(manual.deposit_to_name, undefined);
+  assert.equal(manual.deposit, undefined);
+  assert.equal(manual.term_name, 'Net 7');
+  assert.deepEqual(manual.tags, ['Consignment']);
 });

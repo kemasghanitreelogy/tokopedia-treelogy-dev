@@ -219,7 +219,7 @@ export async function ensureReady({ dryRun = true, readyAt = null } = {}) {
  * before writing matters more here than for the four fixed channels: two contacts with
  * the same display name would quietly split that customer's history in two.
  */
-export async function ensureContact(name, { deadlineAt = null } = {}) {
+export async function ensureContact(name, { deadlineAt = null, receivableId = null } = {}) {
   const wanted = String(name ?? '').trim();
   if (!wanted) throw new Error('nama pelanggan kosong');
   if (knownContacts.has(wanted)) return { name: wanted, created: false };
@@ -235,6 +235,13 @@ export async function ensureContact(name, { deadlineAt = null } = {}) {
           display_name: wanted,
           is_customer: true,
           is_vendor: false,
+          // The receivable an invoice lands in is a property of the *contact*, not of the
+          // invoice - Jurnal's sales invoice payload has no account field at all, which
+          // is why splitting A/R by source has to happen here, at the moment the buyer is
+          // first created. Set once and never changed afterwards: a buyer who later
+          // appears on a second channel keeps the account their history is already in,
+          // because moving it would split one customer across two ledgers.
+          ...(receivableId ? { default_ar_account_id: receivableId } : {}),
           other_detail: 'Dibuat otomatis dari pesanan Treelogy',
         },
       },

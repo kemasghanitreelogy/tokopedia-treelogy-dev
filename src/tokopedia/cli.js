@@ -4,6 +4,7 @@ import {
   shopReviewUrl, LOW_RATING_MAX,
 } from './reviews.js';
 import { notifyReviewSync } from './notify.js';
+import { prefetchMedia, mediaDir } from './media.js';
 import { ok, fail, warn, info } from '../format.js';
 
 const USAGE = `tokopedia - ulasan toko Tokopedia (dibaca dari storefront, bukan Open API)
@@ -19,6 +20,8 @@ Pakai:
   npm run tokopedia:reviews:stats      Rangkuman: per bintang, per SKU, 30 hari terakhir, belum dibalas
   npm run tokopedia:reviews:export     Tulis ulasan tersimpan ke berkas
       --csv[=path]  --json[=path]      (bawaan: state/tokopedia-reviews.csv / .json), filter sama seperti list
+  npm run tokopedia:reviews:media      Unduh foto semua ulasan tersimpan ke cache lokal (state/tokopedia-media)
+      --limit=600                      Batas berkas per jalan; sisanya diambil saat dibuka di dashboard
 
 Sumber: ${shopReviewUrl(loadTokopediaConfig().shopSlug)}
 Ubah toko lewat TOKOPEDIA_SHOP_ID dan TOKOPEDIA_SHOP_SLUG di .env.
@@ -74,6 +77,10 @@ async function cmdReviews(config, args) {
   } else {
     console.log(ok(`${result.total} ulasan tersimpan (${result.listed} terdaftar di toko), ${result.requests} permintaan`));
     console.log(info(`baru ${result.added.length}, berubah ${result.updated.length}`));
+    if (result.media) {
+      const m = result.media;
+      console.log(info(`foto: ${m.fetched} diunduh, ${m.cached} sudah ada, ${m.failed} gagal${m.deferred ? `, ${m.deferred} ditunda ke saat dibuka` : ''}`));
+    }
     const low = result.added.filter((r) => r.rating <= LOW_RATING_MAX);
     if (low.length) {
       console.log(warn(`${low.length} ulasan baru <= ${LOW_RATING_MAX} bintang:`));
@@ -143,12 +150,27 @@ async function cmdExport(config, args) {
   return 0;
 }
 
+async function cmdMedia(config, args) {
+  const doc = await loadReviews(config.shopId);
+  if (!doc.syncedAt) {
+    console.log(fail('belum ada ulasan tersimpan - jalankan `npm run tokopedia:reviews` dulu'));
+    return 1;
+  }
+  const withPhotos = Object.values(doc.reviews).filter((r) => r.images.length);
+  const files = withPhotos.reduce((n, r) => n + r.images.length * 2, 0);
+  console.log(info(`${withPhotos.length} ulasan berfoto, ${files} berkas (thumb + full) → ${mediaDir()}`));
+  const result = await prefetchMedia(withPhotos, { limit: Number(value(args, 'limit')) || 600, log: (line) => console.log(warn(line.trim())) });
+  console.log(ok(`${result.fetched} diunduh, ${result.cached} sudah ada, ${result.failed} gagal${result.deferred ? `, ${result.deferred} ditunda (jalankan lagi)` : ''}`));
+  return result.failed && !result.fetched && !result.cached ? 1 : 0;
+}
+
 const COMMANDS = {
   doctor: cmdDoctor,
   reviews: cmdReviews,
   'reviews:list': cmdList,
   'reviews:stats': cmdStats,
   'reviews:export': cmdExport,
+  'reviews:media': cmdMedia,
 };
 
 export async function run(argv) {

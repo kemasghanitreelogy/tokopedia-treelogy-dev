@@ -44,6 +44,7 @@
     "tokopedia:reviews:list": "node bin/tokopedia.mjs reviews:list",
     "tokopedia:reviews:stats": "node bin/tokopedia.mjs reviews:stats",
     "tokopedia:reviews:export": "node bin/tokopedia.mjs reviews:export",
+    "tokopedia:reviews:media": "node bin/tokopedia.mjs reviews:media",
     "mekari:setup": "node bin/tts.mjs mekari:setup",
     "mekari:plan": "node bin/tts.mjs mekari:plan",
     "mekari:sync": "node bin/tts.mjs mekari:sync",

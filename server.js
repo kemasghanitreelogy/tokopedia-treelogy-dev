@@ -25,6 +25,7 @@ const ROUTES = {
   '/api/shopee/callback': './api/shopee/callback.js',
   '/api/shopee/status': './api/shopee/status.js',
   '/api/tokopedia/reviews': './api/tokopedia/reviews.js',
+  '/api/tokopedia/media': './api/tokopedia/media.js',
   '/api/webhook/shopee': './api/webhook/shopee.js',
   '/api/webhook/tiktok': './api/webhook/tiktok.js',
   '/api/webhook/shopify': './api/webhook/shopify.js',

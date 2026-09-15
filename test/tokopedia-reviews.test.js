@@ -183,6 +183,7 @@ test('a sync stores reviews with exact times, and a second sync only pays for wh
   const first = await syncReviews(transport);
   assert.equal(first.added.length, 2);
   assert.equal(first.initial, true);
+  assert.equal(first.media, null, 'no photos in these reviews, so nothing was prefetched');
   assert.equal(first.requests, 3, 'summary + one shop page + one product page');
   assert.equal(first.summary.totalRatings, 2732);
 
@@ -235,7 +236,11 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
   assert.match(empty, /Belum ada ulasan tersimpan/);
   assert.match(empty, /npm run tokopedia:reviews/);
 
-  const low = normalizeShopReview(shopRaw('9', { rating: 2, reviewText: 'Paket <b>penyok</b>', badRatingReasonFmt: 'Kemasan' }), { shopId: '1', nowEpoch: NOW });
+  const low = normalizeShopReview(shopRaw('9', {
+    rating: 2, reviewText: 'Paket <b>penyok</b>', badRatingReasonFmt: 'Kemasan',
+    attachments: [{ attachmentID: '359838891', thumbnailURL: 'https://signed/t?x=1', fullsizeURL: 'https://signed/f?x=1' }],
+    videoAttachments: [{ attachmentID: '77', videoUrl: 'https://signed/v.mp4' }],
+  }), { shopId: '1', nowEpoch: NOW });
   const fine = normalizeShopReview(shopRaw('10', { replyText: 'Terima kasih', replyTime: '1 hari lalu' }), { shopId: '1', nowEpoch: NOW });
   const doc = {
     shopId: '1', shopName: 'Treelogy Moringa', syncedAt: new Date(NOW * 1000).toISOString(),
@@ -244,7 +249,8 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
   };
   const html = renderReviews({ doc, stats: reviewStats(doc, { nowEpoch: NOW }), reviews: selectReviews(doc), filter: { rating: '1,2,3' }, ...common });
   assert.match(html, /Ulasan Tokopedia/);
-  assert.match(html, /★★☆☆☆/);
+  assert.match(html, /aria-label="2 dari 5 bintang"/);
+  assert.match(html, /rv__stars--low/);
   assert.match(html, /Paket &lt;b&gt;penyok&lt;\/b&gt;/, 'buyer text is untrusted HTML');
   assert.doesNotMatch(html, /Paket <b>penyok/);
   assert.match(html, /Kemasan/);
@@ -255,6 +261,17 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
   assert.match(html, /OMC-270-001/);
   assert.match(html, /<option value="1,2,3" selected>/, 'the filter form reflects the current filter');
   assert.match(html, /class="viewtab is-on" href="\?view=reviews/);
+
+  // Photos go through our cache, never to Tokopedia's signed URL, and open in the lightbox.
+  assert.match(html, /<img src="\/api\/tokopedia\/media\?id=359838891&amp;s=thumb"[^>]*loading="lazy"/);
+  assert.match(html, /data-full="\/api\/tokopedia\/media\?id=359838891&amp;s=full"/);
+  assert.doesNotMatch(html, /https:\/\/signed\/t\?x=1/);
+  assert.match(html, /<dialog id="rv-lightbox"/);
+  assert.match(html, /getElementById\('rv-lightbox'\)/);
+  assert.match(html, /href="https:\/\/signed\/v\.mp4"/, 'videos link out');
+  assert.match(html, /1 berfoto/);
+  assert.match(html, /rv--low/);
+  assert.doesNotMatch(html, /[\u{1F300}-\u{1FAFF}]/u, 'no emoji icons');
 });
 
 // --- transport

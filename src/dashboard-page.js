@@ -701,17 +701,104 @@ tbody tr:hover{background:var(--panel-2)}
 .fc__note b{color:var(--fg)}
 
 /* ------------------------------------------------- ulasan ------------------- */
-.rv__stars{color:#d9a400; letter-spacing:.05em; white-space:nowrap; font-size:.9rem}
-.rv__stars--low{color:var(--stop, #c0392b)}
-.rv__text{max-width:36rem; white-space:pre-wrap; line-height:1.45}
-.rv__meta{display:block; font-size:.72rem; color:var(--muted); margin-top:.2rem}
-.rv__reply{display:block; font-size:.74rem; color:var(--muted); margin-top:.35rem; padding-left:.6rem; border-left:2px solid var(--line); max-width:36rem}
-.rv__filters{display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.7rem 1rem; border-bottom:1px solid var(--line); font-size:.8rem}
-.rv__filters label{display:inline-flex; gap:.35rem; align-items:center; color:var(--muted)}
-.rv__filters select{font:inherit; font-size:.8rem; padding:.2rem .4rem; border:1px solid var(--line); border-radius:6px; background:var(--card, #fff); color:var(--fg)}
-.rv__filters button{font:inherit; font-size:.8rem; padding:.25rem .7rem; border:1px solid var(--line); border-radius:6px; background:var(--card, #fff); color:var(--fg); cursor:pointer}
-.rv__dist{display:grid; grid-template-columns:auto 1fr auto; gap:.25rem .6rem; align-items:center; font-size:.76rem; padding:.7rem 1rem; border-bottom:1px solid var(--line)}
-.rv__dist .bar{height:.5rem}
+.rv__top{display:grid; grid-template-columns:minmax(16rem,22rem) 1fr; gap:1rem 2rem; padding:1rem 1.1rem; border-bottom:1px solid var(--line); align-items:center}
+@media (max-width:760px){ .rv__top{grid-template-columns:1fr} }
+.rv__about{font-size:.8rem; color:var(--muted); line-height:1.55; max-width:60ch}
+.rv__about p{margin:0}
+.rv__about b{color:var(--fg)}
+.rv__about a{color:var(--accent); text-decoration:none; font-weight:500}
+.rv__about a:hover{text-decoration:underline}
+.rv__dist{display:flex; flex-direction:column; gap:.3rem}
+.rv__dist-row{display:grid; grid-template-columns:2.4rem 1fr 7.5rem; gap:.6rem; align-items:center; text-decoration:none; color:inherit; padding:.15rem .35rem; margin:0 -.35rem; border-radius:8px; cursor:pointer; transition:background var(--t-fast) var(--ease-out)}
+.rv__dist-row:hover{background:var(--panel-2)}
+.rv__dist-row:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+.rv__dist-label{display:inline-flex; align-items:center; gap:.15rem; font-family:"Fira Code",ui-monospace,monospace; font-size:.78rem; color:var(--muted)}
+.rv__dist-bar{display:block; height:8px; border-radius:99px; background:var(--panel-2); overflow:hidden}
+.rv__dist-fill{display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,var(--brand),var(--accent)); min-width:2px; transition:width var(--t-slow) var(--ease-out)}
+.rv__dist-fill.is-low{background:linear-gradient(90deg,var(--warn),var(--bad))}
+.rv__dist-n{font-size:.76rem; text-align:right; white-space:nowrap}
+
+.rv__filters{display:flex; flex-wrap:wrap; gap:.6rem .9rem; align-items:center; padding:.75rem 1.1rem; border-bottom:1px solid var(--line); font-size:.8rem;
+  position:sticky; top:0; z-index:10; background:color-mix(in srgb,var(--panel) 92%,transparent); backdrop-filter:blur(10px)}
+.rv__field{display:inline-flex; align-items:center; gap:.4rem; color:var(--muted)}
+.rv__field select,.rv__btn{font:inherit; font-size:.8rem; min-height:2.25rem; padding:.3rem .65rem; border:1px solid var(--line); border-radius:9px; background:var(--panel-2); color:var(--fg); cursor:pointer; transition:border-color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out)}
+.rv__field select:hover,.rv__btn:hover{border-color:var(--brand)}
+.rv__field select:focus-visible,.rv__btn:focus-visible,.rv__check input:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.rv__check{display:inline-flex; align-items:center; gap:.4rem; color:var(--muted); cursor:pointer; min-height:2.25rem}
+.rv__check input{width:1rem; height:1rem; accent-color:var(--brand); cursor:pointer}
+.rv__btn{display:inline-flex; align-items:center; gap:.35rem; font-weight:500}
+.rv__btn .ico{width:1rem; height:1rem}
+.rv__count{margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums}
+
+.rv__list{display:flex; flex-direction:column}
+.rv{position:relative; padding:1rem 1.1rem 1.05rem 1.35rem; border-bottom:1px solid var(--line); transition:background var(--t-fast) var(--ease-out)}
+.rv:hover{background:color-mix(in srgb,var(--panel-2) 55%,transparent)}
+.rv::before{content:""; position:absolute; left:0; top:.9rem; bottom:.9rem; width:3px; border-radius:0 3px 3px 0; background:transparent}
+.rv--low::before{background:var(--bad)}
+.rv--open{background:color-mix(in srgb,var(--bad) 6%,transparent)}
+.rv__head{display:grid; grid-template-columns:minmax(10rem,14rem) auto 1fr auto; gap:.6rem 1.1rem; align-items:center}
+@media (max-width:900px){ .rv__head{grid-template-columns:1fr auto} .rv__sku{grid-column:1 / -1} }
+.rv__who{display:flex; align-items:center; gap:.6rem; min-width:0}
+.rv__avatar{flex:0 0 auto; width:2.1rem; height:2.1rem; border-radius:50%; display:grid; place-items:center; font-weight:600; font-size:.85rem; color:#fff; background:linear-gradient(135deg,var(--fill-a),var(--fill-b))}
+.rv__name{display:block; font-size:.86rem; font-weight:600; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.rv__when{display:block; font-family:"Fira Code",ui-monospace,monospace; font-size:.7rem; color:var(--dim); line-height:1.3}
+.rv__approx{color:var(--warn); font-weight:700}
+.rv__stars{display:inline-flex; gap:1px}
+.rv__star{width:1.05rem; height:1.05rem; fill:var(--panel-2); stroke:var(--line); stroke-width:1.2}
+.rv__star.is-on{fill:#D9A400; stroke:#B68900}
+.rv__stars--low .rv__star.is-on{fill:var(--bad); stroke:var(--bad)}
+.rv__star--sm{width:.8rem; height:.8rem}
+.rv__sku{display:flex; align-items:center; gap:.5rem; min-width:0; flex-wrap:wrap}
+.rv__chip{font-size:.72rem; padding:.18rem .5rem; border-radius:6px; background:var(--panel-2); border:1px solid var(--line); color:var(--fg); white-space:nowrap}
+.rv__chip--none{color:var(--dim); border-style:dashed}
+.rv__product{display:inline-flex; align-items:center; gap:.25rem; font-size:.78rem; color:var(--muted); text-decoration:none; min-width:0; max-width:28rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:color var(--t-fast) var(--ease-out)}
+a.rv__product:hover{color:var(--accent)}
+.rv__ext{width:.8rem; height:.8rem; flex:0 0 auto; opacity:.7}
+.rv__pill{display:inline-flex; align-items:center; gap:.3rem; font-size:.72rem; font-weight:500; padding:.25rem .6rem; border-radius:99px; white-space:nowrap; background:var(--panel-2); color:var(--muted)}
+.rv__pill .ico{width:.85rem; height:.85rem}
+.rv__pill--done{color:var(--done); background:color-mix(in srgb,var(--done) 12%,transparent)}
+.rv__pill--warn{color:var(--warn); background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.rv__pill--bad{color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,transparent)}
+
+.rv__body{margin-top:.6rem; padding-left:2.7rem; display:flex; flex-direction:column; gap:.55rem}
+@media (max-width:900px){ .rv__body{padding-left:0} }
+.rv__text{margin:0; max-width:68ch; font-size:.92rem; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere}
+.rv__text--none{color:var(--dim); font-style:italic}
+.rv__reason{margin:0; font-size:.76rem; color:var(--bad)}
+.rv__gallery{display:flex; flex-wrap:wrap; gap:.45rem; align-items:center}
+.rv__photo{padding:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel-2); width:84px; height:84px; cursor:zoom-in; display:block;
+  transition:border-color var(--t-fast) var(--ease-out), box-shadow var(--t-base) var(--ease-out)}
+.rv__photo img{display:block; width:100%; height:100%; object-fit:cover; transition:transform var(--t-base) var(--ease-out)}
+.rv__photo:hover{border-color:var(--brand); box-shadow:var(--shadow)}
+.rv__photo:hover img{transform:scale(1.05)}
+.rv__photo:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.rv__video{display:inline-flex; align-items:center; gap:.3rem; height:84px; padding:0 .8rem; border:1px dashed var(--line); border-radius:10px; font-size:.76rem; color:var(--muted); text-decoration:none; transition:border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out)}
+.rv__video:hover{border-color:var(--brand); color:var(--fg)}
+.rv__video .ico{width:1rem; height:1rem}
+.rv__likes{display:inline-flex; align-items:center; gap:.3rem; font-size:.72rem; color:var(--dim)}
+.rv__likes .ico{width:.85rem; height:.85rem}
+.rv__reply{margin:.1rem 0 0; padding:.6rem .8rem; border-left:3px solid var(--brand); border-radius:0 10px 10px 0; background:var(--panel-2); font-size:.8rem; line-height:1.5; color:var(--muted); max-width:68ch; white-space:pre-wrap; overflow-wrap:anywhere}
+.rv__reply-tag{display:flex; align-items:center; gap:.3rem; font-size:.7rem; font-weight:600; letter-spacing:.02em; text-transform:uppercase; color:var(--brand); margin-bottom:.25rem}
+.rv__reply-tag .ico{width:.85rem; height:.85rem}
+
+.rv__lb{border:0; padding:0; background:transparent; max-width:min(96vw,1100px); max-height:96vh; width:auto; color:#fff}
+.rv__lb::backdrop{background:rgba(8,12,10,.82); backdrop-filter:blur(6px)}
+.rv__lb[open]{display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:.5rem}
+.rv__lb-fig{margin:0; display:flex; flex-direction:column; align-items:center; gap:.6rem; min-width:0}
+.rv__lb-fig img{max-width:min(88vw,900px); max-height:80vh; border-radius:12px; box-shadow:0 30px 80px -20px rgba(0,0,0,.8); background:#111}
+.rv__lb-fig figcaption{display:flex; gap:1rem; align-items:center; font-size:.8rem; color:rgba(255,255,255,.85)}
+.rv__lb-btn{width:2.75rem; height:2.75rem; border-radius:50%; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); color:#fff; display:grid; place-items:center; cursor:pointer; transition:background var(--t-fast) var(--ease-out)}
+.rv__lb-btn:hover{background:rgba(255,255,255,.18)}
+.rv__lb-btn:focus-visible{outline:2px solid #fff; outline-offset:2px}
+.rv__lb-btn .ico{width:1.2rem; height:1.2rem}
+.rv__lb-close{position:fixed; top:1rem; right:1rem}
+.rv__lb[open]{animation:rvIn var(--t-base) var(--ease-out)}
+@keyframes rvIn{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
+@media (prefers-reduced-motion:reduce){
+  .rv__lb[open]{animation:none}
+  .rv__photo img,.rv__dist-fill,.rv,.rv__photo{transition:none}
+  .rv__photo:hover img{transform:none}
+}
 
 /* ------------------------------------------------- transaksi manual ---------- */
 /* A data-entry form, so it is built for one hand on the keyboard: every field is
@@ -1809,22 +1896,135 @@ export function renderForecast({ forecast, range, errors, shopeeShop, generatedA
   });
 }
 
-const stars = (n, low) =>
-  `<span class="rv__stars ${low ? 'rv__stars--low' : ''}" aria-label="${n} dari 5 bintang">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`;
+const STAR_PATH = 'M12 2.5l2.9 6.1 6.7.8-4.9 4.6 1.3 6.6L12 17.3l-6 3.3 1.3-6.6L2.4 9.4l6.7-.8L12 2.5z';
+const rvIcon = {
+  camera: '<path d="M6.8 7.5h1.4l1.1-2h5.4l1.1 2h1.4A2.3 2.3 0 0 1 19.5 9.8v7A2.3 2.3 0 0 1 17.2 19H6.8a2.3 2.3 0 0 1-2.3-2.3v-7a2.3 2.3 0 0 1 2.3-2.2Z"/><circle cx="12" cy="13" r="3"/>',
+  play: '<path d="M8 6.5v11l9-5.5-9-5.5Z"/>',
+  reply: '<path d="M9.5 8 5 12.5l4.5 4.5M5.5 12.5H14a5 5 0 0 1 5 5V19"/>',
+  external: '<path d="M14 5h5v5M19 5l-8.5 8.5M17 13.5V17a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3.5"/>',
+  chevronL: '<path d="m15 5-7 7 7 7"/>',
+  chevronR: '<path d="m9 5 7 7-7 7"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  thumb: '<path d="M7 11v9H4v-9h3Zm3 9h6.6a2 2 0 0 0 2-1.6l1.2-6A2 2 0 0 0 17.8 10H14V6.2A2.2 2.2 0 0 0 11.8 4L10 11v9Z"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/>',
+};
+const rvSvg = (name, cls = '') =>
+  `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${rvIcon[name]}</svg>`;
+
+/** Five stars as one accessible figure; the fill colour says low or fine, the label says the number. */
+const rvStars = (n, low) =>
+  `<span class="rv__stars ${low ? 'rv__stars--low' : ''}" role="img" aria-label="${n} dari 5 bintang">${
+    [1, 2, 3, 4, 5].map((i) => `<svg viewBox="0 0 24 24" class="rv__star ${i <= n ? 'is-on' : ''}" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`).join('')
+  }</span>`;
 
 const REVIEW_RATING_OPTIONS = [
   ['', 'Semua bintang'], ['1,2,3', '≤ 3 bintang'], ['4', '4 bintang'], ['5', '5 bintang'],
 ];
 const REVIEW_DAYS_OPTIONS = [['', 'Sepanjang waktu'], ['7', '7 hari'], ['30', '30 hari'], ['90', '90 hari'], ['365', '1 tahun']];
 
+const initialOf = (name) => {
+  const s = String(name ?? '').trim();
+  return s ? s[0].toUpperCase() : '?';
+};
+
+/** One review card. Photos link to our media cache and open in the lightbox. */
+function reviewCard(r, mediaUrl) {
+  const low = r.rating <= 3;
+  const when = r.createdAt
+    ? `<time datetime="${escape(r.createdAt)}">${dateTime(r.createdAtEpoch)}</time>${
+        r.createdAtPrecision === 'approx' ? ' <span class="rv__approx" title="perkiraan dari teks relatif">~</span>' : ''}`
+    : '<span class="dim">&mdash;</span>';
+  const name = r.anonymous ? 'Anonim' : r.reviewerName || 'Pembeli';
+  const productLabel = r.variantName ? `${r.variantName}` : r.productName;
+  const product = r.productUrl
+    ? `<a class="rv__product" href="${escape(r.productUrl)}/review" target="_blank" rel="noopener" title="${escape(r.productName)}">${escape(productLabel)}${rvSvg('external', 'rv__ext')}</a>`
+    : `<span class="rv__product" title="${escape(r.productName)}">${escape(productLabel)}</span>`;
+
+  const photos = (r.images ?? []).map((img, i, all) => `
+        <button type="button" class="rv__photo" data-full="${escape(mediaUrl(img.id, 'full'))}" data-caption="${escape(`${name} · ${productLabel} · foto ${i + 1} dari ${all.length}`)}" aria-label="Buka foto ${i + 1} dari ${all.length}">
+          <img src="${escape(mediaUrl(img.id, 'thumb'))}" alt="Foto ulasan ${i + 1} dari ${escape(name)}" width="84" height="84" loading="lazy" decoding="async">
+        </button>`).join('');
+  const videos = (r.videos ?? []).filter((v) => v.url).map((v, i) => `
+        <a class="rv__video" href="${escape(v.url)}" target="_blank" rel="noopener">${rvSvg('play')}Video ${i + 1}</a>`).join('');
+  const gallery = photos || videos ? `<div class="rv__gallery" role="group" aria-label="Lampiran ulasan">${photos}${videos}</div>` : '';
+
+  const status = r.reply
+    ? `<span class="rv__pill rv__pill--done">${rvSvg('reply')}Dibalas</span>`
+    : `<span class="rv__pill ${low ? 'rv__pill--bad' : 'rv__pill--warn'}">Belum dibalas</span>`;
+
+  return `<article class="rv ${low ? 'rv--low' : ''} ${low && !r.reply ? 'rv--open' : ''}">
+      <header class="rv__head">
+        <div class="rv__who">
+          <span class="rv__avatar" aria-hidden="true">${escape(initialOf(name))}</span>
+          <div>
+            <span class="rv__name">${escape(name)}</span>
+            <span class="rv__when">${when}</span>
+          </div>
+        </div>
+        ${rvStars(r.rating, low)}
+        <div class="rv__sku">
+          ${r.sku ? `<span class="rv__chip mono">${escape(r.sku)}</span>` : '<span class="rv__chip rv__chip--none">tanpa SKU</span>'}
+          ${product}
+        </div>
+        ${status}
+      </header>
+      <div class="rv__body">
+        ${r.text ? `<p class="rv__text">${escape(r.text)}</p>` : '<p class="rv__text rv__text--none">Tanpa teks, hanya bintang.</p>'}
+        ${r.badRatingReason ? `<p class="rv__reason">${escape(r.badRatingReason)}</p>` : ''}
+        ${gallery}
+        ${r.likes ? `<span class="rv__likes">${rvSvg('thumb')}${r.likes} terbantu</span>` : ''}
+        ${r.reply ? `<blockquote class="rv__reply"><span class="rv__reply-tag">${rvSvg('reply')}Balasan toko${r.reply.relative ? ` · ${escape(r.reply.relative)}` : ''}</span>${escape(r.reply.text)}</blockquote>` : ''}
+      </div>
+    </article>`;
+}
+
+const REVIEW_LIGHTBOX_SCRIPT = `
+(() => {
+  const lb = document.getElementById('rv-lightbox');
+  if (!lb || typeof lb.showModal !== 'function') return;
+  const img = lb.querySelector('img');
+  const cap = lb.querySelector('.rv__lb-cap');
+  const count = lb.querySelector('.rv__lb-count');
+  const buttons = () => Array.from(document.querySelectorAll('.rv__photo'));
+  let set = [], at = 0, opener = null;
+  const show = (i) => {
+    at = (i + set.length) % set.length;
+    const b = set[at];
+    img.src = b.dataset.full; img.alt = b.querySelector('img').alt;
+    cap.textContent = b.dataset.caption;
+    count.textContent = set.length > 1 ? (at + 1) + ' / ' + set.length : '';
+    lb.querySelector('.rv__lb-prev').hidden = set.length < 2;
+    lb.querySelector('.rv__lb-next').hidden = set.length < 2;
+  };
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.rv__photo');
+    if (!b) return;
+    const group = b.closest('.rv__gallery');
+    set = Array.from(group.querySelectorAll('.rv__photo'));
+    opener = b;
+    show(set.indexOf(b));
+    lb.showModal();
+  });
+  lb.querySelector('.rv__lb-prev').addEventListener('click', () => show(at - 1));
+  lb.querySelector('.rv__lb-next').addEventListener('click', () => show(at + 1));
+  lb.querySelector('.rv__lb-close').addEventListener('click', () => lb.close());
+  lb.addEventListener('click', (e) => { if (e.target === lb) lb.close(); });
+  lb.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') show(at - 1);
+    if (e.key === 'ArrowRight') show(at + 1);
+  });
+  lb.addEventListener('close', () => { img.removeAttribute('src'); if (opener) opener.focus(); });
+})();`;
+
 /**
- * Reviews view: what buyers wrote on Tokopedia, newest first, with the shop's rating.
+ * Reviews view: what buyers wrote on Tokopedia, newest first, photos included.
  *
  * The page only reads the document the nightly sync wrote; a click here never crawls the
- * storefront. Low ratings are the reason the page exists, so they lead the strip and
- * the filter defaults to showing them first when there are any in the window.
+ * storefront. Photos come from our own cache (see media.js), so they do not break when
+ * Tokopedia's signed URLs expire. Low ratings are the reason the page exists: they are
+ * marked on the card, counted in the strip, and one filter click away.
  */
-export function renderReviews({ doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash }) {
+export function renderReviews({ doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash, mediaUrl = defaultMediaUrl }) {
   if (!doc?.syncedAt) {
     return shell({
       title: 'Ulasan Tokopedia', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
@@ -1839,9 +2039,11 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
   const distRows = [5, 4, 3, 2, 1].map((n) => {
     const count = dist[n] ?? 0;
     const pct = distTotal ? Math.round((count / distTotal) * 1000) / 10 : 0;
-    return `<span class="mono">${n}★</span>
-      <div class="bar" role="img" aria-label="${n} bintang: ${count}"><span class="seg ${n <= 3 ? 'seg--bad' : 'seg--good'}" style="flex:${count}"></span><span class="seg" style="flex:${Math.max(distTotal - count, 0)}; background:transparent"></span></div>
-      <span class="mono dim">${count.toLocaleString('id-ID')} · ${pct}%</span>`;
+    return `<a class="rv__dist-row" href="?view=reviews&rating=${n}" title="Lihat ulasan ${n} bintang">
+      <span class="rv__dist-label">${n}<svg viewBox="0 0 24 24" class="rv__star is-on rv__star--sm" aria-hidden="true"><path d="${STAR_PATH}"/></svg></span>
+      <span class="rv__dist-bar"><span class="rv__dist-fill ${n <= 3 ? 'is-low' : ''}" style="width:${pct}%"></span></span>
+      <span class="rv__dist-n mono">${count.toLocaleString('id-ID')}<span class="dim"> · ${pct}%</span></span>
+    </a>`;
   }).join('');
 
   const skuOptions = Object.entries(stats.bySku ?? {})
@@ -1851,38 +2053,32 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
   const options = (list, current) =>
     list.map(([v, label]) => `<option value="${v}" ${(current ?? '') === v ? 'selected' : ''}>${escape(label)}</option>`).join('');
 
-  const rows = reviews.map((r) => {
-    const low = r.rating <= 3;
-    const when = r.createdAt
-      ? `${dateTime(r.createdAtEpoch)}${r.createdAtPrecision === 'approx' ? ' <span class="dim" title="perkiraan dari teks relatif">~</span>' : ''}`
-      : '<span class="dim">&mdash;</span>';
-    const who = r.anonymous ? '<span class="dim">anonim</span>' : escape(r.reviewerName || 'pembeli');
-    const media = [r.images?.length ? `${r.images.length} foto` : '', r.videos?.length ? `${r.videos.length} video` : ''].filter(Boolean).join(', ');
-    const productLink = r.productUrl ? `<a href="${escape(r.productUrl)}/review" target="_blank" rel="noopener">${escape(r.variantName || r.productName)}</a>` : escape(r.variantName || r.productName);
-    return `<tr>
-      <td class="mono">${when}</td>
-      <td>${stars(r.rating, low)}</td>
-      <td><span class="pick__n">${r.sku ? escape(r.sku) : '<span class="dim">tanpa SKU</span>'}</span><span class="pick__s">${productLink}</span></td>
-      <td>
-        <div class="rv__text">${r.text ? escape(r.text) : '<span class="dim">(tanpa teks)</span>'}</div>
-        <span class="rv__meta">${who}${r.badRatingReason ? ` &middot; ${escape(r.badRatingReason)}` : ''}${media ? ` &middot; ${escape(media)}` : ''}${r.likes ? ` &middot; ${r.likes} terbantu` : ''}</span>
-        ${r.reply ? `<span class="rv__reply">${escape(r.reply.text)}</span>` : ''}
-      </td>
-      <td>${r.reply ? '<span class="mini mini--done">Dibalas</span>' : `<span class="mini ${low ? 'mini--bad' : 'mini--warn'}">Belum dibalas</span>`}</td>
-    </tr>`;
-  }).join('');
+  const withPhotos = reviews.filter((r) => r.images?.length).length;
+  const cards = reviews.map((r) => reviewCard(r, mediaUrl)).join('');
 
   const skuRows = Object.entries(stats.bySku ?? {}).map(([sku, b]) => `<tr>
-      <td>${sku.startsWith('(tanpa SKU)') ? `<span class="dim">${escape(sku)}</span>` : `<span class="mono">${escape(sku)}</span>`}</td>
+      <td>${sku.startsWith('(tanpa SKU)') ? `<span class="dim">${escape(sku)}</span>` : `<a class="mono" href="?view=reviews&sku=${escape(encodeURIComponent(sku))}">${escape(sku)}</a>`}</td>
       <td class="num mono">${b.count}</td>
       <td class="num mono">${b.average ?? '&mdash;'}</td>
       <td class="num mono ${b.low ? 'stop' : ''}">${b.low}</td>
     </tr>`).join('');
 
+  const lightbox = `
+    <dialog id="rv-lightbox" class="rv__lb" aria-label="Foto ulasan">
+      <button type="button" class="rv__lb-btn rv__lb-close" aria-label="Tutup">${rvSvg('close')}</button>
+      <button type="button" class="rv__lb-btn rv__lb-prev" aria-label="Foto sebelumnya">${rvSvg('chevronL')}</button>
+      <figure class="rv__lb-fig">
+        <img alt="" decoding="async">
+        <figcaption><span class="rv__lb-cap"></span><span class="rv__lb-count mono"></span></figcaption>
+      </figure>
+      <button type="button" class="rv__lb-btn rv__lb-next" aria-label="Foto berikutnya">${rvSvg('chevronR')}</button>
+    </dialog>`;
+
   return shell({
     title: 'Ulasan Tokopedia',
     range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
     hideRangeControls: true,
+    script: REVIEW_LIGHTBOX_SCRIPT,
     kpis: `
       <div class="strip">
         ${stat('Rating toko', s.score ? String(s.score) : '—', 'ok')}
@@ -1895,35 +2091,36 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
         <span class="note">Sinkron ${escape(wibStamp(doc.syncedAt))}${s.aggregatedWithTikTok ? ' · penilaian gabungan Tokopedia + TikTok Shop' : ''}</span>
       </div>`,
     body: `
-      <div class="fc__note">
-        Dibaca dari halaman toko <a href="https://www.tokopedia.com/${escape(loadTokopediaSlug())}/review" target="_blank" rel="noopener">${escape(doc.shopName || 'Tokopedia')}</a>.
-        Hanya ulasan yang <b>ditulis</b> yang ada di daftar; penilaian bintang tanpa teks hanya masuk hitungan di atas.
-        Tanggal dengan <b>~</b> adalah perkiraan dari teks &ldquo;n hari lalu&rdquo;.
-      </div>
-      <div class="rv__dist">${distRows}</div>
-      <form class="rv__filters" method="get">
+      <section class="rv__top">
+        <div class="rv__dist" aria-label="Sebaran bintang">${distRows}</div>
+        <div class="rv__about">
+          <p>Dibaca dari halaman toko <a href="https://www.tokopedia.com/${escape(loadTokopediaSlug())}/review" target="_blank" rel="noopener">${escape(doc.shopName || 'Tokopedia')}${rvSvg('external', 'rv__ext')}</a>.
+          Hanya ulasan yang <b>ditulis</b> yang muncul sebagai kartu; penilaian bintang tanpa teks hanya masuk hitungan.
+          Foto disimpan di server sendiri, jadi tetap terbuka walau tautan Tokopedia kedaluwarsa. Tanggal dengan <b>~</b> adalah perkiraan.</p>
+        </div>
+      </section>
+      <form class="rv__filters" method="get" role="search" aria-label="Saring ulasan">
         <input type="hidden" name="view" value="reviews">
-        <label>Bintang <select name="rating">${options(REVIEW_RATING_OPTIONS, filter.rating)}</select></label>
-        <label>Rentang <select name="days">${options(REVIEW_DAYS_OPTIONS, filter.days)}</select></label>
-        <label>SKU <select name="sku"><option value="">Semua SKU</option>${skuOptions}</select></label>
-        <label><input type="checkbox" name="text" value="1" ${filter.text ? 'checked' : ''}> hanya yang ada teks</label>
-        <button type="submit">Saring</button>
-        <span class="dim">${reviews.length} ulasan</span>
+        <label class="rv__field"><span>Bintang</span><select name="rating">${options(REVIEW_RATING_OPTIONS, filter.rating)}</select></label>
+        <label class="rv__field"><span>Rentang</span><select name="days">${options(REVIEW_DAYS_OPTIONS, filter.days)}</select></label>
+        <label class="rv__field"><span>SKU</span><select name="sku"><option value="">Semua SKU</option>${skuOptions}</select></label>
+        <label class="rv__check"><input type="checkbox" name="text" value="1" ${filter.text ? 'checked' : ''}> hanya yang ada teks</label>
+        <button type="submit" class="rv__btn">${rvSvg('search')}Saring</button>
+        <span class="rv__count">${reviews.length} ulasan${withPhotos ? ` · ${withPhotos} berfoto` : ''}</span>
       </form>
-      ${rows ? `<div class="scroll"><table class="dense">
-        <thead><tr><th>Waktu</th><th>Bintang</th><th>Produk</th><th>Ulasan</th><th>Balasan</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>` : '<p class="empty">Tidak ada ulasan yang cocok dengan saringan.</p>'}
-      <div class="fc__note"><b>Per SKU</b> &mdash; seluruh ulasan tersimpan, bukan hanya yang disaring.</div>
+      ${cards ? `<div class="rv__list">${cards}</div>` : '<p class="empty">Tidak ada ulasan yang cocok dengan saringan.</p>'}
+      <div class="fc__note"><b>Per SKU</b> &mdash; seluruh ulasan tersimpan, bukan hanya yang disaring. Klik SKU untuk menyaring.</div>
       <div class="scroll"><table class="dense">
         <thead><tr><th>SKU</th><th class="num">Ulasan</th><th class="num">Rata-rata</th><th class="num">≤ 3★</th></tr></thead>
         <tbody>${skuRows}</tbody>
       </table></div>
-      <div class="foot"><span>${stats.written.count} ulasan tertulis tersimpan &middot; ekspor: <span class="mono">npm run tokopedia:reviews:export</span></span></div>`,
+      <div class="foot"><span>${stats.written.count} ulasan tertulis tersimpan &middot; ekspor: <span class="mono">npm run tokopedia:reviews:export</span></span></div>
+      ${lightbox}`,
   });
 }
 
 const loadTokopediaSlug = () => process.env.TOKOPEDIA_SHOP_SLUG || 'treelogy-moringa';
+const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURIComponent(id)}&s=${size}`;
 
 /**
  * Label view: pick the parcels to print, get one PDF sized for the thermal printer.

@@ -3,6 +3,7 @@ import { readEnv } from '../env-file.js';
 import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
 import { readDoc, updateDoc } from '../store/index.js';
 import { PRODUCTS, findProduct } from '../master.js';
+import { prefetchMedia } from './media.js';
 
 /**
  * Tokopedia reviews for the shop, read the way the storefront reads them.
@@ -354,8 +355,8 @@ export function mergeReviews(existing, fresh, { exact = new Map(), nowIso }) {
 /**
  * One sync: summary, shop list, exact times for whatever lacks them, merge, save.
  *
- * @param {{shopId?: string, slug?: string, quick?: boolean, fetchImpl?: typeof fetch,
- *          sleepImpl?: Function, minGapMs?: number, now?: Date, log?: Function}} options
+ * @param {{shopId?: string, slug?: string, quick?: boolean, prefetch?: boolean, fetchImpl?: typeof fetch,
+ *          mediaFetchImpl?: typeof fetch, sleepImpl?: Function, minGapMs?: number, now?: Date, log?: Function}} options
  */
 export async function syncReviews(options = {}) {
   const config = loadTokopediaConfig();
@@ -363,6 +364,7 @@ export async function syncReviews(options = {}) {
     shopId = config.shopId,
     slug = config.shopSlug,
     quick = false,
+    prefetch = true,
     fetchImpl,
     sleepImpl,
     minGapMs,
@@ -394,6 +396,18 @@ export async function syncReviews(options = {}) {
   const doc = { ...before, shopName: crawl.shopName || before.shopName, syncedAt: nowIso, summary, reviews: merged.reviews };
   await updateDoc(REVIEWS_DOC, () => doc, emptyDoc(shopId));
 
+  // Photos of new reviews are fetched now, while their signed URLs are minutes old.
+  // Failures are counted, not thrown: a CDN hiccup must not fail a sync that has
+  // already been saved.
+  let media = null;
+  if (prefetch) {
+    const withPhotos = merged.added.filter((r) => r.images.length);
+    if (withPhotos.length) {
+      log(`foto untuk ${withPhotos.length} ulasan baru...`);
+      media = await prefetchMedia(withPhotos, { fetchImpl: options.mediaFetchImpl, log });
+    }
+  }
+
   return {
     shopId: String(shopId),
     syncedAt: nowIso,
@@ -405,6 +419,7 @@ export async function syncReviews(options = {}) {
     added: merged.added,
     updated: merged.updated,
     requests: 1 + crawl.pages + productPages,
+    media,
   };
 }
 

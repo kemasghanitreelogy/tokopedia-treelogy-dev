@@ -59,6 +59,7 @@ npm run doctor      # verify end to end
 | `npm run tokopedia:reviews:list -- --rating=1,2,3 --days=30` | Stored reviews, newest first, with filters |
 | `npm run tokopedia:reviews:stats` | Per star, per SKU, last 30 days, unreplied |
 | `npm run tokopedia:reviews:export -- --csv` | Write stored reviews to `state/tokopedia-reviews.csv` (or `--json`) |
+| `npm run tokopedia:reviews:media` | Download every stored review photo into `state/tokopedia-media` |
 | `npm test` | Offline tests |
 
 ### Tokopedia reviews
@@ -78,11 +79,17 @@ requests, spaced at least 700 ms apart. Ratings without text are not items in ei
 list; they exist only in the summary counts (`isAggregatedWithTTS` means those counts
 include TikTok Shop).
 
-Stored under `tokopedia/reviews.json` in the state store; read back by the CLI and by
-`GET /api/tokopedia/reviews` (dashboard session or `?key=`; query `rating`, `sku`,
-`product`, `days`, `text`, `limit`, `stats=1`). The nightly unit runs
-`bin/tokopedia.mjs reviews --notify`. Override the shop with `TOKOPEDIA_SHOP_ID` and
-`TOKOPEDIA_SHOP_SLUG`.
+Stored under `tokopedia/reviews.json` in the state store; read back by the CLI, by the
+dashboard's "Ulasan" view and by `GET /api/tokopedia/reviews` (dashboard session or
+`?key=`; query `rating`, `sku`, `product`, `days`, `text`, `limit`, `stats=1`). The
+nightly unit runs `bin/tokopedia.mjs reviews --notify`. Override the shop with
+`TOKOPEDIA_SHOP_ID` and `TOKOPEDIA_SHOP_SLUG`.
+
+Review photos come through signed Tokopedia URLs that expire in about three days, so
+they are cached on disk under `state/tokopedia-media` (or `TOKOPEDIA_MEDIA_DIR`) by
+attachment id: the sync fetches photos of new reviews, `GET /api/tokopedia/media?id=&s=`
+serves them to the dashboard and fetches on demand whatever is missing, and
+`tokopedia:reviews:media` warms the whole cache.
 
 ```bash
 npm run orders                       # 20 most recent orders

@@ -971,7 +971,7 @@ async function cmdMekariRestate(config, args = []) {
       if (p.stage === 'piutang' && p.changed % 50 === 0) console.log(`  piutang pelanggan dipindah ${p.changed}/${p.of}`);
       // Deletes used to report nothing at all, so a slow run - Jurnal answering 504s, as
       // it did - was indistinguishable from a hung one, and got killed on suspicion.
-      if (p.stage === 'hapus' && p.deleted % 25 === 0) console.log(`  dihapus ${p.deleted}/${p.of}`);
+      if (p.stage === 'hapus' && p.processed % 25 === 0) console.log(`  diperiksa ${p.processed}/${p.of}  ·  dihapus ${p.deleted}  ·  sudah tidak ada ${p.alreadyGone}`);
       if (p.stage === 'buat') console.log(`  ditulis ${p.created}/${p.of}`);
     },
   });
@@ -990,7 +990,9 @@ async function cmdMekariRestate(config, args = []) {
     return 0;
   }
 
-  console.log(`\n  ${result.aligned.changed} pelanggan dipindah  ·  ${result.deleted} dihapus  ·  ${result.created} ditulis ulang  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  console.log(`\n  ${result.aligned.changed} pelanggan dipindah  ·  ${result.deleted} dihapus` +
+    (result.alreadyGone > 0 ? `  ·  ${result.alreadyGone} sudah tidak ada` : '') +
+    `  ·  ${result.created} ditulis ulang  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
   if (result.failures.length > 0) {
     console.log(`  ${fail(`${result.failures.length} gagal:`)}`);
     for (const f of result.failures.slice(0, 10)) console.log(`    ${f.customId} (${f.stage}): ${f.error}`);

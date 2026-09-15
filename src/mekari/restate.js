@@ -26,6 +26,19 @@ import { wibDayStart, wibDate } from '../range.js';
  * seven - and the monthly package is the binding constraint on this whole integration.
  */
 
+
+/**
+ * Does this error mean the invoice is not there?
+ *
+ * Jurnal answers 422 "Data not found" where most APIs answer 404, which this codebase has
+ * been caught by before. Both are accepted, and the body is checked too, because a 422 is
+ * otherwise a validation failure and swallowing those would hide real problems.
+ */
+function isMissing(error) {
+  if (error?.status === 404) return true;
+  return error?.status === 422 && /data not found/i.test(JSON.stringify(error?.body ?? error?.message ?? ''));
+}
+
 const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
 
 /** Fifty per request. Large enough to matter, small enough that one rejection is cheap to redo. */
@@ -122,23 +135,32 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
   const failures = [];
   for (const f of aligned.failures) failures.push({ customId: f.name, stage: 'piutang', error: f.error });
 
-  for (const item of plan.rebuildable.concat(plan.unbuildable)) {
+  const all = plan.rebuildable.concat(plan.unbuildable);
+  let alreadyGone = 0;
+  let processed = 0;
+
+  for (const item of all) {
+    processed += 1;
     try {
       await mekari({ method: 'DELETE', path: `${INVOICES_PATH}/${item.invoiceId}` });
       deleted += 1;
     } catch (error) {
-      // A 404 means somebody already removed it, which is the state we wanted.
-      if (!/not found|404/i.test(error.message)) {
+      // An invoice that is already gone is the state we were trying to reach, so it is
+      // not a failure. Jurnal says so with 422 "Data not found", not 404 - a quirk this
+      // codebase has met before, and one worth matching on the status rather than on the
+      // words, because a message that happens to contain "not found" is luck, not a rule.
+      if (!isMissing(error)) {
         failures.push({ customId: item.customId, stage: 'hapus', error: error.message });
         continue;
       }
+      alreadyGone += 1;
     }
     delete ledger.orders[item.customId];
     // Removed as we go, and through the one call that can actually remove: a run that
     // stops halfway must not leave the ledger claiming invoices that are already gone,
     // because the sweep trusts it and would never re-post those orders.
     await forgetSyncLedgerEntries([item.customId]);
-    onProgress({ stage: 'hapus', customId: item.customId, deleted, of: plan.rebuildable.length + plan.unbuildable.length });
+    onProgress({ stage: 'hapus', customId: item.customId, deleted, alreadyGone, processed, of: all.length });
   }
 
   let created = 0;
@@ -177,7 +199,7 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
     onProgress({ stage: 'buat', created, of: plan.rebuildable.length });
   }
 
-  return { ...plan, dryRun: false, aligned, deleted, created, failures };
+  return { ...plan, dryRun: false, aligned, deleted, alreadyGone, created, failures };
 }
 
 export { wibDate };

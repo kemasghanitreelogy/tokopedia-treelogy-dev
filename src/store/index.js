@@ -141,8 +141,19 @@ let pool = null;
  * ordinary commands go straight through it, and `execute` lends out a private connection
  * for the length of a transaction and takes it back afterwards.
  */
+let connecting = null;
+
 async function redis() {
   if (pool) return pool;
+  // Two callers arriving before the first connection is up must share it. Without this,
+  // `Promise.all([readDoc(a), readDoc(b)])` on a fresh process built two pools, the
+  // second overwrote the first, and the orphan's socket kept the CLI alive after
+  // closeStore() - `reviews stats` printed its answer and then never exited.
+  if (!connecting) connecting = openRedis().finally(() => { connecting = null; });
+  return connecting;
+}
+
+async function openRedis() {
   const { createClientPool } = await import('redis');
   pool = createClientPool(
     {

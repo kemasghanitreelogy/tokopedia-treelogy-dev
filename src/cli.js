@@ -969,6 +969,9 @@ async function cmdMekariRestate(config, args = []) {
     dryRun,
     onProgress: (p) => {
       if (p.stage === 'piutang' && p.changed % 50 === 0) console.log(`  piutang pelanggan dipindah ${p.changed}/${p.of}`);
+      // Deletes used to report nothing at all, so a slow run - Jurnal answering 504s, as
+      // it did - was indistinguishable from a hung one, and got killed on suspicion.
+      if (p.stage === 'hapus' && p.deleted % 25 === 0) console.log(`  dihapus ${p.deleted}/${p.of}`);
       if (p.stage === 'buat') console.log(`  ditulis ${p.created}/${p.of}`);
     },
   });

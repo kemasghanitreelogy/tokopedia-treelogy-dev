@@ -78,3 +78,40 @@ export function businessDayStart(dateString) {
 
 /** Today, in the business's clock. */
 export const businessToday = () => businessDate(Math.floor(Date.now() / 1000));
+
+/**
+ * The clock each platform keeps its own books by.
+ *
+ * Finance recaps a day by opening each platform's back office and comparing it to Jurnal,
+ * so an invoice's date has to be the date that platform shows - not one house clock
+ * applied to everybody. Those are not the same thing here, and the difference is real:
+ *
+ *   - Shopee's shop region is ID and Tokopedia and TikTok Shop ID are Indonesian, so all
+ *     three report WIB.
+ *   - The Shopify store is configured Asia/Singapore, UTC+8, with a Singapore address.
+ *     Read from the live shop on 2026-09-15 via shop { ianaTimezone } rather than assumed.
+ *
+ * So a sale at 23:30 Jakarta is the 14th to Shopee and the 15th to Shopify, and both are
+ * right from where finance is looking. Seventeen of September's 719 orders sit in that
+ * hour - about one a day, which is small enough to be invisible and large enough that a
+ * recap never quite ties out.
+ *
+ * A channel with no entry books by the house clock, which is what a typed-in transaction
+ * should do: it has no platform of its own.
+ */
+export const CHANNEL_ZONES = {
+  shopee: 'Asia/Jakarta',
+  tokopedia: 'Asia/Jakarta',
+  tiktok_shop: 'Asia/Jakarta',
+  shopify: 'Asia/Singapore',
+};
+
+/** @returns {{name: string, label: string, offsetHours: number}} */
+export function zoneForChannel(channel) {
+  const name = CHANNEL_ZONES[channel];
+  return name && ZONES[name] ? { name, ...ZONES[name] } : zone();
+}
+
+/** The calendar date an instant belongs to, on the clock of the platform it came from. */
+export const channelDate = (epochSeconds, channel) =>
+  new Date((epochSeconds + zoneForChannel(channel).offsetHours * 3600) * 1000).toISOString().slice(0, 10);

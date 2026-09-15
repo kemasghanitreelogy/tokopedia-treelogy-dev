@@ -136,7 +136,7 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
     delete ledger.orders[item.customId];
     // Saved as we go: a run that stops halfway must not claim invoices still exist.
     await saveSyncLedger(ledger);
-    onProgress({ stage: 'hapus', customId: item.customId, deleted });
+    onProgress({ stage: 'hapus', customId: item.customId, deleted, of: plan.rebuildable.length + plan.unbuildable.length });
   }
 
   let created = 0;

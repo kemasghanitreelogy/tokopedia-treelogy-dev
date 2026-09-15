@@ -110,3 +110,44 @@ test('an unknown or missing zone falls back rather than shifting the books silen
     if (before === undefined) delete process.env.BUSINESS_TZ; else process.env.BUSINESS_TZ = before;
   }
 });
+
+/* ------------------------------------- each platform's invoice carries its own date */
+
+const { channelDate, zoneForChannel, CHANNEL_ZONES } = await import('../src/clock.js');
+const { jurnalDate: invoiceDate } = await import('../src/mekari/invoice.js');
+
+test('an invoice is dated by the clock of the platform it came from', () => {
+  // 23:30 in Jakarta, which is already the next day in Singapore - and the Shopify store
+  // is configured Asia/Singapore, read from the live shop rather than assumed. Finance
+  // recaps by opening each back office beside Jurnal, so both answers are right from
+  // where they are looking, and one house clock would make one of them wrong.
+  const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
+
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop']) {
+    assert.equal(channelDate(at, channel), '2026-09-14', channel);
+    assert.equal(invoiceDate(at, channel), '2026-09-14', channel);
+    assert.equal(zoneForChannel(channel).offsetHours, 7, channel);
+  }
+  assert.equal(channelDate(at, 'shopify'), '2026-09-15');
+  assert.equal(invoiceDate(at, 'shopify'), '2026-09-15');
+  assert.equal(zoneForChannel('shopify').offsetHours, 8);
+});
+
+test('a typed-in transaction has no platform, so it uses the house clock', () => {
+  const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
+  assert.equal(channelDate(at, 'manual'), channelDate(at, null));
+  assert.equal(zoneForChannel('manual').name, 'Asia/Jakarta');
+  // Every channel that does have an entry must name a zone the table knows.
+  for (const [channel, name] of Object.entries(CHANNEL_ZONES)) {
+    assert.ok(zoneForChannel(channel).label, channel);
+    assert.equal(zoneForChannel(channel).name, name, channel);
+  }
+});
+
+test('away from the boundary every platform agrees, which is most of the day', () => {
+  // Midday Jakarta is midday everywhere that matters here; only the last hour splits.
+  const noon = Math.floor(Date.parse('2026-09-15T05:00:00Z') / 1000);
+  const days = new Set(['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual'].map((c) => channelDate(noon, c)));
+  assert.equal(days.size, 1);
+  assert.deepEqual([...days], ['2026-09-15']);
+});

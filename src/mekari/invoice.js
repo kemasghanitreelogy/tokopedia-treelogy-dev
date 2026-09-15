@@ -1,4 +1,4 @@
-import { businessDate } from '../clock.js';
+import { channelDate, zoneForChannel } from '../clock.js';
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
 import { orderCode, orderPrefix, PREFIXES } from './prefix.js';
@@ -61,9 +61,17 @@ export function customerFor(order) {
   return named || CUSTOMER_NAMES[order.channel] || (CHANNELS[order.channel]?.label ?? order.channel);
 }
 
-/** Jurnal takes dates as YYYY-MM-DD; the books follow the seller's own day, so WIB. */
-export function jurnalDate(epochSeconds) {
-  return businessDate(epochSeconds);
+/**
+ * Jurnal takes dates as YYYY-MM-DD, and the day is the one the source platform shows.
+ *
+ * Not one house clock for everybody: finance recaps by opening each platform's back
+ * office beside Jurnal, so a Shopify order has to carry the date Shopify shows and a
+ * Shopee order the date Shopee shows. Those differ for an hour every night - the shop is
+ * configured UTC+8 and the marketplaces report UTC+7 - and that hour holds about one
+ * order a day.
+ */
+export function jurnalDate(epochSeconds, channel = null) {
+  return channelDate(epochSeconds, channel);
 }
 
 /**
@@ -146,7 +154,7 @@ export function buildInvoice({ order, depositTo = null }) {
 
 
 
-  const date = jurnalDate(order.createdAt);
+  const date = jurnalDate(order.createdAt, order.channel);
   // A typed-in transaction names its own source; the four online channels are named by
   // the channel table.
   const channel = CHANNELS[order.channel]?.label ?? PREFIXES[orderPrefix(order)]?.label ?? order.channel;
@@ -158,7 +166,7 @@ export function buildInvoice({ order, depositTo = null }) {
     transaction_date: date,
     // Net 14 where the platform already took the money, Net 7 where somebody has to chase
     // it. The source table decides; nothing here knows which is which.
-    due_date: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600),
+    due_date: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600, order.channel),
     person_name: customerFor(order),
     // Jurnal needs a term it already holds, or the invoice shows as "Custom" with no
     // term at all. Net 14 and Net 7 were created to match the order-code table; the

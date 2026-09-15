@@ -104,6 +104,27 @@ export function productCodeFor(line) {
   throw new InvoiceError(`SKU ${line.sku || '(kosong)'} tidak ada di data master`);
 }
 
+/**
+ * Jurnal refuses an address over 250 characters, with a 422 that names no order.
+ *
+ * Marketplace addresses run long - a full Indonesian address with kelurahan, kecamatan,
+ * kabupaten, provinsi and a delivery note routinely passes 250 - so this is not an edge
+ * case, it is a steady trickle of orders that simply never reach the books. They failed
+ * as "POST -> HTTP 422" with the body unexamined, which is why it went unnoticed.
+ *
+ * Trimmed from the end, because an Indonesian address puts the street first and the
+ * administrative hierarchy last: what is dropped is the part a courier needs least. The
+ * ellipsis is there so a person reading the invoice can see something was cut rather than
+ * wondering whether the buyer really lives at a sentence fragment.
+ */
+export const ADDRESS_LIMIT = 250;
+
+export function fitAddress(value) {
+  const text = String(value ?? '').trim();
+  if (text.length <= ADDRESS_LIMIT) return text;
+  return `${text.slice(0, ADDRESS_LIMIT - 1).trimEnd()}…`;
+}
+
 export class InvoiceError extends Error {
   constructor(message) {
     super(message);
@@ -192,8 +213,8 @@ export function buildInvoice({ order, depositTo = null }) {
   // Each of these is sent only when the platform actually disclosed it. An empty field
   // in Jurnal is honest; a field filled with a placeholder is not.
   if (order.buyerEmail) invoice.email = order.buyerEmail;
-  if (order.shipTo) invoice.shipping_address = order.shipTo;
-  if (order.billTo || order.shipTo) invoice.address = order.billTo || order.shipTo;
+  if (order.shipTo) invoice.shipping_address = fitAddress(order.shipTo);
+  if (order.billTo || order.shipTo) invoice.address = fitAddress(order.billTo || order.shipTo);
   if (order.carrier) invoice.ship_via = order.carrier;
   if (order.tracking) invoice.tracking_no = order.tracking;
 
@@ -253,6 +274,12 @@ export function verifyInvoice(payload, expectedTotal) {
   // disappears from whichever report the business actually looks at.
   if (!Array.isArray(invoice.tags) || invoice.tags.length === 0) {
     throw new InvoiceError('faktur tanpa tag sumber');
+  }
+  // Caught here rather than by Jurnal, which reports it as a bare 422 naming no order.
+  for (const field of ['address', 'shipping_address']) {
+    if ((invoice[field]?.length ?? 0) > ADDRESS_LIMIT) {
+      throw new InvoiceError(`${field} lebih dari ${ADDRESS_LIMIT} karakter - Jurnal akan menolak`);
+    }
   }
   return total;
 }

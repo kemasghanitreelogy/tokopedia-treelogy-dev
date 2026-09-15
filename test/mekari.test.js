@@ -696,3 +696,32 @@ test('the lock holds, refuses a second run, and is released', async () => {
   assert.equal(third.acquired, true, 'setelah dilepas kunci bisa diambil lagi');
   await releaseLock();
 });
+
+/* ------------------------------------------------- Jurnal's 250-character address cap */
+
+test('a long address is trimmed to fit, and verify refuses one that is not', async () => {
+  // Jurnal answers a long address with a bare 422 naming no order, so these failed
+  // silently for weeks. A full Indonesian address with kelurahan, kecamatan, kabupaten,
+  // provinsi and a delivery note routinely passes 250 characters.
+  const { fitAddress, ADDRESS_LIMIT } = await import('../src/mekari/invoice.js');
+  const long = `Jalan Panjang Sekali No. 123, ${'RT 01 RW 02 Kelurahan Contoh Kecamatan Panjang '.repeat(8)}Jakarta`;
+  assert.ok(long.length > ADDRESS_LIMIT);
+
+  const fitted = fitAddress(long);
+  assert.equal(fitted.length, ADDRESS_LIMIT);
+  assert.ok(fitted.endsWith('…'), 'harus terlihat bahwa ada yang dipotong');
+  // Trimmed from the end: an Indonesian address puts the street first, so the part a
+  // courier needs most survives.
+  assert.ok(fitted.startsWith('Jalan Panjang Sekali No. 123'));
+
+  // A short one is untouched.
+  assert.equal(fitAddress('Jalan Pendek 1, Jakarta'), 'Jalan Pendek 1, Jakarta');
+  assert.equal(fitAddress(null), '');
+
+  const invoice = buildInvoice({ order: order({ shipTo: long }) });
+  assert.equal(invoice.sales_invoice.shipping_address.length, ADDRESS_LIMIT);
+  verifyInvoice(invoice, invoice.expectedTotal);
+
+  invoice.sales_invoice.address = long;
+  assert.throws(() => verifyInvoice(invoice, invoice.expectedTotal), /250 karakter/);
+});

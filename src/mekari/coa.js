@@ -1,6 +1,6 @@
 import { mekari } from './client.js';
 import { requiredAccounts, accountMap } from './accounts.js';
-import { SOURCES, TAGS, RECEIVABLE_NUMBERS, SHIPPING_ACCOUNT_NUMBER, SHIPPING_PRODUCT } from './sources.js';
+import { SOURCES, TAGS, RECEIVABLE_NUMBERS, SHIPPING_ACCOUNT_NUMBER } from './sources.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 
 /**
@@ -24,39 +24,7 @@ import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 
 const COMPANY_PATH = '/public/jurnal/api/v1/companies';
 const TAGS_PATH = '/public/jurnal/api/v1/tags';
-const PRODUCTS_PATH = '/public/jurnal/api/v1/products';
 
-/**
- * The product that postage is billed through.
- *
- * Its whole reason for existing is its sell account: a line against it credits 5030, and
- * that is the only route to 5030 the API leaves open. Created once; a 409 means somebody
- * already did, which is the answer we wanted.
- */
-async function ensureShippingProduct({ deadlineAt = null } = {}) {
-  try {
-    await mekari({
-      method: 'POST',
-      path: PRODUCTS_PATH,
-      deadlineAt,
-      body: {
-        product: {
-          name: SHIPPING_PRODUCT.name,
-          product_code: SHIPPING_PRODUCT.code,
-          is_sold: true,
-          is_bought: false,
-          sell_account_number: SHIPPING_ACCOUNT_NUMBER,
-          track_inventory: false,
-          description: 'Ongkos kirim yang ditagihkan ke pembeli - akun 5030',
-        },
-      },
-    });
-    return 'dibuat';
-  } catch (error) {
-    if (/already|409|taken|sudah/i.test(error.message)) return 'sudah ada';
-    throw error;
-  }
-}
 
 /** @returns {Promise<{id: number, name: string}>} the company these books belong to. */
 export async function activeCompany({ deadlineAt = null } = {}) {

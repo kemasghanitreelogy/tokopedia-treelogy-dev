@@ -103,16 +103,19 @@ export async function prefetchMedia(reviews, { limit = 600, concurrency = 3, fet
       jobs.push({ id: image.id, size: 'full', url: image.full });
     }
   }
-  const queue = jobs.slice(0, limit);
-  const result = { fetched: 0, cached: 0, failed: 0, deferred: Math.max(jobs.length - queue.length, 0) };
+  // What is already on disk costs nothing and must not use up the limit, or a second
+  // run would count the same six hundred cached files again and never reach the rest.
+  const result = { fetched: 0, cached: 0, failed: 0, deferred: 0 };
+  const queue = [];
+  for (const job of jobs) {
+    if (await readCached(job.id, job.size)) result.cached++;
+    else if (queue.length < limit) queue.push(job);
+    else result.deferred++;
+  }
 
   const worker = async () => {
     for (let job = queue.shift(); job; job = queue.shift()) {
       try {
-        if (await readCached(job.id, job.size)) {
-          result.cached++;
-          continue;
-        }
         await fetchMedia({ ...job, fetchImpl });
         result.fetched++;
       } catch (error) {

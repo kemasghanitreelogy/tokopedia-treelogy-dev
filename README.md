@@ -86,8 +86,9 @@ nightly unit runs `bin/tokopedia.mjs reviews --notify`. Override the shop with
 `TOKOPEDIA_SHOP_ID` and `TOKOPEDIA_SHOP_SLUG`.
 
 Review photos come through signed Tokopedia URLs that expire in about three days, so
-they are cached on disk under `state/tokopedia-media` (or `TOKOPEDIA_MEDIA_DIR`) by
-attachment id: the sync fetches photos of new reviews, `GET /api/tokopedia/media?id=&s=`
+they are cached on disk under `state/tokopedia-media` (or `TOKOPEDIA_MEDIA_DIR`; on the
+VPS it must be `/opt/treelogy/state/tokopedia-media`, the only path the sandboxed web
+service may write) by attachment id: the sync fetches photos of new reviews, `GET /api/tokopedia/media?id=&s=`
 serves them to the dashboard and fetches on demand whatever is missing, and
 `tokopedia:reviews:media` warms the whole cache.
 

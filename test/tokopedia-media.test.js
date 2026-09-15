@@ -75,6 +75,9 @@ test('prefetch walks both sizes, counts outcomes, and defers what is over the li
   assert.deepEqual(result, { fetched: 3, cached: 0, failed: 1, deferred: 2 });
   const again = await prefetchMedia(reviews.slice(0, 1), { fetchImpl });
   assert.deepEqual(again, { fetched: 0, cached: 2, failed: 0, deferred: 0 });
+  // A second bounded run spends its limit on what is still missing, not on what is cached.
+  const rest = await prefetchMedia(reviews, { fetchImpl, limit: 2 });
+  assert.deepEqual(rest, { fetched: 0, cached: 3, failed: 2, deferred: 1 }, 'the three cached files did not count against the limit of two');
 });
 
 test('the attachment index maps ids to the freshest urls and skips unsafe ids', () => {

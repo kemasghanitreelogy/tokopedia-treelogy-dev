@@ -33,6 +33,14 @@ export async function activeCompany({ deadlineAt = null } = {}) {
   return { id: company.id, name: company.name ?? '' };
 }
 
+
+/** Where sales shipping is booked right now, as Jurnal itself reports it. */
+export async function currentShippingAccount(companyId, { deadlineAt = null } = {}) {
+  const result = await mekari({ path: `${COMPANY_PATH}/${companyId}`, deadlineAt });
+  const account = (result?.company ?? result)?.sale_shipping_account ?? null;
+  return account ? { id: account.id, number: account.number ?? '', name: account.name ?? '' } : null;
+}
+
 /** Tags already in Jurnal, by lower-cased name. */
 async function existingTags({ deadlineAt = null } = {}) {
   const names = new Set();
@@ -55,31 +63,41 @@ export async function setUpChartOfAccounts({ dryRun = true, deadlineAt = null } 
   const accounts = await requiredAccounts({ deadlineAt });
   const company = await activeCompany({ deadlineAt });
   const shipping = accounts[SHIPPING_ACCOUNT_NUMBER];
+  // What the books do with postage today, read rather than assumed - it is the difference
+  // between "already right" and "silently still going to Other Income".
+  const current = await currentShippingAccount(company.id, { deadlineAt });
 
   const have = await existingTags({ deadlineAt });
   const missingTags = TAGS.filter((t) => !have.has(t.toLowerCase()));
 
   if (dryRun) {
     return {
-      dryRun: true, company, accounts, shipping,
+      dryRun: true, company, accounts, shipping, currentShipping: current,
       tagsToCreate: missingTags, tagsPresent: TAGS.length - missingTags.length,
     };
   }
   if (isReadOnly()) throw new ReadOnlyError('setelan akun Jurnal');
 
-  await mekari({
-    method: 'PATCH',
-    path: `${COMPANY_PATH}/${company.id}`,
-    deadlineAt,
-    body: {
-      company: {
-        // shipping_sale has to be on as well: with it off Jurnal ignores the account and
-        // silently stores the postage as zero, which is the same failure in a new place.
-        shipping_sale: true,
-        sale_shipping_account_id: shipping.id,
-      },
-    },
-  });
+  // Jurnal refuses to change this over the public API.
+  //
+  // Tried against the live company with the documented body and with the full record:
+  // both come back 400 "Invalid HTTP parameters", even though the company's own
+  // sales_shipping_account_changeable says true. So this is reported, not forced - it is
+  // one click in Pengaturan and spending more of a scarce monthly quota guessing at a
+  // request shape the API will not accept helps nobody.
+  let companyPatched = false;
+  let companyNote = '';
+  try {
+    await mekari({
+      method: 'PATCH',
+      path: `${COMPANY_PATH}/${company.id}`,
+      deadlineAt,
+      body: { company: { sale_shipping_account_id: shipping.id } },
+    });
+    companyPatched = true;
+  } catch (error) {
+    companyNote = error.message;
+  }
 
   const created = [];
   for (const name of missingTags) {
@@ -87,7 +105,7 @@ export async function setUpChartOfAccounts({ dryRun = true, deadlineAt = null } 
     created.push(name);
   }
 
-  return { dryRun: false, company, accounts, shipping, tagsCreated: created, tagsPresent: TAGS.length - missingTags.length };
+  return { dryRun: false, company, accounts, shipping, companyPatched, companyNote, currentShipping: current, tagsCreated: created, tagsPresent: TAGS.length - missingTags.length };
 }
 
 /**

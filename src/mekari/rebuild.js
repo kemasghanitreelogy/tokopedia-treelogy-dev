@@ -2,6 +2,16 @@ import { mekari } from './client.js';
 import { loadSyncLedger, saveSyncLedger } from './sync.js';
 
 /**
+ * Fifty, not a hundred.
+ *
+ * A page of a hundred invoices is one large query, and on an API having a bad day it took
+ * longer than our thirty-second deadline - so the whole scan failed rather than slowing
+ * down. Halving the page halves the work per request; with a budget of ninety requests a
+ * minute the extra round trips cost nothing worth having.
+ */
+const PAGE_SIZE = 50;
+
+/**
  * Rebuild the invoice ledger from Jurnal itself.
  *
  * The ledger was designed to be derivable: every invoice carries a `custom_id` of the
@@ -31,7 +41,7 @@ export async function rebuildLedgerFromJurnal({ dryRun = true, since = null } = 
   let pages = 1;
   for (;;) {
     const r = await mekari({
-      path: `/public/jurnal/api/v1/sales_invoices?page=${page}&page_size=100&sort_key=transaction_date&sort_order=desc`,
+      path: `/public/jurnal/api/v1/sales_invoices?page=${page}&page_size=${PAGE_SIZE}&sort_key=transaction_date&sort_order=desc`,
     });
     const rows = r.sales_invoices ?? [];
     let reachedStart = false;

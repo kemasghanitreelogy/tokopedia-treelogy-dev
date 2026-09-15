@@ -3,6 +3,16 @@ import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { jurnalDateToIso } from './rebuild.js';
 
 /**
+ * Fifty, not a hundred.
+ *
+ * A page of a hundred invoices is one large query, and on an API having a bad day it took
+ * longer than our thirty-second deadline - so the whole scan failed rather than slowing
+ * down. Halving the page halves the work per request; with a budget of ninety requests a
+ * minute the extra round trips cost nothing worth having.
+ */
+const PAGE_SIZE = 50;
+
+/**
  * Find and remove invoices that exist more than once.
  *
  * They should be impossible. Every invoice this system writes carries a custom_id of the
@@ -27,7 +37,7 @@ export async function findDuplicates({ since = null, deadlineAt = null } = {}) {
 
   for (let page = 1; ; page += 1) {
     const result = await mekari({
-      path: `${INVOICES_PATH}?page=${page}&page_size=100&sort_key=transaction_date&sort_order=desc`,
+      path: `${INVOICES_PATH}?page=${page}&page_size=${PAGE_SIZE}&sort_key=transaction_date&sort_order=desc`,
       deadlineAt,
     });
     const rows = result?.sales_invoices ?? [];

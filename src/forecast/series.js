@@ -58,7 +58,13 @@ export function buildSeries(orders, { until = Math.floor(Date.now() / 1000) } = 
   for (const order of orders) {
     if (!DEMAND_STAGES.has(order.stage)) { meta.excluded += 1; continue; }
     const day = dayNumber(order.at);
-    if (day * DAY > until + DAY) continue;
+    // Both sides in the same frame. `day * DAY` is the start of a WIB day expressed in
+    // shifted seconds, and `until` is a plain epoch, so comparing them against a slack of
+    // one whole day let in everything up to 17 hours past the window - orders that then
+    // counted towards meta but fell off the end of every series below, because the series
+    // stops at exactly this boundary. Shifting `until` the same way makes the test
+    // identical to `day > lastDay`, which is what the loop that builds the values uses.
+    if (day * DAY > until + offsetSeconds()) continue;
     meta.orders += 1;
     meta.firstDay = meta.firstDay === null ? day : Math.min(meta.firstDay, day);
     meta.lastDay = meta.lastDay === null ? day : Math.max(meta.lastDay, day);

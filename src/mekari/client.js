@@ -148,6 +148,34 @@ const WINDOW_MS = 60_000;
 const recent = [];
 let cooldownUntil = 0;
 
+/**
+ * How many processes spend this account's quota. The VPS runs three - the web app, the
+ * sweep timer and the nightly job - and Redis is what lets them see each other's spending.
+ */
+export const SHARED_PROCESSES = Number(process.env.MEKARI_SHARED_PROCESSES) || 3;
+/** Shared counting is unavailable until this instant; the local bucket takes a share only. */
+let degradedUntil = 0;
+
+/**
+ * What this process may spend on its own authority.
+ *
+ * The full budget is only ours to spend while Redis can tell us what the other two have
+ * already used. When it cannot, the reservation used to be swallowed as a zero - and zero
+ * is the same answer Redis gives when it grants a slot, so a Redis outage read as
+ * permission and three processes each ran the whole 90 a minute against one account limit
+ * of 100. Falling back to a third of the budget keeps the three of us under the line
+ * together, at the cost of a slower run on the day the store is down - which is the right
+ * way round, because the alternative is a 429 storm in the middle of posting invoices.
+ */
+export function localBudget(now = Date.now()) {
+  return now < degradedUntil ? Math.max(1, Math.floor(REQUESTS_PER_MINUTE / SHARED_PROCESSES)) : REQUESTS_PER_MINUTE;
+}
+
+/** Shared counting just failed. Held for one window, so a blip costs one window, not a run. */
+export function noteSharedOutage(now = Date.now()) {
+  degradedUntil = Math.max(degradedUntil, now + WINDOW_MS);
+}
+
 export class RateLimitedError extends MekariError {
   constructor(message, waitMs) {
     super(message, { status: 429 });
@@ -160,7 +188,7 @@ export class RateLimitedError extends MekariError {
 export function budgetWaitMs(now = Date.now()) {
   while (recent.length && now - recent[0] > WINDOW_MS) recent.shift();
   if (now < cooldownUntil) return cooldownUntil - now;
-  if (recent.length < REQUESTS_PER_MINUTE) return 0;
+  if (recent.length < localBudget(now)) return 0;
   return recent[0] + WINDOW_MS - now + 50;
 }
 
@@ -172,19 +200,44 @@ export function resetBudget() {
   recent.length = 0;
   cooldownUntil = 0;
   nextSlot = 0;
+  degradedUntil = 0;
 }
+
+/**
+ * How many times we will wait for the shared bucket before giving up on this request.
+ *
+ * Forty rounds is several minutes of a busy account. Reaching the end used to fall out of
+ * the loop and send the request anyway, which turned the one case the limiter exists for -
+ * a queue that will not clear - into the one case it did nothing about.
+ */
+const SHARED_ROUNDS = 40;
 
 async function takeSlot(interval = MIN_INTERVAL_MS, deadlineAt = null) {
   // The shared budget first: on the VPS this process is one of three that spend the same
-  // account quota, and only Redis can see all of them. A backend without a shared view
+  // account quota, and only Redis can see all of them. A backend with no shared view
   // returns 0 and the in-process bucket below remains the only guard.
-  for (let round = 0; round < 40; round++) {
-    const shared = await reserveSlot('mekari', REQUESTS_PER_MINUTE, WINDOW_MS).catch(() => 0);
-    if (shared === 0) break;
+  let granted = false;
+  for (let round = 0; round < SHARED_ROUNDS && !granted; round++) {
+    let shared;
+    try {
+      shared = await reserveSlot('mekari', REQUESTS_PER_MINUTE, WINDOW_MS);
+    } catch {
+      // Not a grant. Swallowing this as a zero was indistinguishable from being handed a
+      // slot; instead the local bucket drops to this process's share of the account until
+      // the shared view comes back, and we stop asking for this request.
+      noteSharedOutage();
+      break;
+    }
+    if (shared === 0) { granted = true; break; }
     if (deadlineAt !== null && Date.now() + shared >= deadlineAt) {
       throw new RateLimitedError(`kuota ${REQUESTS_PER_MINUTE} request/menit Jurnal habis (dipakai bersama), tenggat tidak cukup untuk menunggu ${Math.ceil(shared / 1000)}s`, shared);
     }
     await sleep(shared);
+  }
+  if (!granted && Date.now() >= degradedUntil) {
+    // Forty waits and the queue is still full. Sending anyway would spend quota we know
+    // is not there and earn a 429 that costs everybody else a cool-down.
+    throw new RateLimitedError(`kuota ${REQUESTS_PER_MINUTE} request/menit Jurnal masih penuh setelah ${SHARED_ROUNDS} kali menunggu`, WINDOW_MS);
   }
 
   const wait = budgetWaitMs();

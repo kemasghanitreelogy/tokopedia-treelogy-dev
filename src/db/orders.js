@@ -86,7 +86,20 @@ export async function saveOrders(orders, { source = 'unknown', fetchedAt = Date.
       // A hundred orders disappeared because of one sen. Retrying one at a time turns
       // that into one named order to look at, and costs an extra round trip only on the
       // batch that actually had something wrong with it.
-      if (error?.retryable || slice.length === 1) throw error;
+      //
+      // A failure worth retrying is different: the database is unreachable or ill, the
+      // next batch would fail the same way, and the operator has to be told - so that one
+      // still stops everything.
+      if (error?.retryable) throw error;
+      // A slice of one has nothing left to split, but it does not follow that the call
+      // should end. That was the one case where throwing cost the most: a batch of exactly
+      // one is the *last* slice of 101 orders, so the hundred already written were
+      // reported to nobody and a long backfill died on its final batch. It is rejected,
+      // named and counted like every other order the database refuses.
+      if (slice.length === 1) {
+        rejected.push({ channel: slice[0].channel, id: slice[0].id, error: error.message });
+        continue;
+      }
       for (const one of slice) {
         try {
           written += Number(await rpc('ingest_orders', { p_orders: [one], p_source: source })) || 0;

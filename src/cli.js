@@ -1131,7 +1131,10 @@ async function cmdMekariSettle(config, args = []) {
 
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
-  console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}`);
+  console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}  ·  akan dikoreksi: ${result.corrected}`);
+  // An amount Jurnal did not send as a number is stored as unknown rather than as zero,
+  // and saying so here is the only place anybody would find out.
+  if (result.unreadable > 0) console.log(`  ${info(`${result.unreadable} faktur nilainya tidak terbaca - dicatat null, bukan nol`)}`);
   console.log(result.dryRun ? `\n${info('dry-run. Terapkan dengan --yes')}\n` : `\n${ok('ledger dibangun ulang')}\n`);
   return 0;
 }
@@ -1224,6 +1227,9 @@ async function cmdDbBackfill(config, args = []) {
         ...Object.entries(chunk.errors).map(([source, message]) => fail(`${source}: ${message}`)),
         ...chunk.truncated.map((t) => warn(`terpotong: ${t}`)),
         ...chunk.rejected.map((r) => fail(`${r.channel}/${r.id}: ${r.error}`)),
+        // The chunk was read but not stored. The run carries on to the next week, so this
+        // line is the only sign it happened at all.
+        ...(chunk.writeError ? [fail(`gagal menulis: ${chunk.writeError}`)] : []),
       ];
       console.log(`  ${chunk.label}  ${String(chunk.found).padStart(5)} ditemukan  ${String(chunk.written).padStart(5)} ditulis  ${problems.join('  ')}`);
     },

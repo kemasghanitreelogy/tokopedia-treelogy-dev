@@ -42,6 +42,38 @@ export const ATTEMPTS = 3;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Two reads of the same window, combined into the best account of it either one gives.
+ *
+ * Keeping only the latest attempt threw away work that had already been paid for: a retry
+ * happens because *one* platform failed, and the other two answered perfectly well. Read
+ * Shopee on attempt one and TikTok on attempt three and the week is complete between them,
+ * yet the chunk was stored from attempt three alone and Shopee's orders - fetched,
+ * normalised and then dropped - were simply missing from a window we went on to claim as
+ * covered.
+ *
+ * Orders are unioned on (channel, id), which is the same key the database writes on, so a
+ * platform answering twice contributes one row. A source that answered in either attempt
+ * is no longer an error; truncation is the other way round and stays if either read hit
+ * it, because a claim over a window read short is the expensive mistake here.
+ */
+export function mergeReads(first, second) {
+  const orders = new Map();
+  for (const order of [...(first.orders ?? []), ...(second.orders ?? [])]) {
+    orders.set(`${order.channel}:${order.id}`, order);
+  }
+  const errors = {};
+  for (const [source, message] of Object.entries(first.errors ?? {})) {
+    if (source in (second.errors ?? {})) errors[source] = second.errors[source] ?? message;
+  }
+  return {
+    ...second,
+    orders: [...orders.values()],
+    errors,
+    truncated: [...new Set([...(first.truncated ?? []), ...(second.truncated ?? [])])],
+  };
+}
+
+/**
  * Read one chunk, giving a flaky link a second and third chance.
  *
  * The connection out of this box is not always well: a run over the same six weeks
@@ -51,21 +83,26 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * after - which is the failure this backfill exists to end.
  *
  * Only a chunk with something wrong is re-read, so a healthy run pays nothing at all, and
- * the result kept is the first one that came back whole.
+ * every attempt's orders are kept rather than only the last one's.
  */
-async function readChunk(window, attempts) {
-  let last = null;
+async function readChunk(window, attempts, collect) {
+  let merged = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    last = await collectOrders({ range: window, maxPerPlatform: 5000, tracking: false });
-    const failed = Object.keys(last.errors ?? {}).length > 0;
-    if (!failed || attempt === attempts) return last;
+    const live = await collect({ range: window, maxPerPlatform: 5000, tracking: false });
+    merged = merged === null ? live : mergeReads(merged, live);
+    const failed = Object.keys(merged.errors ?? {}).length > 0;
+    if (!failed || attempt === attempts) return merged;
     await sleep(attempt * 2000);
   }
-  return last;
+  return merged;
 }
 
 /**
  * @param {{from?: string, until?: number, chunkDays?: number, attempts?: number, onProgress?: Function, dryRun?: boolean}} options
+ * @param {Function} [options.collect]  the read, and `store` the write. They default to
+ *   the real ones; naming them is what lets a run over a dozen chunks - a retry that
+ *   half-succeeds, a database that refuses one - be exercised without three marketplaces
+ *   and a live table, which is the only reason any of this was ever tested by hand.
  */
 export async function backfill({
   from = DB_HISTORY_START,
@@ -74,6 +111,8 @@ export async function backfill({
   attempts = ATTEMPTS,
   onProgress = () => {},
   dryRun = false,
+  collect = collectOrders,
+  store = saveOrders,
 } = {}) {
   const since = from === DB_HISTORY_START
     ? DB_HISTORY_START_EPOCH
@@ -95,7 +134,7 @@ export async function backfill({
 
     // maxPerPlatform is set high deliberately: a cap that trims here does not show up as
     // an error, it shows up months later as a week that is quietly short of orders.
-    const live = await readChunk(window, attempts);
+    const live = await readChunk(window, attempts, collect);
 
     for (const source of sources) {
       const failed = Boolean(live.errors?.[source]);
@@ -108,7 +147,18 @@ export async function backfill({
       if (failed || cut) whole.delete(source);
     }
 
-    const written = dryRun ? { written: 0, rejected: [] } : await saveOrders(live.orders, { source: 'backfill' });
+    // A write that fails outright - the database unreachable, or ill - ends this chunk,
+    // not the run. Without this the exception walked straight out of backfill() and a job
+    // that had already stored five weeks reported nothing at all, and the operator had to
+    // start again from the beginning to find out how far it had got. The chunk simply
+    // keeps no claim, which is what an unwritten window should look like.
+    let written;
+    try {
+      written = dryRun ? { written: 0, rejected: [] } : await store(live.orders, { source: 'backfill' });
+    } catch (error) {
+      written = { written: 0, rejected: [], error: error.message };
+      for (const s of sources) whole.delete(s);
+    }
     seen += live.orders.length;
     stored += written.written;
     rejected.push(...(written.rejected ?? []));
@@ -130,6 +180,9 @@ export async function backfill({
       rejected: written.rejected ?? [],
       errors: live.errors ?? {},
       truncated: live.truncated ?? [],
+      // Named separately from the read errors above: this one is our own database
+      // refusing the chunk, which is a different thing to fix.
+      ...(written.error ? { writeError: written.error } : {}),
     };
     chunks.push(chunk);
     onProgress(chunk);

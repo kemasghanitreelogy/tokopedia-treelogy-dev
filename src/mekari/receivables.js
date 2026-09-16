@@ -22,12 +22,19 @@ const CONTACTS_PATH = '/public/jurnal/api/v1/contacts';
 const PAGE_SIZE = 100;
 
 /**
- * Every customer, by display name.
+ * Every customer, by display name - all of them, not the last one seen.
  *
  * One request per hundred. Names are what this system knows a buyer by - it never sees a
- * Jurnal id until now - so the map is keyed on the name and the id is what comes out.
+ * Jurnal id until now - so the map is keyed on the name and the ids are what come out.
  *
- * @returns {Promise<Map<string, {id: number, arNumber: string, arName: string}>>}
+ * Plural because the names genuinely collide. The marketplaces mask them: Tokopedia and
+ * TikTok send "N*** W***astuti", Shopee a username, and buildInvoice says so in as many
+ * words - two buyers behind one masked name share a contact. Jurnal will also happily
+ * hold two customers with the same display name created at different times. A map that
+ * kept one record per name patched one of them and reported every one of them as moved,
+ * so a sale could still land in the general receivable with the run calling itself clean.
+ *
+ * @returns {Promise<Map<string, Array<{id: number, arNumber: string, arName: string}>>>}
  */
 export async function customersByName({ deadlineAt = null } = {}) {
   const byName = new Map();
@@ -39,11 +46,53 @@ export async function customersByName({ deadlineAt = null } = {}) {
       const name = String(person?.display_name ?? person?.name ?? '').trim();
       if (!name || !person?.id) continue;
       const ar = person.default_ar_account ?? null;
-      byName.set(name, { id: person.id, arNumber: String(ar?.number ?? ''), arName: ar?.name ?? '' });
+      const record = { id: person.id, arNumber: String(ar?.number ?? ''), arName: ar?.name ?? '' };
+      // The same customer can arrive twice across pages if a write lands mid-walk; keyed
+      // on the id, that is the same record rather than a second one to patch.
+      const held = byName.get(name) ?? [];
+      if (!held.some((c) => c.id === record.id)) held.push(record);
+      byName.set(name, held);
     }
     const pages = Number(result?.total_pages) || 1;
     if (page >= pages || rows.length === 0) return byName;
   }
+}
+
+/** How many customer records the map holds, which is not how many names it holds. */
+export const customerCount = (byName) => [...byName.values()].reduce((n, list) => n + list.length, 0);
+
+/**
+ * Which customer records have to move, decided before anything is written.
+ *
+ * Every customer wearing the name, not one of them. Patching the first and counting the
+ * name as done is how a masked buyer kept selling into 1100 General while the run reported
+ * the move as complete - `changed` said four, the books had four more customers nobody had
+ * touched, and nothing in the output hinted at either.
+ *
+ * @param {Map<string, string>} wanted  customer display name -> A/R account number
+ * @param {Record<string, {id: number}>} accounts  account number -> account
+ * @param {Map<string, Array<{id: number, arNumber: string}>>} customers
+ */
+export function plannedMoves(wanted, accounts, customers) {
+  const toChange = [];
+  const unknown = [];
+  // Names Jurnal holds more than one customer for, so the report can say that a single
+  // name cost several moves rather than leaving the arithmetic unexplained.
+  const collisions = [];
+  for (const [name, number] of wanted) {
+    const held = customers.get(name) ?? [];
+    // A buyer with no contact yet is not a problem to solve here: they get the right
+    // account for free at the moment the contact is created.
+    if (held.length === 0) { unknown.push(name); continue; }
+    if (held.length > 1) collisions.push({ name, customers: held.length });
+    const account = accounts[number];
+    for (const customer of held) {
+      if (customer.arNumber === number) continue;
+      if (!account) { unknown.push(name); break; }
+      toChange.push({ name, id: customer.id, from: customer.arNumber || '(kosong)', to: number, accountId: account.id });
+    }
+  }
+  return { toChange, unknown, collisions };
 }
 
 /**
@@ -53,20 +102,10 @@ export async function customersByName({ deadlineAt = null } = {}) {
 export async function alignReceivables(wanted, { dryRun = true, onProgress = () => {}, deadlineAt = null } = {}) {
   const [accounts, customers] = await Promise.all([accountMap({ deadlineAt }), customersByName({ deadlineAt })]);
 
-  const toChange = [];
-  const unknown = [];
-  for (const [name, number] of wanted) {
-    const customer = customers.get(name);
-    // A buyer with no contact yet is not a problem to solve here: they get the right
-    // account for free at the moment the contact is created.
-    if (!customer) { unknown.push(name); continue; }
-    if (customer.arNumber === number) continue;
-    const account = accounts[number];
-    if (!account) { unknown.push(name); continue; }
-    toChange.push({ name, id: customer.id, from: customer.arNumber || '(kosong)', to: number, accountId: account.id });
-  }
+  const { toChange, unknown, collisions } = plannedMoves(wanted, accounts, customers);
 
-  if (dryRun) return { dryRun: true, customers: customers.size, toChange, unknown, changed: 0, failures: [] };
+  const total = customerCount(customers);
+  if (dryRun) return { dryRun: true, customers: total, toChange, unknown, collisions, changed: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('akun piutang pelanggan');
 
   let changed = 0;
@@ -85,5 +124,5 @@ export async function alignReceivables(wanted, { dryRun = true, onProgress = () 
       failures.push({ name: item.name, error: error.message });
     }
   }
-  return { dryRun: false, customers: customers.size, toChange, unknown, changed, failures };
+  return { dryRun: false, customers: total, toChange, unknown, collisions, changed, failures };
 }

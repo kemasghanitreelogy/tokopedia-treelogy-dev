@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { explode, buildSeries } from '../src/forecast/series.js';
+import { explode, buildSeries, wibDay } from '../src/forecast/series.js';
+import { wibDayStart } from '../src/range.js';
 import { originsFor, evaluate, selectModel, forecastWith, HORIZONS } from '../src/forecast/backtest.js';
 import { stockPolicy, urgencyOf } from '../src/forecast/policy.js';
 import { onHandFrom, weeklyTotals, buildForecast } from '../src/forecast/engine.js';
@@ -35,6 +36,30 @@ test('demand is daily, gaps are zeros, and cancelled orders are excluded not zer
   assert.equal(series.get('MRS-001').values[0], 1);
   assert.equal(meta.orders, 3);
   assert.equal(meta.excluded, 1, 'yang batal dihitung terpisah, bukan jadi nol');
+});
+
+test('the window ends where the series ends, not seventeen hours later', () => {
+  // `until` is a plain epoch and the day number is shifted into WIB, so the cut-off has to
+  // be shifted the same way. Slackened by a whole day instead, it admitted everything up
+  // to 17 hours into the following WIB day - and those orders were counted in meta and
+  // then dropped, because the loop that fills the values stops at exactly this boundary.
+  // The series was short of demand the summary said it had.
+  const midnight = wibDayStart(wibDay(day(3)));            // 00:00 WIB
+  const until = midnight + 86_400 - 1;                     // 23:59:59 WIB, how a day is described
+  const orders = [
+    { at: until - 3600, stage: 'completed', lines: [{ sku: 'OMP-45-001', qty: 2 }] },
+    // Midnight, the next WIB day. Inside the old slack, outside the window by any reading.
+    { at: until + 1, stage: 'completed', lines: [{ sku: 'OMP-45-001', qty: 9 }] },
+    { at: until + 16 * 3600, stage: 'completed', lines: [{ sku: 'OMP-45-001', qty: 90 }] },
+  ];
+  const { series, meta } = buildSeries(orders, { until });
+
+  assert.equal(meta.orders, 1, 'besok bukan bagian dari hari ini');
+  assert.equal(meta.to, wibDay(until), 'dan hari terakhir yang dilaporkan adalah hari terakhir jendela');
+  const powder = series.get('OMP-45-001');
+  // What the series adds up to is what meta says was counted - the property that broke.
+  assert.equal(powder.values.reduce((a, b) => a + b, 0), 2);
+  assert.equal(powder.days.at(-1), wibDay(until));
 });
 
 test('a SKU the master does not know is reported, not silently swallowed', () => {

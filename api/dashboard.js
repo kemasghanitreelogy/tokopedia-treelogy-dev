@@ -260,7 +260,10 @@ async function handleWrite(form, ip) {
     const failed = result.results.filter((r) => r.status === 'failed' || r.status === 'mismatch');
     await notifySyncFailures({ source: 'tombol Kirim di dashboard', results: result.results });
     console.log(`dashboard: mekari_sync ${result.created} created, ${result.exists} existing, ${result.failed} failed, ${result.deferred} deferred`);
-    const later = result.remaining + result.deferred;
+    // `remaining` already counts the deferred ones: it is the backlog minus what this run
+    // actually got into the ledger, so adding them again told the operator twice as many
+    // sales were still waiting as there were.
+    const later = result.remaining;
     return {
       view: 'jurnal',
       message: failed.length === 0

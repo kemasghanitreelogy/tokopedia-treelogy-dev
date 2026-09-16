@@ -1,4 +1,4 @@
-import { readDoc, writeDoc, updateDoc } from '../store/index.js';
+import { readDoc, updateDoc } from '../store/index.js';
 import { mekari, isMekariConfigured, MekariError, QuotaExhaustedError } from './client.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomId, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -41,6 +41,16 @@ async function receivableIdFor(order) {
 export const LEDGER_PATHNAME = 'mekari/synced.json';
 
 /**
+ * Codes a connection that never got an answer arrives with, wherever Node attached them:
+ * on the error itself, or on the `cause` fetch wraps around the socket failure.
+ */
+const TRANSIENT_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH',
+  'ENOTFOUND', 'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+]);
+
+/**
  * Whether a failure is worth waking anyone for.
  *
  * A 429, a 5xx, a dropped connection or a deadline that ran out before a retry could
@@ -54,7 +64,21 @@ export function isTransient(error) {
   if (error?.monthly) return true; // deferred until the quota returns; the run itself stops
   const status = error?.status;
   if (status === 429 || (status >= 500 && status < 600)) return true;
-  if (status === undefined && error?.name === 'MekariError') return true; // unreachable / timed out
+  // Jurnal answered, and its answer settles it. Reading the message after a status is
+  // what made "HTTP 422: alamat ETIMEDOUT tidak valid" - a validation refusal quoting a
+  // buyer's address back at us - look like a network blip worth retrying forever.
+  if (status !== undefined) return false;
+  if (error?.name === 'MekariError') return true; // unreachable / timed out
+  // Nothing reached Jurnal: the socket died, DNS did not answer, the deadline fired.
+  // These are facts carried on the error - a code, a flag - rather than a sentence, and
+  // that matters because the sentence is the one thing anybody is free to reword. The
+  // text test below is what classified ECONNREFUSED and EAI_AGAIN as permanent refusals
+  // for as long as it was the only test there was.
+  if (TRANSIENT_CODES.has(error?.code) || TRANSIENT_CODES.has(error?.cause?.code)) return true;
+  if (error?.timeout || error?.name === 'TimeoutError' || error?.name === 'AbortError') return true;
+  // Last resort, for a message that carries nothing structured at all. Anything reaching
+  // here that turns out to be transient belongs in one of the tests above, not in this
+  // pattern - a longer regex only moves the next silent misclassification further out.
   return /tenggat habis|tidak terjangkau|ECONNRESET|ETIMEDOUT|fetch failed/i.test(String(error?.message ?? ''));
 }
 
@@ -179,9 +203,21 @@ export async function acquireLock(owner = `${Date.now()}-${Math.random().toStrin
   }
 }
 
-export async function releaseLock() {
+/**
+ * Release the lock, and only ever our own.
+ *
+ * It used to write {owner: null} whatever it found there, which is fine right up until a
+ * run overruns the five-minute TTL: the next sweep sees an expired holder, takes the lock
+ * legitimately, and then the first run finishes and clears it - leaving a third run free
+ * to post the same orders the second one is halfway through. Comparing the owner inside
+ * the same transaction that clears it makes a late finisher a no-op instead.
+ */
+export async function releaseLock(owner) {
   try {
-    await writeDoc(LOCK_PATHNAME, { owner: null, at: 0 });
+    await updateDoc(LOCK_PATHNAME, (current) => (
+      // No owner named, or somebody else's: leave it alone and let the TTL do the work.
+      owner && (current?.owner ?? null) === owner ? { owner: null, at: 0 } : (current ?? { owner: null, at: 0 })
+    ), { owner: null, at: 0 });
   } catch {
     // Failing to release only costs us the TTL.
   }
@@ -215,6 +251,19 @@ export async function findExisting(order, { deadlineAt = null } = {}) {
     if (error.status === 422 && /not found/i.test(JSON.stringify(error.body ?? ''))) return null;
     throw error;
   }
+}
+
+/**
+ * How many of a run's results actually left the backlog.
+ *
+ * Only an order now in the ledger has - created, already there, or stored with a number we
+ * did not send, which is recorded so it is not posted again. A failure and a deferral both
+ * leave the order exactly where it was, waiting for the next sweep. A dry run writes
+ * nothing at all, so what it drains is simply what it managed to price.
+ */
+const SETTLED = new Set(['created', 'exists', 'mismatch']);
+export function drained(results, { dryRun = false } = {}) {
+  return results.filter((r) => (dryRun ? r.status === 'dry-run' : SETTLED.has(r.status))).length;
 }
 
 /** Orders worth posting, oldest first so the books read in the order things happened. */
@@ -473,7 +522,7 @@ export async function runSync({ orders, depositTo = null, dryRun = true, limit =
   try {
     return await runBatch({ orders, depositTo, dryRun, limit, deadlineMs });
   } finally {
-    if (held.held) await releaseLock();
+    if (held.held) await releaseLock(held.owner);
   }
 }
 
@@ -548,7 +597,12 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     // Counted against the whole backlog, not this run's cap: the caller uses it to decide
     // whether to call again, and "nothing left of the twelve I asked for" is not "nothing
     // left". The first chained sweep stopped after one round on exactly that misreading.
-    remaining: backlog.length - results.length,
+    //
+    // And counted from what was settled rather than from what was attempted, for the same
+    // reason: eleven orders deferred by a rate limit are eleven orders still waiting, and
+    // subtracting them here reported an empty backlog to a caller whose whole job was to
+    // come back for them.
+    remaining: backlog.length - drained(results, { dryRun }),
     ranOutOfTime,
     quotaExhausted,
     created: count('created'),

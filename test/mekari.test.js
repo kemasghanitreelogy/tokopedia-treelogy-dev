@@ -508,6 +508,46 @@ test('a transient failure is deferred, a real one is failed', async () => {
   assert.equal(isTransient(new Error('SKU tidak ada di data master')), false);
 });
 
+test('a connection that died is read from its code, not from its wording', async () => {
+  const { isTransient } = await import('../src/mekari/sync.js');
+  const { TimeoutError } = await import('../src/http.js');
+
+  // undici reports a dead socket as a plain TypeError with the real reason on `cause`.
+  // Neither ECONNREFUSED nor EAI_AGAIN appeared in the message pattern, so a refused
+  // connection and a DNS hiccup were both filed as "Jurnal rejected this" - woke somebody
+  // up, and the order was posted fine on the next sweep.
+  const refused = new TypeError('fetch failed');
+  refused.cause = { code: 'ECONNREFUSED' };
+  assert.equal(isTransient(refused), true);
+
+  const dns = Object.assign(new Error('getaddrinfo EAI_AGAIN api.mekari.com'), { code: 'EAI_AGAIN' });
+  assert.equal(isTransient(dns), true);
+  assert.equal(isTransient(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })), true);
+  assert.equal(isTransient(new TimeoutError('https://api.mekari.com/x', 30_000)), true, 'tenggat kita sendiri, bukan penolakan Jurnal');
+
+  // The wording is still not what decides a refusal: a 422 with a network-ish word in it
+  // is Jurnal answering, and a mapping error with none is still ours to fix.
+  const { MekariError } = await import('../src/mekari/client.js');
+  assert.equal(isTransient(new MekariError('HTTP 422: alamat ETIMEDOUT tidak valid', { status: 422 })), false);
+  assert.equal(isTransient(new Error('harga satuan tidak masuk akal')), false);
+});
+
+test('only an order that reached the ledger is off the backlog', async () => {
+  const { drained } = await import('../src/mekari/sync.js');
+  const results = [
+    { status: 'created' }, { status: 'exists' }, { status: 'mismatch' },
+    { status: 'deferred' }, { status: 'deferred' }, { status: 'failed' },
+  ];
+  // Three are in the books. The two deferred ones are waiting for the next sweep and the
+  // failed one is waiting for a person; counting either as drained is what told a chained
+  // caller the backlog was empty while eleven sales sat outside the books.
+  assert.equal(drained(results), 3);
+  assert.equal(drained([{ status: 'deferred' }, { status: 'failed' }]), 0, 'satu ronde yang seluruhnya tertunda tidak mengosongkan apa pun');
+  // A dry run writes nothing, so what it drains is what it managed to price.
+  assert.equal(drained([{ status: 'dry-run' }, { status: 'dry-run' }, { status: 'failed' }], { dryRun: true }), 2);
+  assert.equal(drained([], {}), 0);
+});
+
 /* ------------------------------------------------------------- kuota & 409 */
 
 test('the request budget stays under the account ceiling, and a 429 opens a cool-down', async () => {
@@ -691,10 +731,36 @@ test('the lock holds, refuses a second run, and is released', async () => {
   assert.equal(second.acquired, false, 'run kedua harus ditolak selagi yang pertama memegang');
   assert.equal(second.owner, 'satu', 'dan harus menyebut siapa yang memegang');
 
-  await releaseLock();
+  await releaseLock('satu');
   const third = await acquireLock('tiga');
   assert.equal(third.acquired, true, 'setelah dilepas kunci bisa diambil lagi');
-  await releaseLock();
+  await releaseLock('tiga');
+});
+
+test('a run that overran its lock cannot release the run that replaced it', async () => {
+  // The five-minute TTL exists for a run that crashed, but a run that merely took longer
+  // reaches the same state: the next sweep sees an expired holder and takes the lock
+  // legitimately. releaseLock used to write {owner: null} whatever it found, so the slow
+  // run finishing a minute later cleared a lock somebody else was holding - and a third
+  // run was then free to post the same orders the second was halfway through.
+  const { acquireLock, releaseLock, LOCK_PATHNAME } = await import('../src/mekari/sync.js');
+  const { writeDoc, readDoc } = await import('../src/store/index.js');
+
+  // A holds the lock, and holds it past the TTL.
+  await writeDoc(LOCK_PATHNAME, { owner: 'lambat', at: Date.now() - 6 * 60 * 1000 });
+  const b = await acquireLock('pengganti');
+  assert.equal(b.acquired, true, 'pemegang yang kedaluwarsa tidak boleh memblokir selamanya');
+
+  // A now finishes and tidies up after itself.
+  await releaseLock('lambat');
+  assert.equal((await readDoc(LOCK_PATHNAME)).owner, 'pengganti', 'kunci milik pengganti harus utuh');
+  assert.equal((await acquireLock('ketiga')).acquired, false, 'dan masih menolak run ketiga');
+
+  // The holder's own release still works.
+  await releaseLock('pengganti');
+  const next = await acquireLock('berikutnya');
+  assert.equal(next.acquired, true);
+  await releaseLock('berikutnya');
 });
 
 /* ------------------------------------------------- Jurnal's 250-character address cap */
@@ -813,4 +879,107 @@ test('a sale is worth the same on the screen as it is in the books', async () =>
   // No line detail is not the same as a sale worth nothing.
   assert.equal(saleValue({ finance: { lines: [] } }), null);
   assert.equal(saleValue({}), null);
+});
+
+/* ----------------------------------------------- rebuilding the ledger from the books */
+
+test('a rebuild corrects the ledger it is recovering, and keeps what only we know', async () => {
+  const { mergeRebuilt, rebuiltEntry } = await import('../src/mekari/rebuild.js');
+
+  const stored = {
+    // Pointing at the wrong invoice after a restatement went wrong. Correcting exactly
+    // this is the reason the tool exists, and the stored side used to win every
+    // collision - so the one entry anybody would ever run it for was the one it could
+    // not touch.
+    'TRL-shopee-A': { invoice_id: 111, total: 90_000, channel: 'shopee', order_id: 'A' },
+    // Cancelled, invoice deleted, dealt with. Jurnal no longer holds it, so a rebuild
+    // never sees it.
+    'TRL-shopee-B': { invoice_id: 222, voided: true, voided_at: '2026-09-01T00:00:00.000Z' },
+    // Cancelled but already paid against: a person was asked to sort it out.
+    'TRL-shopee-C': { invoice_id: 333, total: 10_000, needs_review: 'faktur sudah menerima pembayaran' },
+  };
+  const found = {
+    'TRL-shopee-A': { invoice_id: 999, total: 505_000, channel: 'shopee', order_id: 'A', rebuilt: true },
+    'TRL-shopee-C': { invoice_id: 333, total: 10_000, channel: 'shopee', order_id: 'C', rebuilt: true },
+    'TRL-shopee-D': { invoice_id: 444, total: 25_000, channel: 'shopee', order_id: 'D', rebuilt: true },
+  };
+  const merged = mergeRebuilt(stored, found);
+
+  assert.equal(merged['TRL-shopee-A'].invoice_id, 999, 'buku yang benar, bukan ledger');
+  assert.equal(merged['TRL-shopee-A'].total, 505_000);
+  assert.equal(merged['TRL-shopee-B'].voided, true, 'yang dihapus tetap dihapus');
+  assert.equal(merged['TRL-shopee-C'].needs_review, 'faktur sudah menerima pembayaran', 'catatan kita sendiri tidak ikut tertimpa');
+  assert.equal(merged['TRL-shopee-D'].invoice_id, 444, 'yang hilang dari ledger kembali');
+  assert.equal(Object.keys(merged).length, 4);
+});
+
+test('an amount Jurnal did not send as a number is unknown, not zero', async () => {
+  const { rebuiltEntry } = await import('../src/mekari/rebuild.js');
+
+  assert.equal(rebuiltEntry({ id: 1, custom_id: 'TRL-shopee-A', original_amount: '505000.0' }).entry.total, 505_000);
+  // Math.round(Number('Rp505.000')) is NaN, NaN serialises to null, and the entry then
+  // reads as a sale worth nothing - which is a number, so nobody would ever question it.
+  for (const amount of ['Rp505.000', '', null, undefined, {}]) {
+    const entry = rebuiltEntry({ id: 2, custom_id: 'TRL-shopee-B', original_amount: amount }).entry;
+    assert.equal(entry.total, null, `${JSON.stringify(amount)} harus jadi null, bukan angka karangan`);
+    assert.equal(Number.isNaN(entry.total), false);
+  }
+  // An invoice somebody typed into Jurnal by hand is not ours to record at all.
+  assert.equal(rebuiltEntry({ id: 3, custom_id: 'INV-2026-01' }), null);
+  assert.equal(rebuiltEntry({ id: 4 }), null);
+  // The '#' Shopify ids used to carry is dropped, the same way the ledger reads them.
+  assert.equal(rebuiltEntry({ id: 5, custom_id: 'TRL-shopify-#10892', original_amount: 1 }).customId, 'TRL-shopify-10892');
+});
+
+/* ------------------------------------------------- receivables, and names that collide */
+
+test('every customer wearing a masked name is moved, not just the first one', async () => {
+  const { plannedMoves } = await import('../src/mekari/receivables.js');
+
+  // The marketplaces mask buyer names - "N*** W***astuti" - so two buyers really do share
+  // one. Jurnal will also hold two customers with the same display name made months apart.
+  const customers = new Map([
+    ['N*** W***astuti', [
+      { id: 1, arNumber: '1100' },
+      { id: 2, arNumber: '1100' },
+    ]],
+    ['Shopee', [{ id: 3, arNumber: '1102' }]],
+    ['Edy Gautama', [{ id: 4, arNumber: '1100' }]],
+  ]);
+  const accounts = { 1101: { id: 71 }, 1102: { id: 72 } };
+  const wanted = new Map([
+    ['N*** W***astuti', '1101'],
+    ['Shopee', '1102'],
+    ['Edy Gautama', '1101'],
+    ['belum punya kontak', '1101'],
+  ]);
+
+  const { toChange, unknown, collisions } = plannedMoves(wanted, accounts, customers);
+  // Both of the two, or a sale keeps landing in 1100 General while the run reports the
+  // name as moved and `changed` counts it once.
+  assert.deepEqual(toChange.map((c) => c.id).sort(), [1, 2, 4]);
+  assert.equal(toChange.filter((c) => c.name === 'N*** W***astuti').length, 2);
+  assert.deepEqual(collisions, [{ name: 'N*** W***astuti', customers: 2 }], 'dan laporannya menyebut kenapa satu nama jadi dua pindahan');
+  // Already on the right account: no request at all. And a buyer with no contact yet gets
+  // the right account for free when the contact is created.
+  assert.equal(toChange.some((c) => c.id === 3), false);
+  assert.deepEqual(unknown, ['belum punya kontak']);
+});
+
+test('the shared request budget does not treat a store outage as permission', async () => {
+  const { budgetWaitMs, localBudget, noteSharedOutage, resetBudget, REQUESTS_PER_MINUTE, SHARED_PROCESSES } =
+    await import('../src/mekari/client.js');
+  resetBudget();
+  const now = 3_000_000;
+  assert.equal(localBudget(now), REQUESTS_PER_MINUTE, 'selama Redis terbaca, seluruh anggaran memang milik kita');
+
+  // Redis down. The reservation used to be swallowed as a zero, which is the same answer
+  // Redis gives when it grants a slot - so all three processes on the box ran the full 90
+  // a minute against one account ceiling of 100.
+  noteSharedOutage(now);
+  assert.equal(localBudget(now + 1), Math.floor(REQUESTS_PER_MINUTE / SHARED_PROCESSES));
+  assert.ok(localBudget(now + 1) * SHARED_PROCESSES <= REQUESTS_PER_MINUTE, 'tiga proses bersama tetap di bawah plafon');
+  // One window, so a blink costs a window rather than the rest of the run.
+  assert.equal(localBudget(now + 61_000), REQUESTS_PER_MINUTE);
+  resetBudget();
 });

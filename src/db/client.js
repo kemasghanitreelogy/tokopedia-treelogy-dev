@@ -168,6 +168,14 @@ export async function rpc(name, args = {}, options = {}) {
 /** Pages fetched at once after the first. Enough to hide the latency, few enough to be polite. */
 const PAGE_CONCURRENCY = 4;
 
+/**
+ * How far the uncounted fallback below will walk before it decides something is wrong.
+ *
+ * Half a million rows is far more than any window this system reads - the whole orders
+ * table is in the tens of thousands - so reaching it means the walk is not walking.
+ */
+const MAX_FALLBACK_ROWS = 500 * PAGE_SIZE;
+
 export async function selectAll(table, params = {}, options = {}) {
   // The first page is asked for with an exact count, which is what turns the rest from a
   // guessing game into arithmetic: over a link to another continent, three pages fetched
@@ -185,13 +193,33 @@ export async function selectAll(table, params = {}, options = {}) {
 
   const total = Number(String(first.contentRange ?? '').split('/')[1]);
   if (!Number.isFinite(total)) {
-    // PostgREST declined to count. Fall back to walking until a short page ends it.
-    for (let from = rows.length; ; from += PAGE_SIZE) {
+    // PostgREST declined to count. Fall back to walking until a short page ends it - but
+    // only ever forwards, and never forever.
+    //
+    // The loop used to have neither guard, and both are the same failure: something in
+    // front of the database that does not honour Range - a cache, a WAF, a proxy serving
+    // a canned page - answers every request with page one. The walk then appends the same
+    // thousand rows on every pass, advancing nothing, until the process runs out of memory
+    // with no error to explain it. Refusing loudly costs the caller one read; the other
+    // way costs the box.
+    let marker = JSON.stringify(rows[0] ?? null);
+    for (let from = rows.length; from < MAX_FALLBACK_ROWS; from += PAGE_SIZE) {
       const { body } = await request(table, { ...options, params, range: `${from}-${from + PAGE_SIZE - 1}` });
       const page = Array.isArray(body) ? body : [];
+      const next = JSON.stringify(page[0] ?? null);
+      if (page.length > 0 && next === marker) {
+        const error = new SupabaseError(`${table}: halaman dari baris ${from} mengulang isi halaman sebelumnya - Range tidak dihormati`, { status: 0 });
+        // Asking again gets the same broken answer from the same thing in the way.
+        error.retryable = false;
+        throw error;
+      }
+      marker = next;
       rows.push(...page);
       if (page.length < PAGE_SIZE) return rows;
     }
+    const error = new SupabaseError(`${table}: lebih dari ${MAX_FALLBACK_ROWS} baris tanpa hitungan pasti - pembacaan dihentikan`, { status: 0 });
+    error.retryable = false;
+    throw error;
   }
 
   const offsets = [];

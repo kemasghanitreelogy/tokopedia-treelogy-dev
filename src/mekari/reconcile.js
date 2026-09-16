@@ -7,10 +7,10 @@ import { wibDayStart } from '../range.js';
 /**
  * Make the ledger describe Jurnal, exactly, for one window.
  *
- * rebuildLedgerFromJurnal cannot do this: it merges with the stored ledger winning every
- * collision, so an entry pointing at an invoice that no longer exists is precisely the
- * thing it can never repair - and that entry then tells the sweep the order is booked, so
- * it is never posted again. After a restatement went wrong, the ledger claimed 546
+ * rebuildLedgerFromJurnal cannot do this: it only ever writes entries for invoices the
+ * books still hold, so an entry pointing at an invoice that no longer exists is precisely
+ * the thing it can never repair - and that entry then tells the sweep the order is booked,
+ * so it is never posted again. After a restatement went wrong, the ledger claimed 546
  * invoices while Jurnal held 516, and every sweep dutifully wrote nothing.
  *
  * Here Jurnal wins. It is the books; the ledger is a cache of them. An order in the window

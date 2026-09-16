@@ -1,7 +1,7 @@
 import { mekari } from './client.js';
 import { invoiceCatalogue, ours } from './catalogue.js';
 import { ordersInRange } from '../db/orders.js';
-import { customIdFor, jurnalDate } from './invoice.js';
+import { buildInvoice, customIdFor, jurnalDate } from './invoice.js';
 import { termDaysFor } from './sources.js';
 import { POSTABLE_STAGES } from './sync.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -15,16 +15,38 @@ import { wibDayStart } from '../range.js';
  * integration has run. Shopee's own order ids put the number at nine a month on that
  * channel alone.
  *
- * A date is the one thing about a posted invoice that can be corrected in place: Jurnal's
- * PATCH takes transaction_date and due_date, so nothing has to be deleted and no invoice
- * number changes. That matters, because deleting and rewriting is what produced 891
- * invoices from 472 earlier in this integration's life.
+ * The date is corrected in place, so no invoice is deleted and no number changes. That
+ * matters, because deleting and rewriting is what produced 891 invoices from 472 earlier
+ * in this integration's life.
+ *
+ * But Jurnal's PATCH is a REPLACE, not a patch. Sending `{transaction_date}` alone does
+ * not move the date - it empties the invoice and is then refused for being empty:
+ *
+ *     transaction_lines  must not be blank / is invalid
+ *     due_date           must not be blank / is invalid
+ *     remaining          (Value must be greater than 0.)
+ *     deposit            can't be added if transaction amount is empty
+ *
+ * All twenty-two attempts failed that way before this was understood. So the whole invoice
+ * is rebuilt from the order and sent, with the corrected date falling out of buildInvoice
+ * on its own - the same payload the invoice was created from, which is exactly what makes
+ * a replace safe. The deposit rides along and is restated rather than duplicated: the
+ * payment keeps its id and moves onto the new date with the invoice.
+ *
+ * Two things are refused rather than sent, because a date correction must never move
+ * money:
+ *   - a rebuild whose total disagrees with what is posted (the order changed since, or a
+ *     SKU no longer maps) - the date is not worth rewriting the amount for;
+ *   - a settled invoice whose rebuild carries no deposit (a manual source paid by hand in
+ *     Jurnal) - replacing it would erase a payment this code never knew about.
  *
  * Only invoices whose date actually disagrees are touched, so a second run costs one scan
  * and no writes.
  */
 
 const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
+
+const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
 /** @param {{from: string, until?: number}} options */
 export async function planRedate({ from, until = Math.floor(Date.now() / 1000) } = {}) {
@@ -60,6 +82,10 @@ export async function planRedate({ from, until = Math.floor(Date.now() / 1000) }
       should,
       dueDate: jurnalDate(order.createdAt + termDaysFor(order) * 24 * 3600, order.channel),
       total: invoice.total,
+      // Settled here means Jurnal says nothing is outstanding - which is true both for an
+      // invoice this code marked paid on deposit and for one somebody received by hand.
+      settled: invoice.total > 0 && invoice.remaining === 0,
+      order,
     });
   }
 
@@ -68,9 +94,36 @@ export async function planRedate({ from, until = Math.floor(Date.now() / 1000) }
 }
 
 /**
- * @param {{from: string, dryRun?: boolean, onProgress?: Function}} options
+ * Rebuild one invoice at its corrected date, or say why it must not be sent.
+ *
+ * Separated so the refusals are testable without a live account.
+ *
+ * @returns {{payload: object}|{refuse: string}}
  */
-export async function redateInvoices({ from, dryRun = true, onProgress = () => {} } = {}) {
+export function redatePayload(item, { depositTo = null } = {}) {
+  let built;
+  try {
+    built = buildInvoice({ order: item.order, depositTo });
+  } catch (error) {
+    return { refuse: `tidak bisa dibangun ulang: ${error.message}` };
+  }
+
+  if (built.expectedTotal !== item.total) {
+    return { refuse: `nilai berubah (${item.total} -> ${built.expectedTotal}) - tanggal tidak sebanding dengan menulis ulang jumlahnya` };
+  }
+  if (item.settled && !built.sales_invoice.deposit) {
+    return { refuse: 'sudah lunas tapi pembayarannya dicatat manual - mengganti faktur akan menghapusnya' };
+  }
+  if (built.sales_invoice.transaction_date !== item.should) {
+    return { refuse: `tanggal hasil bangun ulang tidak sesuai rencana (${built.sales_invoice.transaction_date} != ${item.should})` };
+  }
+  return { payload: { sales_invoice: built.sales_invoice } };
+}
+
+/**
+ * @param {{from: string, dryRun?: boolean, depositTo?: string|null, onProgress?: Function}} options
+ */
+export async function redateInvoices({ from, dryRun = true, depositTo = depositAccount(), onProgress = () => {} } = {}) {
   const plan = await planRedate({ from });
   // A scan that came back short would make correct invoices look absent rather than wrong,
   // which is harmless here - but it would also hide the ones that need moving, and a
@@ -82,13 +135,13 @@ export async function redateInvoices({ from, dryRun = true, onProgress = () => {
   let moved = 0;
   const failures = [];
   for (const item of plan.wrong) {
+    const attempt = redatePayload(item, { depositTo });
+    if (attempt.refuse) {
+      failures.push({ no: item.no, customId: item.customId, error: attempt.refuse });
+      continue;
+    }
     try {
-      await mekari({
-        method: 'PATCH',
-        path: `${INVOICES_PATH}/${item.id}`,
-        // The due date moves with it, or a Net 14 invoice silently becomes Net 13.
-        body: { sales_invoice: { transaction_date: item.should, due_date: item.dueDate } },
-      });
+      await mekari({ method: 'PATCH', path: `${INVOICES_PATH}/${item.id}`, body: attempt.payload });
       moved += 1;
       onProgress({ moved, of: plan.wrong.length, no: item.no, was: item.was, should: item.should });
     } catch (error) {

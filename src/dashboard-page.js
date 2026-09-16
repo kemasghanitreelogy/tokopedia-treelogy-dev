@@ -1192,7 +1192,18 @@ export function renderDashboard({
     range, errors, truncated, maxPerPlatform, shopeeShop, generatedAt,
     view: 'orders',
     kpis: `<section class="kpis" aria-label="Ringkasan">
-    ${kpiCard({ iconName: 'wallet', label: 'Omzet', value: rupiah(all.revenue), sub: `${compact(all.revenue)} &middot; tanpa order batal` })}
+    ${kpiCard({
+      iconName: 'wallet',
+      label: 'Omzet',
+      value: rupiah(all.revenue),
+      // The figure that reaches Jurnal, and the caption says how it differs from what the
+      // buyer paid. The two used to be Rp110 million apart over thirty days with nothing
+      // on either screen to explain it, and a number nobody can tie out is a number
+      // somebody eventually stops trusting.
+      sub: all.paid && all.revenue > all.paid
+        ? `${compact(all.revenue)} &middot; harga jual, sama dengan Jurnal &middot; pembeli bayar ${compact(all.paid)}, selisih ${compact(all.revenue - all.paid)} ditanggung platform`
+        : `${compact(all.revenue)} &middot; harga jual, sama dengan Jurnal &middot; tanpa order batal`,
+    })}
     ${kpiCard({ iconName: 'cube', label: 'Pesanan', value: String(all.count), sub: '3 kanal digabung' })}
     ${kpiCard({ iconName: 'bell', label: 'Perlu tindakan', value: String(all.actionable), sub: 'belum bayar + siap kirim', tone: all.actionable > 0 ? 'is-act' : '' })}
     ${kpiCard({ iconName: 'truck', label: 'Dalam pengiriman', value: String(inTransit), sub: 'sedang di kurir' })}

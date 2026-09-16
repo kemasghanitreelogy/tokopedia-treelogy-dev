@@ -781,3 +781,36 @@ test("a Shopify custom_id carries no '#', because Jurnal cannot handle one", asy
   assert.equal(invoice.custom_id, 'TRL-shopify-10892');
   assert.ok(!invoice.reference_no.includes('#'), 'reference_no juga tanpa # - prefiks sudah menyebut kanalnya');
 });
+
+/* ------------------- the dashboard and the books count a sale the same way */
+
+test('a sale is worth the same on the screen as it is in the books', async () => {
+  // The dashboard added up what the buyer handed over; the invoice adds up what the goods
+  // were sold for. A marketplace voucher is funded by the marketplace and reimbursed to
+  // us, so those are different numbers - Rp110 million apart over thirty days, with
+  // nothing on either screen to say why.
+  const { saleValue } = await import('../src/mekari/invoice.js');
+  const { summarize } = await import('../src/omni.js');
+
+  // A real Shopee order: Rp4.700.000 list, Rp2.000.000 of it discounted by us, and the
+  // buyer paid Rp2.270.157 because Shopee funded the rest.
+  const sold = {
+    channel: 'shopee', stage: 'completed', total: 2_270_157,
+    finance: { lines: [{ sku: 'OMC-90-001', qty: 1, unitPrice: 4_700_000, unitDiscount: 2_000_000 }], shipping: 0 },
+  };
+  assert.equal(saleValue(sold), 2_700_000, 'harga jual setelah diskon kita sendiri');
+
+  const built = buildInvoice({ order: { ...sold, id: 'A', createdAt: 1_760_000_000 } });
+  assert.equal(saleValue(sold), built.expectedTotal, 'layar dan buku harus sepakat');
+
+  const summary = summarize([sold]);
+  assert.equal(summary.all.revenue, 2_700_000);
+  assert.equal(summary.all.paid, 2_270_157);
+  assert.equal(summary.all.revenue - summary.all.paid, 429_843, 'yang ditanggung platform');
+
+  // Shipping charged to the buyer is part of what was sold.
+  assert.equal(saleValue({ finance: { lines: [{ sku: 'OMC-90-001', qty: 2, unitPrice: 100_000, unitDiscount: 0 }], shipping: 15_000 } }), 215_000);
+  // No line detail is not the same as a sale worth nothing.
+  assert.equal(saleValue({ finance: { lines: [] } }), null);
+  assert.equal(saleValue({}), null);
+});

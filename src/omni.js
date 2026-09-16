@@ -1,3 +1,4 @@
+import { saleValue } from './mekari/invoice.js';
 import { loadConfig } from './config.js';
 import { searchOrders, getOrderDetail } from './orders.js';
 import { refreshAccessToken as refreshTikTokToken, persistTokens, hydrateFromBundle } from './auth.js';
@@ -500,7 +501,7 @@ export async function fetchOrdersByIds(selection) {
 
 /** Totals the dashboard needs, computed once so the view stays dumb. */
 export function summarize(orders) {
-  const blank = () => ({ count: 0, revenue: 0, actionable: 0, stages: Object.fromEntries(STAGES.map((s) => [s, 0])) });
+  const blank = () => ({ count: 0, revenue: 0, paid: 0, actionable: 0, stages: Object.fromEntries(STAGES.map((s) => [s, 0])) });
   const all = blank();
   const byChannel = Object.fromEntries(Object.keys(CHANNELS).map((id) => [id, blank()]));
 
@@ -511,7 +512,13 @@ export function summarize(orders) {
       bucket.stages[order.stage] += 1;
       if (ACTIONABLE.has(order.stage)) bucket.actionable += 1;
       // Cancelled money was never earned; counting it would overstate every channel.
-      if (order.stage !== 'cancelled' && order.stage !== 'returned') bucket.revenue += order.total;
+      if (order.stage !== 'cancelled' && order.stage !== 'returned') {
+        // The same arithmetic the invoice uses, so this screen and the books cannot drift.
+        // `paid` is what the buyer handed over; `revenue` is what the goods were sold for,
+        // and the gap between them is what the marketplace funded and will reimburse.
+        bucket.revenue += saleValue(order) ?? order.total;
+        bucket.paid += Math.round(Number(order.total) || 0);
+      }
     }
   }
 

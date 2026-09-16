@@ -157,6 +157,32 @@ export class InvoiceError extends Error {
 }
 
 /**
+ * What a sale is worth, by the one definition the books use.
+ *
+ * The dashboard used to add up `order.total` - what the buyer actually handed over - while
+ * the invoice adds up the selling price. Those are not the same number and were never
+ * going to be: a marketplace voucher is funded by the marketplace and reimbursed to us, so
+ * the buyer pays less than the goods were sold for. Over thirty days the two figures sat
+ * Rp110 million apart, roughly 7%, and there was nothing on either screen to say why.
+ *
+ * So there is one definition now and both read it. If they ever disagree again it is a
+ * bug, not a difference of opinion.
+ *
+ * Returns null when the order carries no line detail, because a zero would read as "this
+ * sale was worth nothing" rather than "we do not know yet".
+ */
+export function saleValue(order) {
+  const lines = order?.finance?.lines;
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+  const goods = lines.reduce((sum, line) => {
+    const rate = rupiah(line.unitPrice) - rupiah(line.unitDiscount);
+    const qty = Number(line.qty) || 0;
+    return sum + rate * qty;
+  }, 0);
+  return goods + rupiah(order.finance.shipping);
+}
+
+/**
  * @param {{order: object, depositTo?: string|null}} input
  * @returns {{sales_invoice: object}} the exact payload POSTed to Jurnal
  */

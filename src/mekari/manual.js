@@ -54,6 +54,60 @@ export function suggestCode(prefix, existingCodes = [], now = Date.now()) {
   return `${stem}${String(next).padStart(3, '0')}`;
 }
 
+/**
+ * Codes that cannot collide, however many are ever issued.
+ *
+ * The date in the middle is for people; it proves nothing about uniqueness, because two
+ * operators can open the form in the same minute and clocks can be wrong. What makes a
+ * code unique is the tail: a number from one counter that only ever goes up, handed out
+ * inside a store transaction (see sequence.js), so no two requests can receive the same
+ * one - not across processes, not across restarts, not after ten million issues.
+ *
+ * The number is written in Crockford base32: no I, L, O or U, so a code read over the
+ * phone or off a slip is not misheard, and six symbols hold a billion values. The last
+ * symbol is a check (mod 37) that catches a mistyped or transposed character, so a typo
+ * fails validation instead of quietly pointing at somebody else's transaction.
+ */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const CHECK = `${CROCKFORD}*~$=U`;
+export const SEQUENCE_LENGTH = 6;
+export const SEQUENCE_MAX = 32 ** SEQUENCE_LENGTH - 1; // 1,073,741,823
+
+export function encodeSequence(n) {
+  if (!Number.isInteger(n) || n < 1 || n > SEQUENCE_MAX) throw new InvoiceError(`nomor urut ${n} di luar jangkauan`);
+  let value = n;
+  let out = '';
+  while (value > 0) {
+    out = CROCKFORD[value % 32] + out;
+    value = Math.floor(value / 32);
+  }
+  return out.padStart(SEQUENCE_LENGTH, '0') + CHECK[n % 37];
+}
+
+/** The number behind a tail, or null when it is not one of ours or the check fails. */
+export function decodeSequence(tail) {
+  const s = String(tail ?? '').toUpperCase()
+    // Crockford's forgiveness: what people misread is accepted, then normalised.
+    .replace(/O/g, '0').replace(/[IL]/g, '1');
+  if (s.length !== SEQUENCE_LENGTH + 1) return null;
+  let n = 0;
+  for (const ch of s.slice(0, SEQUENCE_LENGTH)) {
+    const digit = CROCKFORD.indexOf(ch);
+    if (digit < 0) return null;
+    n = n * 32 + digit;
+  }
+  return n >= 1 && CHECK[n % 37] === s[SEQUENCE_LENGTH] ? n : null;
+}
+
+/** `CS-260916-00004K7` for source CS on 16 Sep 2026 with sequence number n. */
+export function formatManualCode(prefix, dateIso, n) {
+  const day = String(dateIso).replace(/-/g, '').slice(2, 8);
+  return `${prefix}-${day}-${encodeSequence(n)}`;
+}
+
+/** Whether a code carries a valid sequence tail; a hand-typed code does not have to. */
+export const sequenceOf = (code) => decodeSequence(String(code ?? '').split('-').at(-1));
+
 const CODE_PATTERN = /^[A-Z]{2}-[A-Za-z0-9-]{1,40}$/;
 
 const money = (value, field) => {

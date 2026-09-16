@@ -1296,3 +1296,46 @@ test('our own deposit is not a payment that blocks a cancellation', async () => 
   });
   assert.equal(silent.outcome, 'needs_review');
 });
+
+test('sequence tails are unique, readable and self-checking', async () => {
+  const { encodeSequence, decodeSequence, formatManualCode, sequenceOf, SEQUENCE_MAX } = await import('../src/mekari/manual.js');
+  assert.equal(encodeSequence(1).length, 7);
+  assert.equal(formatManualCode('CS', '2026-09-16', 1), `CS-260916-${encodeSequence(1)}`);
+  assert.match(encodeSequence(123456), /^[0-9A-HJKMNP-TV-Z]{6}[0-9A-HJKMNP-TV-Z*~$=U]$/, 'Crockford: no I, L, O, U in the number');
+
+  // Round trip over a spread of values, including the last one.
+  for (const n of [1, 2, 31, 32, 33, 1000, 12_345_678, 99_999_999, SEQUENCE_MAX]) {
+    assert.equal(decodeSequence(encodeSequence(n)), n, `n=${n}`);
+  }
+  assert.throws(() => encodeSequence(0));
+  assert.throws(() => encodeSequence(SEQUENCE_MAX + 1));
+
+  // A misread character still decodes; a wrong one does not.
+  const tail = encodeSequence(777);
+  assert.equal(decodeSequence(tail.toLowerCase()), 777);
+  assert.equal(decodeSequence(tail.replace(/0/g, 'O')), 777, 'O is read as zero');
+  const corrupted = tail[0] === 'A' ? `B${tail.slice(1)}` : `A${tail.slice(1)}`;
+  assert.equal(decodeSequence(corrupted), null, 'a typo fails the check symbol');
+  assert.equal(decodeSequence('0000010'), null);
+  assert.equal(sequenceOf(`CS-260916-${tail}`), 777);
+  assert.equal(sequenceOf('CS-260911-001'), null, 'an old-style code carries no sequence');
+
+  // No two of the first fifty thousand numbers share a tail.
+  const seen = new Set();
+  for (let n = 1; n <= 50_000; n++) seen.add(encodeSequence(n));
+  assert.equal(seen.size, 50_000);
+});
+
+test('reserving a sequence number under concurrency never hands out the same one twice', async () => {
+  const { reserveManualSequence, peekManualSequence, SEQUENCE_DOC } = await import('../src/mekari/sequence.js');
+  const { deleteDoc, closeStore } = await import('../src/store/index.js');
+  await deleteDoc(SEQUENCE_DOC);
+  const first = await reserveManualSequence();
+  assert.equal(first, 1);
+  const batch = await Promise.all(Array.from({ length: 200 }, () => reserveManualSequence()));
+  assert.equal(new Set(batch).size, 200, 'every concurrent reservation got its own number');
+  assert.equal(Math.max(...batch), 201);
+  assert.equal(await peekManualSequence(), 202, 'the counter only moves forward');
+  await deleteDoc(SEQUENCE_DOC);
+  await closeStore();
+});

@@ -26,7 +26,8 @@ import { accountMap } from '../src/mekari/accounts.js';
  * it is not the bank.
  */
 const POOLED_LABEL = 'akun penampung per kanal';
-import { buildManualOrder, suggestCode } from '../src/mekari/manual.js';
+import { buildManualOrder, formatManualCode, encodeSequence } from '../src/mekari/manual.js';
+import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
@@ -306,6 +307,14 @@ async function handleWrite(form, ip) {
       lines,
     });
 
+    // The code must not already be booked. The ledger is read fresh, not from the cache,
+    // because the case this guards against is a double submit seconds apart - and the
+    // idempotency key in Jurnal is the last line behind this one, not the first.
+    const ledger = await loadSyncLedger().catch(() => ({ orders: {} }));
+    if (manualCodes(ledger).includes(order.id)) {
+      throw new Error(`kode ${order.id} sudah dipakai transaksi lain; buka formulir lagi untuk kode baru`);
+    }
+
     // A typed-in sale is never auto-paid, so the chart only matters for the shape of the
     // payload - but it is read all the same, so manual and marketplace go through one path.
     const accounts = await accountMap();
@@ -528,10 +537,14 @@ export default async function handler(req, res) {
       // The contact list is a convenience, not a requirement: a Jurnal that will not
       // answer must not stop someone entering a sale they have in their hand.
       const contacts = await listContacts().then((m) => [...m.keys()].sort()).catch(() => []);
+      // Reserved now, inside a store transaction, so this form and any other open at the
+      // same moment hold different numbers. An abandoned form leaves a gap, never a repeat.
+      const sequence = await reserveManualSequence();
+      const today = wibDate(Math.floor(Date.now() / 1000));
 
       send(200, renderManual({
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
-        source, code: suggestCode(source, used), today: wibDate(Math.floor(Date.now() / 1000)),
+        source, code: formatManualCode(source, today, sequence), seqTail: encodeSequence(sequence), today,
         contacts, existingCodes: used, images: await imagesByKey(),
         live: process.env.MEKARI_SYNC_LIVE === '1',
         depositTo: POOLED_LABEL,

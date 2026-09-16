@@ -761,6 +761,20 @@ tbody tr:hover{background:var(--panel-2)}
 .fc__note{padding:.9rem 1rem; border-bottom:1px solid var(--line); font-size:.78rem; color:var(--muted); line-height:1.5}
 .fc__note b{color:var(--fg)}
 
+/* ------------------------------------------------- cta ---------------------- */
+.cta{position:relative; display:inline-flex; align-items:center; gap:.5rem; min-height:40px; padding:.5rem 1rem .5rem .85rem; border-radius:10px;
+  font-size:.85rem; font-weight:600; color:#fff; text-decoration:none; white-space:nowrap; cursor:pointer; isolation:isolate;
+  background:linear-gradient(155deg,var(--fill-a),var(--fill-b)); border:1px solid color-mix(in srgb,var(--fill-b) 70%,#000 30%);
+  box-shadow:0 1px 0 rgba(255,255,255,.12) inset, 0 1px 2px rgba(0,0,0,.25), 0 8px 20px -10px color-mix(in srgb,var(--fill-a) 80%,transparent);
+  transition:transform var(--t-fast) var(--ease-out), box-shadow var(--t-base) var(--ease-out), filter var(--t-fast) var(--ease-out)}
+.cta::after{content:""; position:absolute; inset:0; border-radius:inherit; background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 55%); pointer-events:none; z-index:-1}
+.cta .ico{width:1.05rem; height:1.05rem; stroke-width:2}
+.cta:hover{filter:brightness(1.08); box-shadow:0 1px 0 rgba(255,255,255,.14) inset, 0 2px 4px rgba(0,0,0,.25), 0 14px 28px -12px color-mix(in srgb,var(--fill-a) 90%,transparent); transform:translateY(-1px)}
+.cta:active{transform:translateY(0); filter:brightness(.98)}
+.cta:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
+.cta__hint{font:inherit; font-size:.66rem; font-weight:500; letter-spacing:.04em; text-transform:uppercase; padding:.1rem .4rem; border-radius:6px; background:rgba(255,255,255,.16); color:rgba(255,255,255,.9)}
+@media (prefers-reduced-motion:reduce){ .cta,.cta:hover{transition:none; transform:none} }
+
 /* ------------------------------------------------- pager -------------------- */
 .pager{display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1.25rem; padding:.7rem 1rem; border-top:1px solid var(--line); font-size:.8rem; color:var(--muted)}
 .pager--top{border-top:0; border-bottom:1px solid var(--line); padding:.5rem 1rem}
@@ -1568,7 +1582,7 @@ export function renderJurnal({
         <span class="strip__grow"></span>
         <span class="note">${overview.ledgerTotal} faktur tercatat seluruhnya${
           depositTo ? ` &middot; lunas ke ${escape(depositTo)}` : ' &middot; faktur dibiarkan terbuka'}</span>
-        <a class="chip" href="?view=jurnal&amp;add=1">${svg('plus')}Tambah transaksi</a>
+        <a class="cta" href="?view=jurnal&amp;add=1">${svg('plus')}<span>Tambah transaksi</span><kbd class="cta__hint" aria-hidden="true">manual</kbd></a>
       </div>`,
     body: `
       ${configured ? '' : '<div class="alert">' + svg('warn') + '<span>Kredensial Mekari belum diisi, jadi tidak ada yang bisa dikirim.</span></div>'}
@@ -1613,7 +1627,7 @@ export function renderJurnal({
  */
 export function renderManual({
   range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
-  live, depositTo, existingCodes = [], images = {},
+  live, depositTo, existingCodes = [], images = {}, seqTail = '',
 }) {
   const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
 
@@ -1692,7 +1706,9 @@ export function renderManual({
                   <label for="code">Kode transaksi</label>
                   <input id="code" name="code" value="${escape(code)}" required maxlength="43"
                          pattern="[A-Za-z]{2}-[A-Za-z0-9-]{1,40}" data-code>
-                  <span class="fld__hint" data-code-hint>Otomatis dari sumber dan tanggal. Boleh diubah.</span>
+                  <span class="fld__hint" data-code-hint>${seqTail
+                    ? `Sumber, tanggal, lalu nomor urut <span class="mono">${escape(seqTail)}</span> yang direservasi untuk formulir ini dan tidak akan diberikan lagi. Boleh diubah.`
+                    : 'Otomatis dari sumber dan tanggal. Boleh diubah.'}</span>
                 </div>
                 <div class="fld">
                   <label for="date">Tanggal</label>
@@ -1782,10 +1798,13 @@ export function renderManual({
     return picked || form.querySelector('input[name="source"]');
   }
 
+  // The reserved tail is what makes the code unique; source and date only dress it.
+  var seqTail = ${JSON.stringify(seqTail)};
   function suggest() {
     var prefix = source().value;
     var d = (dateField.value || '').replace(/-/g, '').slice(2);
     var stem = prefix + '-' + d + '-';
+    if (seqTail) return stem + seqTail;
     var used = existing.filter(function (c) { return c.indexOf(stem) === 0; })
       .map(function (c) { return Number(c.slice(stem.length)); })
       .filter(function (n) { return isFinite(n); });

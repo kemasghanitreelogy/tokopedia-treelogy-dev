@@ -1,7 +1,6 @@
-import { mekari } from './client.js';
 import { loadSyncLedger, saveSyncLedger, forgetSyncLedgerEntries } from './sync.js';
 import { customIdFor } from './invoice.js';
-import { jurnalDateToIso } from './rebuild.js';
+import { invoiceCatalogue, ours } from './catalogue.js';
 import { ordersInRange } from '../db/orders.js';
 import { wibDayStart } from '../range.js';
 
@@ -22,35 +21,15 @@ import { wibDayStart } from '../range.js';
  * it are never touched on the strength of not having been read.
  */
 
-const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
-const PAGE_SIZE = 50;
-
-/** Every TRL invoice Jurnal holds on or after a date, by custom_id. */
-export async function invoicesSince(since, { deadlineAt = null } = {}) {
-  const byCustomId = new Map();
-  for (let page = 1; ; page += 1) {
-    const result = await mekari({
-      path: `${INVOICES_PATH}?page=${page}&page_size=${PAGE_SIZE}&sort_key=transaction_date&sort_order=desc`,
-      deadlineAt,
-    });
-    const rows = result?.sales_invoices ?? [];
-    let reached = false;
-    for (const invoice of rows) {
-      const day = jurnalDateToIso(invoice.transaction_date);
-      if (day && day < since) { reached = true; continue; }
-      const customId = String(invoice.custom_id ?? '');
-      if (!/^TRL-/.test(customId)) continue;
-      // Lowest id wins if a duplicate survives, so this agrees with the deduplicator
-      // about which copy is the real one.
-      const held = byCustomId.get(customId);
-      if (!held || invoice.id < held.id) {
-        byCustomId.set(customId, { id: invoice.id, no: invoice.transaction_no, total: Math.round(Number(invoice.original_amount) || 0) });
-      }
-    }
-    const pages = Number(result?.total_pages) || 1;
-    if (reached || page >= pages || rows.length === 0) return byCustomId;
-  }
-}
+/**
+ * Jurnal's invoices for the window, through the shared scan.
+ *
+ * This used to walk the list itself, as did dedupe, settle and rebuild - four modules
+ * reading the same thirteen hundred rows independently. Running them in sequence, which
+ * is what the recovery does, spent around a hundred requests learning one set of facts.
+ */
+export const invoicesSince = async (since, options = {}) =>
+  ours((await invoiceCatalogue({ since, ...options })).invoices);
 
 /**
  * @param {{from: string, dryRun?: boolean}} options

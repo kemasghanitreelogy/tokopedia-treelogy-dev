@@ -1,6 +1,6 @@
 import { mekari } from './client.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
-import { jurnalDateToIso } from './rebuild.js';
+import { invoiceCatalogue, duplicates, ours, forgetCatalogue } from './catalogue.js';
 
 /**
  * Fifty, not a hundred.
@@ -10,7 +10,6 @@ import { jurnalDateToIso } from './rebuild.js';
  * down. Halving the page halves the work per request; with a budget of ninety requests a
  * minute the extra round trips cost nothing worth having.
  */
-const PAGE_SIZE = 50;
 
 /**
  * Find and remove invoices that exist more than once.
@@ -28,58 +27,20 @@ const PAGE_SIZE = 50;
 const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
 
 /**
+ * Groups of invoices sharing a custom_id, through the shared scan.
+ *
  * @param {{since?: string|null, deadlineAt?: number|null}} options
- * @returns {Promise<{scanned: number, ours: number, groups: Array, extra: number}>}
  */
 export async function findDuplicates({ since = null, deadlineAt = null } = {}) {
-  const byCustomId = new Map();
-  let scanned = 0;
-
-  for (let page = 1; ; page += 1) {
-    const result = await mekari({
-      path: `${INVOICES_PATH}?page=${page}&page_size=${PAGE_SIZE}&sort_key=transaction_date&sort_order=desc`,
-      deadlineAt,
-    });
-    const rows = result?.sales_invoices ?? [];
-    let reachedStart = false;
-
-    for (const invoice of rows) {
-      scanned += 1;
-      const day = jurnalDateToIso(invoice.transaction_date);
-      if (since && day && day < since) { reachedStart = true; continue; }
-      const customId = String(invoice.custom_id ?? '');
-      if (!/^TRL-/.test(customId)) continue;
-      // Keyed by invoice id, not pushed onto a list.
-      //
-      // Paging through a list while deleting from it shifts rows between pages, so the
-      // same invoice can be read twice - and a list would then show it as a duplicate of
-      // itself, keep one copy and delete "the other", which is the same row. That is not
-      // hypothetical: it removed around five hundred invoices before it was caught.
-      const seen = byCustomId.get(customId) ?? new Map();
-      seen.set(invoice.id, { id: invoice.id, no: invoice.transaction_no, date: day, amount: Math.round(Number(invoice.original_amount) || 0) });
-      byCustomId.set(customId, seen);
-    }
-
-    const pages = Number(result?.total_pages) || 1;
-    if (reachedStart || page >= pages || rows.length === 0) break;
-  }
-
-  const groups = [...byCustomId.entries()]
-    .filter(([, seen]) => seen.size > 1)
-    .map(([customId, seen]) => {
-      // Oldest first: the keeper is the one anything else may already point at.
-      const sorted = [...seen.values()].sort((a, b) => a.id - b.id);
-      return { customId, keep: sorted[0], drop: sorted.slice(1) };
-    })
-    // A group whose "copies" are the keeper itself is not a group. Belt and braces on top
-    // of the Map above, because the cost of getting this wrong is a deleted invoice.
-    .filter((g) => g.drop.length > 0 && g.drop.every((d) => d.id !== g.keep.id));
-
+  const { invoices, cached, requests } = await invoiceCatalogue({ since, deadlineAt });
+  const groups = duplicates(invoices);
   return {
-    scanned,
-    ours: byCustomId.size,
+    scanned: invoices.length,
+    ours: ours(invoices).size,
     groups,
     extra: groups.reduce((n, g) => n + g.drop.length, 0),
+    cached,
+    requests,
   };
 }
 
@@ -96,6 +57,9 @@ export async function removeDuplicates({ since = null, dryRun = true, onProgress
 
   let removed = 0;
   const failures = [];
+  // Whatever happens below changes what Jurnal holds, so the cached reading of it stops
+  // being true the moment the first delete lands.
+  await forgetCatalogue();
   for (const group of found.groups) {
     for (const copy of group.drop) {
       if (copy.id === group.keep.id) continue; // cannot happen; the cost if it did is the invoice

@@ -1,7 +1,7 @@
 import { mekari } from './client.js';
 import { sourceOf } from './sources.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
-import { jurnalDateToIso } from './rebuild.js';
+import { invoiceCatalogue, forgetCatalogue } from './catalogue.js';
 
 /**
  * Settle the invoices that were raised before there was an account to settle them into.
@@ -49,7 +49,6 @@ async function paymentMethod({ deadlineAt = null } = {}) {
   methodCache = { id: hit.id, name: hit.name };
   return methodCache;
 }
-const PAGE_SIZE = 50;
 
 const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
@@ -60,42 +59,23 @@ export function channelOfCustomId(customId) {
 }
 
 /**
- * Every invoice with something still owing on it.
+ * Every invoice with something still owing on it, through the shared scan.
  *
  * @returns {Promise<Array<{id, no, customId, date, remaining, total, channel, autoPaid}>>}
  */
 export async function openInvoices({ since = null, deadlineAt = null } = {}) {
-  const open = [];
-  for (let page = 1; ; page += 1) {
-    const result = await mekari({
-      path: `${INVOICES_PATH}?page=${page}&page_size=${PAGE_SIZE}&sort_key=transaction_date&sort_order=desc`,
-      deadlineAt,
-    });
-    const rows = result?.sales_invoices ?? [];
-    if (rows.length === 0) break;
-
-    for (const invoice of rows) {
-      const date = jurnalDateToIso(invoice.transaction_date);
-      if (since && date && date < since) continue;
-      const remaining = Math.round(Number(invoice.remaining) || 0);
-      if (remaining <= 0) continue;
-      const customId = String(invoice.custom_id ?? '');
-      const channel = channelOfCustomId(customId);
-      open.push({
-        id: invoice.id,
-        no: invoice.transaction_no,
-        customId,
-        date,
-        remaining,
-        total: Math.round(Number(invoice.original_amount) || 0),
+  const { invoices } = await invoiceCatalogue({ since, deadlineAt });
+  return invoices
+    .filter((invoice) => invoice.remaining > 0)
+    .map((invoice) => {
+      const channel = channelOfCustomId(invoice.customId);
+      return {
+        ...invoice,
         channel,
         // A typed-in transaction has no channel in its custom_id and is not ours to settle.
         autoPaid: Boolean(channel) && sourceOf({ channel }).autoPaid,
-      });
-    }
-    if (page >= (Number(result?.total_pages) || 1)) break;
-  }
-  return open;
+      };
+    });
 }
 
 /**
@@ -113,6 +93,8 @@ export async function settleOpenInvoices({ since = null, dryRun = true, onProgre
   if (isReadOnly()) throw new ReadOnlyError('catat pembayaran faktur');
 
   const method = await paymentMethod();
+  // A payment changes an invoice's remaining balance, so the cached reading is stale.
+  await forgetCatalogue();
   let paid = 0;
   const failures = [];
   for (const invoice of settle) {

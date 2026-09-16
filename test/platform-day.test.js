@@ -57,3 +57,35 @@ test('a range with no dates keeps everything, rather than silently emptying the 
   assert.equal(withinDays(order('shopify', LATE_31_AUG), {}), true);
   assert.equal(withinDays(order('shopify', LATE_31_AUG), { from: '2026-09-01' }), true);
 });
+
+/* --------------------- every path out of loadOrders applies the same filter */
+
+test('the database path filters by platform day too, not only the live one', async () => {
+  // It did not, and nothing said so. A parallel edit had added a `channels` argument to
+  // that line, so the patch adding the filter matched the two live branches and silently
+  // missed the one the dashboard actually uses. A 1 September window came back with 84
+  // orders where the day holds 59 - the extra 25 were 31 August and 2 September sales the
+  // widened fetch had pulled in for filtering, and nothing filtered them.
+  const { loadOrders } = await import('../src/orders-source.js');
+
+  const at = (iso) => Math.floor(Date.parse(iso) / 1000);
+  const stored = [
+    { channel: 'shopee', id: 'A', createdAt: at('2026-08-31T18:00:00Z'), stage: 'completed', total: 1 },   // 1 Sep WIB
+    { channel: 'shopee', id: 'B', createdAt: at('2026-09-01T17:30:00Z'), stage: 'completed', total: 1 },   // 2 Sep WIB - keluar
+    { channel: 'shopee', id: 'C', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },   // 31 Agu WIB - keluar
+    { channel: 'shopify', id: 'D', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },  // 1 Sep di Shopify - masuk
+  ];
+
+  const seen = await loadOrders({
+    range: { since: at('2026-08-31T17:00:00Z'), until: at('2026-09-01T16:59:59Z'), from: '2026-09-01', to: '2026-09-01', label: '1 Sep' },
+    readStored: async () => stored,
+    readLive: async () => ({ orders: stored, errors: {}, truncated: [] }),
+  });
+
+  assert.deepEqual(seen.orders.map((o) => o.id).sort(), ['A', 'D'],
+    'hanya pesanan yang platformnya sendiri sebut 1 September');
+  // The window the caller asked for is what comes back, not the widened one it was
+  // fetched with - otherwise the page would label itself with an hour it did not show.
+  assert.equal(seen.range.from, '2026-09-01');
+  assert.equal(seen.range.to, '2026-09-01');
+});

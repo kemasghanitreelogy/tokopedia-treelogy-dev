@@ -96,7 +96,18 @@ export const forgetCoverage = () => invalidate('db:coverage');
  * `from` says which way the answer came, so a caller that cares - the status page, a
  * test - can tell, and every caller that does not can ignore it.
  */
-export async function loadOrders({ range, maxPerPlatform = 800, tracking = true, ...rest } = {}) {
+export async function loadOrders({
+  range,
+  maxPerPlatform = 800,
+  tracking = true,
+  // Injectable so the filtering can be tested without a database or four marketplaces.
+  // It went untested and one of the three call sites silently lost its filter: a parallel
+  // edit had changed that line, the patch adding the filter did not match it, and a
+  // 1 September window came back with 84 orders where the day holds 59.
+  readStored = ordersInRange,
+  readLive = collectOrders,
+  ...rest
+} = {}) {
   const asked = range ?? resolveRange(rest);
 
   // Fetched an hour wide on both ends, then filtered by each platform's own calendar day.
@@ -117,7 +128,7 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
   const inRange = (orders) => orders.filter((order) => withinDays(order, asked));
 
   if (!isSupabaseConfigured()) {
-    const live = await collectOrders({ range: window, maxPerPlatform, tracking });
+    const live = await readLive({ range: window, maxPerPlatform, tracking });
     return { ...live, orders: inRange(live.orders), range: asked, from: 'live' };
   }
 
@@ -140,7 +151,7 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
       // with revenue the live path did not have. Two answers to one question, differing by
       // which path happened to serve it.
       const channels = sources.flatMap((source) => SOURCE_CHANNELS[source] ?? []);
-      const orders = await ordersInRange({ since: window.since, until: window.until, channels });
+      const orders = inRange(await readStored({ since: window.since, until: window.until, channels }));
       return {
         orders,
         errors: {},
@@ -156,7 +167,7 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
     }
   }
 
-  const live = await collectOrders({ range: window, maxPerPlatform, tracking });
+  const live = await readLive({ range: window, maxPerPlatform, tracking });
   // Stored as read - the wider set is genuinely what we fetched, and throwing away the
   // hour at each edge would leave a hole the next reader has to pay for again.
   await rememberOrders(live, window);

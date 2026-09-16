@@ -1,4 +1,4 @@
-import { businessToday, zoneLabel, zoneName } from './clock.js';
+import { businessToday, zoneLabel, zoneName, zoneForChannel } from './clock.js';
 import { CHANNELS, STAGES } from './omni.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
@@ -43,9 +43,21 @@ const wibStamp = (iso) =>
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: zoneName(),
   }) + ' WIB';
 
-const dateTime = (epochSeconds) =>
+/**
+ * When an order happened, on the clock of the platform it came from.
+ *
+ * It used the house clock for every row, so a Shopify order Shopify itself prints as
+ * "September 12, 2026 at 12:03 am" appeared here as 11 Sep 23:03 - an hour earlier and a
+ * day earlier. Somebody checking a single order against the seller centre found a
+ * mismatch every time, on every channel, for the last hour of every night.
+ *
+ * The filter above already buckets by the platform's day. Displaying a different clock
+ * from the one the page filters by is worse than either choice alone.
+ */
+const dateTime = (epochSeconds, channel = null) =>
   new Date(epochSeconds * 1000).toLocaleString('id-ID', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: zoneName(),
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+    timeZone: zoneForChannel(channel).name,
   });
 
 /* Heroicons (24/outline), inlined so the page has no external requests beyond the font. */
@@ -196,7 +208,7 @@ function row(order) {
   return `<tr data-channel="${order.channel}" data-stage="${order.stage}">
     <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
     <td class="mono nowrap">${escape(order.id)}</td>
-    <td class="nowrap dim">${escape(dateTime(order.createdAt))}</td>
+    <td class="nowrap dim">${escape(dateTime(order.createdAt, order.channel))}</td>
     <td>${escape(order.buyer) || '<span class="dim">&mdash;</span>'}</td>
     <td class="num mono">${escape(rupiah(order.total))}</td>
     <td><span class="pill pill--${stage.tone}">${escape(stage.label)}</span></td>
@@ -1236,7 +1248,7 @@ export function renderDashboard({
     ${pager(paged, { baseQuery, noun })}
     <div class="foot">
       <span>${idNumber(all.count)} pesanan pada rentang ini</span>
-      <span>Waktu ditampilkan dalam WIB</span>
+      <span>Waktu mengikuti jam masing-masing platform</span>
     </div>
   </section>`,
   });
@@ -1305,7 +1317,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
       <span class="wo__body">
         <span class="wo__top">
           <span class="tag" style="--accent:${ch.accent}">${escape(ch.label)}</span>
-          <span class="wo__when">${escape(dateTime(o.createdAt))}</span>
+          <span class="wo__when">${escape(dateTime(o.createdAt, o.channel))}</span>
         </span>
         <span class="wo__id mono">${escape(o.id)}</span>
         <span class="wo__who">
@@ -1526,7 +1538,7 @@ export function renderJurnal({
       return `<tr data-state="${r.state}">
         <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
         <td class="mono nowrap">${escape(orderCode(r.order))}</td>
-        <td class="nowrap dim">${escape(dateTime(r.order.createdAt))}</td>
+        <td class="nowrap dim">${escape(dateTime(r.order.createdAt, r.order.channel))}</td>
         <td class="num mono">${r.total ? escape(rupiah(r.total)) : '<span class="dim">&mdash;</span>'}</td>
         <td><span class="pill pill--${state.tone}">${escape(state.label)}</span></td>
         <td class="dim">${escape(r.reason ?? (r.invoiceId ? `faktur ${r.invoiceId}` : ''))}</td>
@@ -2033,7 +2045,7 @@ const initialOf = (name) => {
 function reviewCard(r, mediaUrl) {
   const low = r.rating <= 3;
   const when = r.createdAt
-    ? `<time datetime="${escape(r.createdAt)}">${dateTime(r.createdAtEpoch)}</time>${
+    ? `<time datetime="${escape(r.createdAt)}">${dateTime(r.createdAtEpoch, r.channel)}</time>${
         r.createdAtPrecision === 'approx' ? ' <span class="rv__approx" title="perkiraan dari teks relatif">~</span>' : ''}`
     : '<span class="dim">&mdash;</span>';
   const name = r.anonymous ? 'Anonim' : r.reviewerName || 'Pembeli';
@@ -2299,7 +2311,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
         <td>
           <span class="mono nowrap">${escape(o.id)}</span>
-          <span class="pick__s">${escape(dateTime(o.createdAt))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
+          <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
         </td>
         <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
         <td class="nowrap"><span class="${READY_TONE[readiness.state]}">${escape(readiness.note)}</span></td>

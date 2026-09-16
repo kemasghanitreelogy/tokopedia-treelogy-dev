@@ -28,6 +28,7 @@ import { removeDuplicates } from './mekari/dedupe.js';
 import { reconcileLedger } from './mekari/reconcile.js';
 import { settleOpenInvoices } from './mekari/settle.js';
 import { dailyRecap } from './mekari/recap.js';
+import { redateInvoices } from './mekari/redate.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -73,6 +74,7 @@ Usage:
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
   npm run mekari:recap        Bandingkan pesanan vs faktur per hari (rekap harian finance)
+  npm run mekari:redate       Perbaiki tanggal faktur agar ikut jam platformnya (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -1175,6 +1177,44 @@ async function cmdMekariRecap(config, args = []) {
   return r.missing > 0 ? 1 : 0;
 }
 
+/**
+ * Move invoices onto the day their platform says the sale happened.
+ *
+ * Corrected in place: Jurnal's PATCH takes a transaction date, so no invoice is deleted
+ * and no number changes. Deleting and rewriting is what turned 472 invoices into 891
+ * earlier in this integration's life, and it is not worth repeating for a date.
+ */
+async function cmdMekariRedate(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || '2026-08-01';
+  const dryRun = !args.includes('--yes');
+
+  const r = await redateInvoices({
+    from,
+    dryRun,
+    onProgress: (p) => { if (p.moved % 10 === 0) console.log(`  dipindah ${p.moved}/${p.of}`); },
+  });
+
+  console.log(`\n  ${r.checked} faktur diperiksa sejak ${from}  ·  ${r.wrong.length} tanggalnya salah\n`);
+  const perChannel = {};
+  for (const w of r.wrong) perChannel[w.channel] = (perChannel[w.channel] ?? 0) + 1;
+  for (const [channel, n] of Object.entries(perChannel)) console.log(`  ${channel.padEnd(14)}${String(n).padStart(4)} faktur`);
+  console.log('');
+  for (const w of r.wrong.slice(0, 12)) {
+    console.log(`    #${String(w.no).padEnd(7)} ${w.was} -> ${w.should}  ${rupiah(w.total).padStart(14)}  ${w.channel}`);
+  }
+  if (r.wrong.length > 12) console.log(`    ...dan ${r.wrong.length - 12} lagi`);
+
+  if (dryRun) { console.log(`\n  ${info('dry-run: belum ada yang diubah. Ulangi dengan --yes')}\n`); return 0; }
+  console.log(`\n  ${ok(`${r.moved} faktur dipindah ke tanggal yang benar`)}`);
+  if (r.failures.length > 0) {
+    console.log(`  ${fail(`${r.failures.length} gagal`)}`);
+    for (const f of r.failures.slice(0, 5)) console.log(`    #${f.no}: ${f.error.slice(0, 80)}`);
+  }
+  console.log('');
+  return r.failures.length > 0 ? 1 : 0;
+}
+
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
   console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}  ·  akan dikoreksi: ${result.corrected}`);
@@ -1388,6 +1428,7 @@ const COMMANDS = {
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
   'mekari:recap': cmdMekariRecap,
+  'mekari:redate': cmdMekariRedate,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

@@ -132,7 +132,11 @@ test('postage is booked to Other Income, and deliberately not to 5030', () => {
   // writable through the API - PATCH answers 400 even when setting the value it already
   // holds - and in the UI Jurnal will only offer income accounts, which 5030 is not.
   // Changing this back would make every invoice carrying postage fail.
-  assert.equal(SHIPPING_ACCOUNT_NUMBER, '7-70099');
+  //
+  // '7099', not '7-70099'. Jurnal numbers its other Other Income accounts 7-70000 upward,
+  // which is what the wrong value was copied from, but the shipping one is plain 7099 -
+  // read back from the live chart, where the wrong number matched nothing at all.
+  assert.equal(SHIPPING_ACCOUNT_NUMBER, '7099');
   assert.notEqual(SHIPPING_ACCOUNT_NUMBER, '5030');
   assert.ok(!RECEIVABLE_NUMBERS.includes(SHIPPING_ACCOUNT_NUMBER), 'ongkir bukan piutang');
 });

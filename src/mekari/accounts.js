@@ -123,5 +123,21 @@ export async function requiredAccounts(options = {}) {
  *
  * This forces one fresh read the moment an account is missing, which is exactly the case a
  * cache gets wrong, and refuses if it is still missing afterwards.
+ *
+ * It asks only for the accounts a write actually names, which today is the pooling
+ * accounts. The receivable is a property of the contact and the shipping account is a
+ * company mapping no payload carries - requiredAccounts checks those, because a setup
+ * command should - but making a posting run fail over an account no invoice mentions turns
+ * a documentation error into an outage, and did: SHIPPING_ACCOUNT_NUMBER was '7-70099'
+ * for weeks against a Jurnal that numbers it '7099'.
  */
-export const postingAccounts = (options = {}) => requiredAccounts(options);
+export async function postingAccounts(options = {}) {
+  let map = await accountMap(options);
+  let missing = POOLING_NUMBERS.filter((n) => !map[n]);
+  if (missing.length > 0) {
+    map = await accountMap({ ...options, force: true });
+    missing = POOLING_NUMBERS.filter((n) => !map[n]);
+  }
+  if (missing.length > 0) throw new AccountMissingError(missing);
+  return Object.fromEntries(POOLING_NUMBERS.map((n) => [n, map[n]]));
+}

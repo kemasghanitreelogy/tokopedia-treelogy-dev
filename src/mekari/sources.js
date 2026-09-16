@@ -76,8 +76,14 @@ export const SOURCES = {
  *
  * This constant is what the books actually do. If the mapping is ever unlocked, changing
  * it here and in Jurnal is the whole of the work.
+ *
+ * It was written '7-70099' for weeks, which is not an account Jurnal holds - the Other
+ * Income accounts are numbered 7-70000 upward but this one is plain '7099'. Nothing caught
+ * it because nothing resolved it: the number is documentation, since no payload names the
+ * shipping account. It surfaced the first time a posting run tried to look it up, and the
+ * lesson is the reason postingAccounts asks only for the accounts a write actually names.
  */
-export const SHIPPING_ACCOUNT_NUMBER = '7-70099';
+export const SHIPPING_ACCOUNT_NUMBER = '7099';
 
 /** Every receivable account this system books into, for the one-time setup check. */
 export const RECEIVABLE_NUMBERS = [...new Set(Object.values(SOURCES).map((s) => s.receivable))].sort();

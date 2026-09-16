@@ -9,6 +9,7 @@ import { orderCode } from './mekari/prefix.js';
 import { SOURCE_OPTIONS, SELLABLE } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
+import { paginate, pageHref, pageWindow, PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from './paging.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
@@ -66,6 +67,9 @@ const icon = {
 };
 
 icon.plus = '<path d="M12 4.5v15m7.5-7.5h-15"/>';
+icon.chevL = '<path d="m15 5-7 7 7 7"/>';
+icon.chevR = '<path d="m9 5 7 7-7 7"/>';
+icon.search = '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/>';
 
 const svg = (name, cls = '') =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon[name]}</svg>`;
@@ -137,6 +141,50 @@ const PRINTABLE = new Set(['to_ship', 'shipping']);
 /** Mirrors MAX_LABELS in api/labels.js; the button must not offer more than the server takes. */
 const MAX_PRESELECT = 100;
 
+const idNumber = (n) => Number(n).toLocaleString('id-ID');
+
+/**
+ * The paging control: what is shown of how many, the page numbers, and the page size.
+ *
+ * Everything is a link, so it works without JavaScript, with the keyboard, in a new tab
+ * and through history. The current page is marked for assistive tech, and disabled
+ * ends are rendered as text rather than dead links.
+ *
+ * @param {ReturnType<typeof paginate>} paged
+ * @param {{baseQuery: string, noun: string}} options
+ */
+function pager(paged, { baseQuery, noun }) {
+  const { page, pages, total, from, to, perPage } = paged;
+  const href = (p, per = perPage) => escape(pageHref(baseQuery, p, per));
+  const summary = total
+    ? `<span class="pager__sum">Menampilkan <b>${idNumber(from)}&ndash;${idNumber(to)}</b> dari <b>${idNumber(total)}</b> ${escape(noun)}</span>`
+    : `<span class="pager__sum">0 ${escape(noun)}</span>`;
+
+  const numbers = pages > 1
+    ? pageWindow(page, pages).map((p) => p === null
+      ? '<span class="pager__gap" aria-hidden="true">&hellip;</span>'
+      : p === page
+        ? `<span class="pager__n is-on" aria-current="page">${idNumber(p)}</span>`
+        : `<a class="pager__n" href="${href(p)}" aria-label="Halaman ${p}">${idNumber(p)}</a>`).join('')
+    : '';
+  const prev = page > 1
+    ? `<a class="pager__btn" href="${href(page - 1)}" rel="prev" aria-label="Halaman sebelumnya">${svg('chevL')}</a>`
+    : `<span class="pager__btn is-off" aria-disabled="true">${svg('chevL')}</span>`;
+  const next = page < pages
+    ? `<a class="pager__btn" href="${href(page + 1)}" rel="next" aria-label="Halaman berikutnya">${svg('chevR')}</a>`
+    : `<span class="pager__btn is-off" aria-disabled="true">${svg('chevR')}</span>`;
+
+  const sizes = PER_PAGE_OPTIONS.map((n) => n === perPage
+    ? `<span class="pager__size is-on" aria-current="true">${n}</span>`
+    : `<a class="pager__size" href="${href(1, n)}" aria-label="${n} per halaman">${n}</a>`).join('');
+
+  return `<nav class="pager" aria-label="Halaman ${escape(noun)}">
+    ${summary}
+    ${pages > 1 ? `<span class="pager__pages">${prev}${numbers}${next}</span>` : ''}
+    <span class="pager__sizes"><span class="pager__lbl">Per halaman</span>${sizes}</span>
+  </nav>`;
+}
+
 function row(order) {
   const meta = CHANNELS[order.channel];
   const stage = STAGE_META[order.stage];
@@ -145,7 +193,7 @@ function row(order) {
     : AWAITING_AWB.has(order.stage)
       ? '<span class="await">menunggu</span>'
       : '<span class="dim">&mdash;</span>';
-  return `<tr data-channel="${order.channel}" data-stage="${order.stage}" data-search="${escape((order.id + ' ' + order.buyer + ' ' + order.tracking).toLowerCase())}">
+  return `<tr data-channel="${order.channel}" data-stage="${order.stage}">
     <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
     <td class="mono nowrap">${escape(order.id)}</td>
     <td class="nowrap dim">${escape(dateTime(order.createdAt))}</td>
@@ -701,6 +749,29 @@ tbody tr:hover{background:var(--panel-2)}
 .fc__note{padding:.9rem 1rem; border-bottom:1px solid var(--line); font-size:.78rem; color:var(--muted); line-height:1.5}
 .fc__note b{color:var(--fg)}
 
+/* ------------------------------------------------- pager -------------------- */
+.pager{display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1.25rem; padding:.7rem 1rem; border-top:1px solid var(--line); font-size:.8rem; color:var(--muted)}
+.pager--top{border-top:0; border-bottom:1px solid var(--line); padding:.5rem 1rem}
+.pager__sum b{color:var(--fg); font-variant-numeric:tabular-nums}
+.pager__pages{display:inline-flex; align-items:center; gap:.2rem; margin-left:auto}
+.pager__n,.pager__btn,.pager__size{display:inline-grid; place-items:center; min-width:2.25rem; height:2.25rem; padding:0 .5rem; border-radius:8px; border:1px solid transparent; color:var(--muted); text-decoration:none; font-variant-numeric:tabular-nums; cursor:pointer; transition:background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
+a.pager__n:hover,a.pager__btn:hover,a.pager__size:hover{background:var(--panel-2); color:var(--fg); border-color:var(--line)}
+.pager__n.is-on,.pager__size.is-on{background:color-mix(in srgb,var(--brand) 18%,transparent); color:var(--fg); font-weight:600; border-color:color-mix(in srgb,var(--brand) 45%,transparent); cursor:default}
+.pager__btn.is-off{color:var(--line); cursor:default}
+.pager__btn .ico{width:1.05rem; height:1.05rem}
+.pager__gap{display:inline-grid; place-items:center; min-width:1.5rem; height:2.25rem; color:var(--dim)}
+.pager__sizes{display:inline-flex; align-items:center; gap:.15rem}
+.pager__lbl{margin-right:.35rem; color:var(--dim)}
+.pager__size{min-width:2.5rem}
+a.pager__n:focus-visible,a.pager__btn:focus-visible,a.pager__size:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+@media (max-width:760px){ .pager__pages{margin-left:0} }
+.searchform{display:inline-flex; align-items:stretch; gap:.35rem; margin-left:auto}
+.searchform .search{min-width:220px}
+.searchform button{font:inherit; font-size:.8rem; min-height:34px; padding:0 .7rem; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:var(--fg); cursor:pointer; display:inline-grid; place-items:center; transition:border-color var(--t-fast) var(--ease-out)}
+.searchform button:hover{border-color:var(--brand)}
+.searchform button .ico{width:1rem; height:1rem}
+.filters a.chip{text-decoration:none; display:inline-flex; align-items:center}
+
 /* ------------------------------------------------- ulasan ------------------- */
 .rv__top{display:grid; grid-template-columns:minmax(16rem,22rem) 1fr; gap:1rem 2rem; padding:1rem 1.1rem; border-bottom:1px solid var(--line); align-items:center}
 @media (max-width:760px){ .rv__top{grid-template-columns:1fr} }
@@ -1062,22 +1133,59 @@ ${script}
 </body></html>`;
 }
 
-export function renderDashboard({ orders, summary, errors, range, truncated = [], maxPerPlatform, shopeeShop, generatedAt }) {
+/**
+ * Orders view. `orders` is the filtered list for the range; `summary` is over the whole
+ * range, so the cards and the chip counts keep describing the period while the table
+ * shows one page of what the filters left. Filters and page live in the URL.
+ *
+ * @param {{filter?: {channel?: string, stage?: string, q?: string}, paging?: {page: number, perPage: number}, baseQuery?: string}} extra
+ */
+export function renderDashboard({
+  orders, summary, errors, range, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
+  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '',
+}) {
   const { all, byChannel } = summary;
   const inTransit = all.stages.shipping;
+  const channel = CHANNELS[filter.channel] ? filter.channel : 'all';
+  const stage = STAGES.includes(filter.stage) ? filter.stage : 'all';
+  const q = String(filter.q ?? '').trim();
+
+  // A chip is a link to the same view with one filter changed and the page reset.
+  const link = (changes) => {
+    const params = new URLSearchParams(baseQuery);
+    for (const [k, v] of Object.entries(changes)) {
+      if (v === 'all' || v === '') params.delete(k);
+      else params.set(k, v);
+    }
+    return `?${params.toString()}`;
+  };
+  const chip = (label, on, href, accent = '') =>
+    `<a class="chip ${on ? 'is-on' : ''}" href="${escape(href)}"${accent ? ` style="--chip:${accent}"` : ''}${on ? ' aria-current="true"' : ''}>${label}</a>`;
+
   const filters = [
-    '<button class="chip is-on" data-filter="channel" data-value="all" type="button">Semua kanal</button>',
-    ...Object.keys(CHANNELS).map(
-      (id) => `<button class="chip" data-filter="channel" data-value="${id}" style="--chip:${CHANNELS[id].accent}" type="button">${escape(CHANNELS[id].label)}</button>`,
+    chip('Semua kanal', channel === 'all', link({ channel: 'all' })),
+    ...Object.keys(CHANNELS).map((id) => chip(escape(CHANNELS[id].label), channel === id, link({ channel: id }), CHANNELS[id].accent)),
+  ].join('');
+
+  // Stage counts follow the channel chip, so "Siap kirim 11" means eleven on Shopee when
+  // Shopee is selected, not eleven across the shop.
+  const stages = channel === 'all' ? all.stages : (byChannel[channel]?.stages ?? {});
+  const stageChips = [
+    chip('Semua status', stage === 'all', link({ stage: 'all' })),
+    ...STAGES.filter((s) => stages[s] > 0).map(
+      (s) => chip(`${escape(STAGE_META[s].label)} <b>${stages[s]}</b>`, stage === s, link({ stage: s })),
     ),
   ].join('');
 
-  const stageChips = [
-    '<button class="chip is-on" data-filter="stage" data-value="all" type="button">Semua status</button>',
-    ...STAGES.filter((s) => all.stages[s] > 0).map(
-      (s) => `<button class="chip" data-filter="stage" data-value="${s}" type="button">${escape(STAGE_META[s].label)} <b>${all.stages[s]}</b></button>`,
-    ),
-  ].join('');
+  // Everything but the search box travels as hidden fields, so submitting keeps the
+  // range and the chips and only changes the query.
+  const searchHidden = [...new URLSearchParams(baseQuery)]
+    .filter(([k]) => k !== 'q')
+    .map(([k, v]) => `<input type="hidden" name="${escape(k)}" value="${escape(v)}">`)
+    .join('');
+
+  const paged = paginate(orders, paging);
+  const noun = q || channel !== 'all' || stage !== 'all' ? 'pesanan cocok' : 'pesanan';
 
   return shell({
     title: 'Omnichannel Orders',
@@ -1096,62 +1204,30 @@ export function renderDashboard({ orders, summary, errors, range, truncated = []
   <section class="panel" aria-label="Daftar pesanan">
     <div class="filters">
       ${filters}
-      <span class="grow"></span>
-      <input class="search" id="q" type="search" aria-label="Cari pesanan berdasarkan order ID, pembeli atau nomor resi" placeholder="Cari order ID, pembeli, resi..." autocomplete="off">
+      <form class="searchform" method="get" role="search">
+        ${searchHidden}
+        <input class="search" id="q" name="q" type="search" value="${escape(q)}" aria-label="Cari pesanan berdasarkan order ID, pembeli atau nomor resi" placeholder="Cari order ID, pembeli, resi..." autocomplete="off">
+        <button type="submit" aria-label="Cari">${svg('search')}</button>
+        ${q ? `<a class="chip" href="${escape(link({ q: '' }))}">Hapus pencarian</a>` : ''}
+      </form>
     </div>
     <div class="filters">${stageChips}</div>
+    ${pager(paged, { baseQuery, noun }).replace('class="pager"', 'class="pager pager--top"')}
     <div class="scroll">
-      <table>
+      ${paged.total ? `<table>
         <thead><tr>
           <th>Kanal</th><th>Order ID</th><th>Waktu</th><th>Pembeli</th>
           <th class="num">Total</th><th>Status</th><th>Kurir</th><th>Resi</th>
         </tr></thead>
-        <tbody id="rows">${orders.map(row).join('')}</tbody>
-      </table>
-      <p class="empty" id="empty" hidden>Tidak ada pesanan yang cocok dengan filter.</p>
+        <tbody id="rows">${paged.items.map(row).join('')}</tbody>
+      </table>` : '<p class="empty">Tidak ada pesanan yang cocok dengan filter.</p>'}
     </div>
+    ${pager(paged, { baseQuery, noun })}
     <div class="foot">
-      <span id="shown">${orders.length} pesanan</span>
+      <span>${idNumber(all.count)} pesanan pada rentang ini</span>
       <span>Waktu ditampilkan dalam WIB</span>
     </div>
   </section>`,
-    script: `
-(function () {
-  var state = { channel: 'all', stage: 'all', q: '' };
-  var rows = Array.prototype.slice.call(document.querySelectorAll('#rows tr'));
-  var empty = document.getElementById('empty');
-  var shown = document.getElementById('shown');
-
-  function apply() {
-    var n = 0;
-    rows.forEach(function (tr) {
-      var ok = (state.channel === 'all' || tr.dataset.channel === state.channel)
-        && (state.stage === 'all' || tr.dataset.stage === state.stage)
-        && (state.q === '' || tr.dataset.search.indexOf(state.q) !== -1);
-      tr.hidden = !ok;
-      if (ok) n++;
-    });
-    empty.hidden = n !== 0;
-    shown.textContent = n + ' pesanan';
-  }
-
-  document.querySelectorAll('.chip').forEach(function (chip) {
-    chip.addEventListener('click', function () {
-      var group = chip.dataset.filter;
-      document.querySelectorAll('.chip[data-filter="' + group + '"]').forEach(function (c) {
-        c.classList.toggle('is-on', c === chip);
-      });
-      state[group] = chip.dataset.value;
-      apply();
-    });
-  });
-
-  document.getElementById('q').addEventListener('input', function (e) {
-    state.q = e.target.value.trim().toLowerCase();
-    apply();
-  });
-})();
-`,
   });
 }
 
@@ -1426,10 +1502,13 @@ function syncHealth(heartbeat, now = Date.now()) {
 
 export function renderJurnal({
   overview, range, errors, shopeeShop, generatedAt, csrf, flash, live, depositTo, configured, heartbeat = null,
+  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '',
 }) {
   const order = { synced: 0, queued: 1, broken: 2, skipped: 3 };
-  const rows = [...overview.rows]
-    .sort((a, b) => (order[a.state] - order[b.state]) || (b.order.createdAt - a.order.createdAt))
+  const sorted = [...overview.rows]
+    .sort((a, b) => (order[a.state] - order[b.state]) || (b.order.createdAt - a.order.createdAt));
+  const paged = paginate(sorted, paging);
+  const rows = paged.items
     .map((r) => {
       const meta = CHANNELS[r.order.channel];
       const state = JURNAL_STATE[r.state];
@@ -1487,13 +1566,15 @@ export function renderJurnal({
         </div>
       </form>` : ''}
       ${rows
-        ? `<div class="scroll"><table class="dense">
+        ? `${pager(paged, { baseQuery, noun: 'pesanan' }).replace('class="pager"', 'class="pager pager--top"')}
+          <div class="scroll"><table class="dense">
             <thead><tr>
               <th>Kanal</th><th>Kode</th><th>Tanggal</th><th class="num">Nilai</th><th>Status</th><th>Catatan</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table></div>
-          <div class="foot"><span>${overview.rows.length} pesanan pada rentang ini</span></div>`
+          ${pager(paged, { baseQuery, noun: 'pesanan' })}
+          <div class="foot"><span>${idNumber(overview.rows.length)} pesanan pada rentang ini &middot; antre dan bermasalah selalu di depan</span></div>`
         : '<p class="empty">Tidak ada pesanan pada rentang ini.</p>'}`,
   });
 }
@@ -2037,7 +2118,10 @@ const REVIEW_LIGHTBOX_SCRIPT = `
  * when Tokopedia's signed URLs expire. Low ratings are the reason the page exists: they
  * are marked on the card, counted in the strip, and one filter click away.
  */
-export function renderReviews({ doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash, mediaUrl = defaultMediaUrl }) {
+export function renderReviews({
+  doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash, mediaUrl = defaultMediaUrl,
+  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '',
+}) {
   if (!doc?.syncedAt) {
     return shell({
       title: 'Ulasan', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
@@ -2072,7 +2156,9 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
     list.map(([v, label]) => `<option value="${v}" ${(current ?? '') === v ? 'selected' : ''}>${escape(label)}</option>`).join('');
 
   const withPhotos = reviews.filter((r) => r.images?.length).length;
-  const cards = reviews.map((r) => reviewCard(r, mediaUrl)).join('');
+  const paged = paginate(reviews, paging);
+  const cards = paged.items.map((r) => reviewCard(r, mediaUrl)).join('');
+  const reviewPager = (top) => pager(paged, { baseQuery, noun: 'ulasan' }).replace('class="pager"', top ? 'class="pager pager--top"' : 'class="pager"');
 
   const skuRows = Object.entries(stats.bySku ?? {}).map(([sku, b]) => `<tr>
       <td>${sku.startsWith('(tanpa SKU)') ? `<span class="dim">${escape(sku)}</span>` : `<a class="mono" href="?view=reviews&sku=${escape(encodeURIComponent(sku))}">${escape(sku)}</a>`}</td>
@@ -2140,9 +2226,9 @@ export function renderReviews({ doc, stats, reviews, filter = {}, range, errors 
         <label class="rv__field"><span>SKU</span><select name="sku"><option value="">Semua SKU</option>${skuOptions}</select></label>
         <label class="rv__check"><input type="checkbox" name="text" value="1" ${filter.text ? 'checked' : ''}> hanya yang ada teks</label>
         <button type="submit" class="rv__btn">${rvSvg('search')}Saring</button>
-        <span class="rv__count">${reviews.length} ulasan${withPhotos ? ` · ${withPhotos} berfoto` : ''}</span>
+        <span class="rv__count">${idNumber(reviews.length)} ulasan${withPhotos ? ` · ${idNumber(withPhotos)} berfoto` : ''}</span>
       </form>
-      ${cards ? `<div class="rv__list">${cards}</div>` : '<p class="empty">Tidak ada ulasan yang cocok dengan saringan.</p>'}
+      ${cards ? `${reviewPager(true)}<div class="rv__list">${cards}</div>${reviewPager(false)}` : '<p class="empty">Tidak ada ulasan yang cocok dengan saringan.</p>'}
       <div class="fc__note"><b>Per SKU</b> &mdash; seluruh ulasan tersimpan, bukan hanya yang disaring. Klik SKU untuk menyaring.</div>
       <div class="scroll"><table class="dense">
         <thead><tr><th>SKU</th><th class="num">Ulasan</th><th class="num">Rata-rata</th><th class="num">≤ 3★</th></tr></thead>

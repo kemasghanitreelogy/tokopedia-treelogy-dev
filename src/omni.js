@@ -517,3 +517,19 @@ export function summarize(orders) {
 
   return { all, byChannel };
 }
+
+/**
+ * The order-list filters, applied on the server.
+ *
+ * They used to run in the browser over every row of the range, which meant sending
+ * every row. Now the page sends what matches, and the filter state lives in the URL
+ * with the page number. The search matches the order id, the buyer and the tracking
+ * number, case-insensitively, the same three fields the old client-side search read.
+ */
+export function filterOrders(orders, { channel = 'all', stage = 'all', q = '' } = {}) {
+  const needle = String(q ?? '').trim().toLowerCase();
+  return orders.filter((o) =>
+    (channel === 'all' || o.channel === channel)
+    && (stage === 'all' || o.stage === stage)
+    && (!needle || `${o.id} ${o.buyer ?? ''} ${o.tracking ?? ''}`.toLowerCase().includes(needle)));
+}

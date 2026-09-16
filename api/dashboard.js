@@ -4,6 +4,8 @@ import { isSupabaseConfigured } from '../src/db/client.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
 import { selectReviews, reviewStats } from '../src/tokopedia/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
+import { parsePaging, withoutPaging } from '../src/paging.js';
+import { filterOrders } from '../src/omni.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -454,6 +456,10 @@ export default async function handler(req, res) {
   const requestedView = url.searchParams.get('view') ?? 'orders';
   // The stock tab was folded into products; old links and bookmarks still land somewhere useful.
   const view = Object.hasOwn(VIEWS, requestedView) ? requestedView : 'orders';
+  // Page and page size come from the URL, and every page link is the current URL with
+  // only those two changed - so filters, range and page survive reload and history.
+  const paging = parsePaging(url.searchParams);
+  const baseQuery = withoutPaging(url.searchParams);
 
   const flash = url.searchParams.get('done')
     ? { kind: 'ok', text: url.searchParams.get('done') }
@@ -548,11 +554,10 @@ export default async function handler(req, res) {
         sku: filter.sku || undefined,
         sinceEpoch: days ? Math.floor(Date.now() / 1000) - days * 86400 : undefined,
         withText: filter.text,
-        limit: 500,
       }) : [];
-      console.log(`dashboard/reviews: ${reviews.length} of ${Object.keys(doc?.reviews ?? {}).length}`);
+      console.log(`dashboard/reviews: ${reviews.length} of ${Object.keys(doc?.reviews ?? {}).length}, page ${paging.page}`);
       send(200, renderReviews({
-        doc, stats: doc ? reviewStats(doc) : null, reviews, filter,
+        doc, stats: doc ? reviewStats(doc) : null, reviews, filter, paging, baseQuery,
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
       return;
@@ -594,7 +599,7 @@ export default async function handler(req, res) {
       const overview = syncOverview({ orders: data.orders, ledger, depositTo });
       console.log(`dashboard/jurnal: ${overview.synced} synced, ${overview.queued} queued, ${overview.broken} broken`);
       send(200, renderJurnal({
-        ...data, overview, csrf, flash, depositTo, heartbeat,
+        ...data, overview, csrf, flash, depositTo, heartbeat, paging, baseQuery,
         live: process.env.MEKARI_SYNC_LIVE === '1',
         configured: isMekariConfigured(),
       }));
@@ -609,8 +614,14 @@ export default async function handler(req, res) {
     }
 
     const summary = summarize(data.orders);
-    console.log(`dashboard: ${data.orders.length} orders for ${range.label}, errors=${Object.keys(data.errors).join(',') || 'none'}`);
-    send(200, renderDashboard({ ...data, summary }));
+    const filter = {
+      channel: url.searchParams.get('channel') ?? 'all',
+      stage: url.searchParams.get('stage') ?? 'all',
+      q: url.searchParams.get('q') ?? '',
+    };
+    const orders = filterOrders(data.orders, filter);
+    console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'}`);
+    send(200, renderDashboard({ ...data, orders, summary, filter, paging, baseQuery }));
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);
     send(502, dashboardError('Could not load orders', error.message));

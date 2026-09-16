@@ -78,6 +78,7 @@ Usage:
   npm run mekari:recap        Bandingkan pesanan vs faktur per hari (rekap harian finance)
   npm run mekari:redate       Perbaiki tanggal faktur agar ikut jam platformnya (butuh --yes)
   npm run mekari:repool       Pindahkan setoran dari bank ke akun penampung kanal (butuh --yes)
+                              --from=YYYY-MM-DD dan --limit=N untuk mencicil sesuai kuota
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -1240,8 +1241,14 @@ async function cmdMekariRedate(config, args = []) {
 async function cmdMekariRepool(config, args = []) {
   if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
   const dryRun = !args.includes('--yes');
+  const since = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) ?? null;
+  // Jurnal's monthly package is finite and every payment moved is one write, so the
+  // correction is taken in pieces the operator chooses rather than all at once.
+  const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || null;
 
   const r = await repoolPayments({
+    since,
+    limit,
     dryRun,
     onProgress: (p) => { if (p.moved % 25 === 0) console.log(`  dipindah ${p.moved}/${p.of}`); },
   });
@@ -1259,6 +1266,7 @@ async function cmdMekariRepool(config, args = []) {
 
   if (dryRun) { console.log(`\n  ${info('dry-run: belum ada yang diubah. Ulangi dengan --yes')}\n`); return 0; }
   console.log(`\n  ${ok(`${r.moved} pembayaran dipindah ke akun penampung kanalnya`)}`);
+  if (r.remaining > 0) console.log(`  ${info(`${r.remaining} masih menunggu - ulangi perintah yang sama untuk melanjutkan`)}`);
   if (r.failures.length > 0) {
     console.log(`  ${fail(`${r.failures.length} gagal`)}`);
     for (const f of r.failures.slice(0, 5)) console.log(`    #${f.no}: ${f.error.slice(0, 90)}`);

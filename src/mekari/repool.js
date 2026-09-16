@@ -79,10 +79,10 @@ export async function allPayments({ deadlineAt = null, onProgress = () => {} } =
  *
  * @returns {Promise<{checked: number, wrong: Array, unknown: Array, complete: boolean}>}
  */
-export async function planRepool({ deadlineAt = null, onProgress = () => {} } = {}) {
+export async function planRepool({ since = null, deadlineAt = null, onProgress = () => {} } = {}) {
   const [{ payments, expected, complete }, catalogue, accounts] = await Promise.all([
     allPayments({ deadlineAt, onProgress }),
-    invoiceCatalogue({ deadlineAt }),
+    invoiceCatalogue({ since, deadlineAt }),
     postingAccounts(),
   ]);
 
@@ -93,6 +93,10 @@ export async function planRepool({ deadlineAt = null, onProgress = () => {} } = 
   const wrong = [];
   const unknown = [];
   for (const payment of payments) {
+    // Outside the window asked for, so not this run's business. Checked before anything
+    // else, because the whole point of a window is to not pay for what it excludes.
+    const iso = toIso(payment.transaction_date);
+    if (since && iso && iso < since) continue;
     const records = payment.records ?? [];
     const customIds = [...new Set(records.map((r) => customIdByNo.get(String(r.transaction_no))).filter(Boolean))];
     const pooling = [...new Set(customIds.map((id) => {
@@ -153,10 +157,15 @@ export function repoolBody(item) {
 }
 
 /**
- * @param {{dryRun?: boolean, onProgress?: Function}} options
+/**
+ * @param {{since?: string|null, limit?: number|null, dryRun?: boolean, onProgress?: Function}} options
+ *        `limit` caps how many payments are moved in one run. Jurnal's monthly package is
+ *        finite and 2,080 payments is 2,080 writes, so the correction is meant to be taken
+ *        in affordable pieces: each run moves the ones still in the wrong account, so
+ *        running it again simply continues where the last one stopped.
  */
-export async function repoolPayments({ dryRun = true, onProgress = () => {} } = {}) {
-  const plan = await planRepool();
+export async function repoolPayments({ since = null, limit = null, dryRun = true, onProgress = () => {} } = {}) {
+  const plan = await planRepool({ since });
   if (plan.complete === false) {
     throw new Error(`pindai pembayaran tidak lengkap (${plan.checked} dari ${plan.expected}) - jangan pindahkan uang dari daftar yang kurang`);
   }
@@ -165,7 +174,8 @@ export async function repoolPayments({ dryRun = true, onProgress = () => {} } = 
 
   let moved = 0;
   const failures = [];
-  for (const item of plan.wrong) {
+  const todo = Number.isFinite(limit) && limit > 0 ? plan.wrong.slice(0, limit) : plan.wrong;
+  for (const item of todo) {
     const attempt = repoolBody(item);
     if (attempt.refuse) {
       failures.push({ no: item.no, error: attempt.refuse });
@@ -174,7 +184,7 @@ export async function repoolPayments({ dryRun = true, onProgress = () => {} } = 
     try {
       await mekari({ method: 'PATCH', path: `${PAYMENTS_PATH}/${item.id}`, body: attempt.body });
       moved += 1;
-      onProgress({ moved, of: plan.wrong.length, no: item.no, to: item.to });
+      onProgress({ moved, of: todo.length, no: item.no, to: item.to });
     } catch (error) {
       failures.push({ no: item.no, error: error.message });
     }
@@ -182,5 +192,5 @@ export async function repoolPayments({ dryRun = true, onProgress = () => {} } = 
   // A payment's account is part of what the invoice scan describes, so the cached reading
   // is stale the moment one moves.
   if (moved > 0) await forgetCatalogue();
-  return { ...plan, dryRun: false, moved, failures };
+  return { ...plan, dryRun: false, moved, failures, remaining: plan.wrong.length - moved - failures.length };
 }

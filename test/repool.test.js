@@ -53,3 +53,11 @@ test('a date written with dashes reads the same as one with slashes', () => {
   // due_date with dashes - so the parser has to take either.
   assert.equal(repoolBody(item({ date: '15-09-2026' })).body.receive_payment.transaction_date, '2026-09-15');
 });
+
+test('the window is read from the payment\'s own date, so an excluded one is never fetched twice', () => {
+  // --from exists to not pay for what it excludes: a payment before the window is dropped
+  // before anything else is done with it.
+  const iso = (d) => repoolBody(item({ date: d })).body.receive_payment.transaction_date;
+  assert.equal(iso('01/09/2026'), '2026-09-01');
+  assert.ok(iso('31/08/2026') < '2026-09-01', 'Agustus jatuh di luar jendela September');
+});

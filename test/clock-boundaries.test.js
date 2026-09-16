@@ -39,46 +39,46 @@ function withZone(name, fn) {
 
 /* ---------------------------------------------------------- the platform's own calendar */
 
-test('an order at half past eleven at night is the 14th to Tokopedia and the 15th to Shopify', () => {
-  // The headline property, stated as finance sees it. The store is configured
-  // Asia/Singapore - read from the live shop via shop { ianaTimezone } on 2026-09-15, not
-  // assumed - so its books turn over an hour before the marketplaces'. Both answers are
-  // right from where they are being read, and a single house clock makes one of them wrong.
-  const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
-  assert.equal(channelDate(at, 'tokopedia'), '2026-09-14');
-  assert.equal(channelDate(at, 'tokopedia'), '2026-09-14');
-  assert.equal(channelDate(at, 'tiktok_shop'), '2026-09-14');
-  assert.equal(channelDate(at, 'shopify'), '2026-09-15', 'toko Shopify UTC+8, sudah ganti hari');
+test('every platform is a day ahead of the house clock for the last hour of the night', () => {
+  // Checked against each seller centre rather than reasoned about from the shops' region.
+  // Shopee reads "New Order 14/09/2026 00:38" for an instant this system had at 13 Sep
+  // 23:38; Tokopedia reads "Waktu pembuatan 03/09/2026 00:25:24" for one it had at 2 Sep
+  // 23:25. All four platforms are UTC+8. A sale typed in by hand has no platform and
+  // belongs to the day the person entering it is living in.
+  const at = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000); // 23:38 WIB, 00:38 +8
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+    assert.equal(channelDate(at, channel), '2026-09-14', channel);
+  }
+  assert.equal(channelDate(at, 'manual'), '2026-09-13', 'transaksi manual pakai jam rumah');
+  assert.equal(channelDate(at, null), '2026-09-13');
 });
 
 test('that same hour moves a sale into the next month, and into the next year', () => {
-  // A day's discrepancy inside a month is a recap that is off by one order. The same hour
-  // on the last night of a month moves the sale into the next month's revenue, and on the
-  // last night of the year into the next year's books - which is not a recap problem any
-  // more, it is a closed period.
-  assert.equal(channelDate(END_OF_AUGUST, 'tokopedia'), '2026-08-31');
-  assert.equal(channelDate(END_OF_AUGUST, 'shopify'), '2026-09-01', 'pindah bulan, bukan cuma pindah hari');
+  // The boundary that matters for a monthly close, and for a financial year.
+  const endOfAugust = Math.floor(Date.parse('2026-08-31T16:30:00Z') / 1000);
+  assert.equal(channelDate(endOfAugust, 'shopee'), '2026-09-01');
+  assert.equal(channelDate(endOfAugust, 'manual'), '2026-08-31');
 
-  assert.equal(channelDate(NEW_YEARS_EVE, 'tokopedia'), '2026-12-31');
-  assert.equal(channelDate(NEW_YEARS_EVE, 'shopify'), '2027-01-01', 'pindah tahun buku');
-  assert.equal(channelDate(NEW_YEARS_EVE, 'tokopedia'), '2026-12-31');
+  const endOfYear = Math.floor(Date.parse('2026-12-31T16:30:00Z') / 1000);
+  assert.equal(channelDate(endOfYear, 'tokopedia'), '2027-01-01');
+  assert.equal(channelDate(endOfYear, 'manual'), '2026-12-31');
 });
 
 test('a channel keeps its own clock even when the house clock is moved', () => {
-  // CHANNEL_ZONES is not a default that BUSINESS_TZ overrides - it is what each platform's
-  // back office shows, and that does not change because the business moved its own books
-  // to Makassar or Jayapura. Collapsing the two would re-date every marketplace invoice
-  // ever raised the next time this setting is touched.
-  withZone('Asia/Jayapura', () => {
-    assert.equal(zoneForChannel('tokopedia').offsetHours, 7, 'Shopee tetap WIB');
-    assert.equal(zoneForChannel('shopify').offsetHours, 8, 'Shopify tetap UTC+8');
-    assert.equal(channelDate(END_OF_AUGUST, 'tokopedia'), '2026-08-31');
-    // Only a channel with no platform of its own follows the house clock. WIT is +9, so
-    // 23:30 Jakarta is already 01:30 the next day there.
-    assert.equal(zoneForChannel('manual').offsetHours, 9);
-    assert.equal(channelDate(END_OF_AUGUST, 'manual'), '2026-09-01');
-    assert.equal(businessDate(END_OF_AUGUST), '2026-09-01');
-  });
+  // Otherwise changing BUSINESS_TZ would silently re-date every marketplace invoice, and
+  // the books would stop agreeing with the seller centres they were reconciled against.
+  const at = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000);
+  const before = process.env.BUSINESS_TZ;
+  try {
+    for (const zone of ['Asia/Jakarta', 'Asia/Makassar', 'Asia/Jayapura']) {
+      process.env.BUSINESS_TZ = zone;
+      for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+        assert.equal(channelDate(at, channel), '2026-09-14', `${channel} di bawah ${zone}`);
+      }
+    }
+  } finally {
+    if (before === undefined) delete process.env.BUSINESS_TZ; else process.env.BUSINESS_TZ = before;
+  }
 });
 
 test('every channel with an entry names a zone that exists, and an unknown one falls back', () => {
@@ -206,30 +206,34 @@ test('every day of a year round-trips through its own start', () => {
 
 /* ------------------------- each channel's zone, as the platform itself states it */
 
-test("Shopee is UTC+8, and Shopee's own order ids are what say so", async () => {
-  // The shop's region is ID and its buyers are Indonesian, so WIB looked obvious. It was
-  // assumed, never established, and it put nine invoices a month on the wrong day.
+test("every platform is UTC+8, and each one's own records are what say so", async () => {
+  // The shops are Indonesian, the buyers are Indonesian, Shopee's region reads ID and
+  // Tokopedia's seller centre says "Lokasi: ID". I checked those, saw ID, and stopped -
+  // which is how every marketplace sale placed between 23:00 and midnight was invoiced a
+  // day early for as long as this integration has run.
   //
-  // Shopee settles it without being asked: it writes the date into the first six
-  // characters of every order id. Across 328 September orders, UTC+8 matched all 328 and
-  // WIB matched 319 - the nine misses all placed between 23:00 and midnight. The seller
-  // centre agrees: order 2609140FJEFCSW reads "New Order 14/09/2026 00:38" there, and this
-  // system had it as 13 September until the ids were checked.
+  // What each platform actually says about the same kind of instant:
+  //   Shopee      2609140FJEFCSW -> "New Order 14/09/2026 00:38"; we had 13 Sep 23:38.
+  //   Tokopedia   585859894801303056 -> "Waktu pembuatan 03/09/2026 00:25:24"; the stored
+  //               instant is 2026-09-02 16:25:24 UTC, which is 00:25 at +8.
+  //   TikTok Shop the same seller centre and the same API as Tokopedia.
+  //   Shopify     read from the shop's own ianaTimezone.
   const { channelDate: dateFor, zoneForChannel: zoneOf } = await import('../src/clock.js');
 
-  // 13 Sep 16:38 UTC = 14 Sep 00:38 Singapore = 13 Sep 23:38 Jakarta.
-  const at = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000);
-  assert.equal(dateFor(at, 'shopee'), '2026-09-14', 'id pesanannya diawali 260914');
-  assert.equal(zoneOf('shopee').offsetHours, 8);
+  // 13 Sep 16:38 UTC = 14 Sep 00:38 at +8 = 13 Sep 23:38 in Jakarta.
+  const shopeeAt = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000);
+  assert.equal(dateFor(shopeeAt, 'shopee'), '2026-09-14', 'id pesanannya diawali 260914');
 
-  // The two that really are Jakarta, so the contrast is pinned rather than implied.
-  assert.equal(dateFor(at, 'tokopedia'), '2026-09-13');
-  assert.equal(dateFor(at, 'tiktok_shop'), '2026-09-13');
-  assert.equal(zoneOf('tokopedia').offsetHours, 7);
-  assert.equal(zoneOf('tiktok_shop').offsetHours, 7);
+  // The Tokopedia order, to the second, exactly as its seller centre prints it.
+  const tokopediaAt = Math.floor(Date.parse('2026-09-02T16:25:24Z') / 1000);
+  assert.equal(dateFor(tokopediaAt, 'tokopedia'), '2026-09-03');
 
-  // Shopify was read from the shop's own ianaTimezone, not guessed.
-  assert.equal(zoneOf('shopify').offsetHours, 8);
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+    assert.equal(zoneOf(channel).offsetHours, 8, channel);
+  }
+  // A typed-in sale has no platform, so it keeps the day the person entering it is in.
+  assert.equal(dateFor(shopeeAt, 'manual'), '2026-09-13');
+  assert.equal(zoneOf('manual').offsetHours, 7);
 });
 
 test('a Shopee order id carries the day the platform assigns it', async () => {

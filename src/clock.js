@@ -121,22 +121,35 @@ export const businessToday = () => businessDate(Math.floor(Date.now() / 1000));
  * should do: it has no platform of its own.
  */
 export const CHANNEL_ZONES = {
-  // UTC+8, proved by Shopee itself rather than inferred from the shop's region.
+  // All four report UTC+8, and all four were checked rather than reasoned about.
   //
-  // Shopee writes the date into the first six characters of every order id, so its own
-  // opinion of which day a sale belongs to is checkable against ours. Across 328 September
-  // orders, UTC+8 matched all 328 and WIB matched 319 - the nine misses being the orders
-  // placed between 23:00 and midnight. The seller centre agrees: order 2609140FJEFCSW is
-  // "New Order 14/09/2026 00:38" there and was 13 Sep 23:38 here.
+  // WIB looked obvious: the shops are Indonesian, the buyers are Indonesian, Shopee's
+  // region reads ID and Tokopedia's seller centre says "Lokasi: ID". I checked those,
+  // saw ID, and stopped - which is how every marketplace sale placed between 23:00 and
+  // midnight was invoiced a day early for as long as this integration has run.
   //
-  // The shop's region is ID and its buyers are Indonesian, which is what made WIB look
-  // obvious. It was assumed, not established, and it put nine invoices a month on the
-  // wrong day - including the one that made a single day's dashboard and Jurnal disagree.
+  // What the platforms actually say, each against its own seller centre:
+  //
+  //   Shopee      order 2609140FJEFCSW reads "New Order 14/09/2026 00:38"; we had it at
+  //               13 Sep 23:38. Shopee also writes the date into the first six characters
+  //               of every order id, so this is checkable in bulk: across 328 September
+  //               orders UTC+8 matched all 328 and WIB matched 319.
+  //   Tokopedia   order 585859894801303056 reads "Waktu pembuatan 03/09/2026 00:25:24";
+  //               the stored instant is 2026-09-02 16:25:24 UTC, which is 00:25 at +8 and
+  //               23:25 at +7.
+  //   TikTok Shop the same seller centre as Tokopedia - seller-id.tokopedia.com, managed
+  //               by PT Tokopedia - and the same API, so the same clock.
+  //   Shopify     read from the shop's own ianaTimezone: Asia/Singapore.
+  //
+  // So the per-channel table now holds one answer four times. It stays a table because the
+  // reason each entry is +8 differs, and because the next platform added will have to be
+  // checked the same way rather than assumed to match.
   shopee: 'Asia/Singapore',
-  tokopedia: 'Asia/Jakarta',
-  tiktok_shop: 'Asia/Jakarta',
+  tokopedia: 'Asia/Singapore',
+  tiktok_shop: 'Asia/Singapore',
   shopify: 'Asia/Singapore',
 };
+
 
 /** @returns {{name: string, label: string, offsetHours: number}} */
 export function zoneForChannel(channel) {

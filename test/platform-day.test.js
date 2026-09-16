@@ -19,23 +19,21 @@ const MIDDAY_5_SEP = Math.floor(Date.parse('2026-09-05T05:00:00Z') / 1000);
 
 const order = (channel, at) => ({ channel, createdAt: at });
 
-test('a September window holds the Shopify sale Tokopedia would call August', () => {
+test('a September window holds the marketplace sale the house clock would call August', () => {
   const september = { from: '2026-09-01', to: '2026-09-16' };
-
-  // Same instant, two answers, and both are right where they are read.
-  assert.equal(channelDate(LATE_31_AUG, 'shopify'), '2026-09-01');
-  assert.equal(channelDate(LATE_31_AUG, 'tokopedia'), '2026-08-31');
-
-  assert.equal(withinDays(order('shopify', LATE_31_AUG), september), true);
-  assert.equal(withinDays(order('tokopedia', LATE_31_AUG), september), false);
-  assert.equal(withinDays(order('tokopedia', LATE_31_AUG), september), false);
-  assert.equal(withinDays(order('tiktok_shop', LATE_31_AUG), september), false);
+  // 31 Aug 23:30 Jakarta is already 1 September to every platform we sell on.
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+    assert.equal(channelDate(LATE_31_AUG, channel), '2026-09-01', channel);
+    assert.equal(withinDays(order(channel, LATE_31_AUG), september), true, channel);
+  }
+  // A typed-in sale has no platform and stays on the day it was entered.
+  assert.equal(withinDays(order('manual', LATE_31_AUG), september), false);
 });
 
-test('an August window holds it the other way round', () => {
+test('an August window holds the typed-in sale and not the marketplace one', () => {
   const august = { from: '2026-08-17', to: '2026-08-31' };
-  assert.equal(withinDays(order('tokopedia', LATE_31_AUG), august), true);
-  assert.equal(withinDays(order('shopify', LATE_31_AUG), august), false, 'Shopify sudah 1 September');
+  assert.equal(withinDays(order('manual', LATE_31_AUG), august), true);
+  assert.equal(withinDays(order('shopee', LATE_31_AUG), august), false, 'Shopee sudah 1 September');
 });
 
 test('away from the boundary every channel agrees, which is most of the month', () => {
@@ -60,32 +58,35 @@ test('a range with no dates keeps everything, rather than silently emptying the 
 
 /* --------------------- every path out of loadOrders applies the same filter */
 
-test('the database path filters by platform day too, not only the live one', async () => {
+test('the database path filters by platform day too, not only the live one', () => {
   // It did not, and nothing said so. A parallel edit had added a `channels` argument to
   // that line, so the patch adding the filter matched the two live branches and silently
   // missed the one the dashboard actually uses. A 1 September window came back with 84
   // orders where the day holds 59 - the extra 25 were 31 August and 2 September sales the
-  // widened fetch had pulled in for filtering, and nothing filtered them.
-  const { loadOrders } = await import('../src/orders-source.js');
+  // widened fetch had pulled in for filtering, and which nothing then filtered.
+  return import('../src/orders-source.js').then(async ({ loadOrders }) => {
+    const at = (iso) => Math.floor(Date.parse(iso) / 1000);
+    const stored = [
+      // 31 Aug 17:00 UTC = 1 Sep 01:00 on every platform clock. In.
+      { channel: 'shopee', id: 'A', createdAt: at('2026-08-31T17:00:00Z'), stage: 'completed', total: 1 },
+      // 1 Sep 16:30 UTC = 2 Sep 00:30 on a platform clock. Out.
+      { channel: 'shopee', id: 'B', createdAt: at('2026-09-01T16:30:00Z'), stage: 'completed', total: 1 },
+      // 31 Aug 15:00 UTC = 31 Aug 23:00 on a platform clock. Out.
+      { channel: 'tokopedia', id: 'C', createdAt: at('2026-08-31T15:00:00Z'), stage: 'completed', total: 1 },
+      { channel: 'shopify', id: 'D', createdAt: at('2026-09-01T04:00:00Z'), stage: 'completed', total: 1 },
+    ];
 
-  const at = (iso) => Math.floor(Date.parse(iso) / 1000);
-  const stored = [
-    { channel: 'tokopedia', id: 'A', createdAt: at('2026-08-31T18:00:00Z'), stage: 'completed', total: 1 },   // 1 Sep WIB
-    { channel: 'tokopedia', id: 'B', createdAt: at('2026-09-01T17:30:00Z'), stage: 'completed', total: 1 },   // 2 Sep WIB - keluar
-    { channel: 'tokopedia', id: 'C', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },   // 31 Agu WIB - keluar
-    { channel: 'shopify', id: 'D', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },  // 1 Sep di Shopify - masuk
-  ];
+    const seen = await loadOrders({
+      range: { since: at('2026-08-31T17:00:00Z'), until: at('2026-09-01T16:59:59Z'), from: '2026-09-01', to: '2026-09-01', label: '1 Sep' },
+      readStored: async () => stored,
+      readLive: async () => ({ orders: stored, errors: {}, truncated: [] }),
+    });
 
-  const seen = await loadOrders({
-    range: { since: at('2026-08-31T17:00:00Z'), until: at('2026-09-01T16:59:59Z'), from: '2026-09-01', to: '2026-09-01', label: '1 Sep' },
-    readStored: async () => stored,
-    readLive: async () => ({ orders: stored, errors: {}, truncated: [] }),
+    assert.deepEqual(seen.orders.map((o) => o.id).sort(), ['A', 'D'],
+      'hanya pesanan yang platformnya sendiri sebut 1 September');
+    // The window the caller asked for is what comes back, not the widened one it was
+    // fetched with - otherwise the page would label itself with an hour it did not show.
+    assert.equal(seen.range.from, '2026-09-01');
+    assert.equal(seen.range.to, '2026-09-01');
   });
-
-  assert.deepEqual(seen.orders.map((o) => o.id).sort(), ['A', 'D'],
-    'hanya pesanan yang platformnya sendiri sebut 1 September');
-  // The window the caller asked for is what comes back, not the widened one it was
-  // fetched with - otherwise the page would label itself with an hour it did not show.
-  assert.equal(seen.range.from, '2026-09-01');
-  assert.equal(seen.range.to, '2026-09-01');
 });

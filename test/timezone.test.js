@@ -37,31 +37,30 @@ test('an order a quarter of an hour before midnight belongs to the day that is e
   assert.equal(wibDay(JUST_BEFORE_MIDNIGHT), '2026-09-15');
 });
 
-test('a marketplace invoice follows the house clock across a whole day of ten-minute steps', () => {
+test('every marketplace invoice is dated on the platform clock, all day long', () => {
   // This used to call jurnalDate(at) with no channel, which falls back to the house clock
   // - so all 144 assertions compared businessDate to itself and would have passed with the
-  // channel mechanism deleted entirely. Named channels now, and the Shopify case below is
-  // what proves the mechanism does something.
+  // channel mechanism deleted. Named channels now, and every platform we sell on is UTC+8,
+  // checked against its own seller centre rather than inferred from the shop's region.
   const start = Math.floor(Date.parse('2026-09-14T17:00:00Z') / 1000);
   for (let i = 0; i < 144; i += 1) {
     const at = start + i * 600;
-    const expected = wibDate(at);
-    for (const channel of ['tokopedia', 'tiktok_shop']) {
+    const expected = channelDate(at, 'shopee');
+    for (const channel of ['tokopedia', 'tiktok_shop', 'shopify']) {
       assert.equal(jurnalDate(at, channel), expected, `${channel} beda di menit ke-${i * 10}`);
     }
-    assert.equal(wibDay(at), expected, `prakiraan beda di menit ke-${i * 10}`);
   }
 });
 
-test('Shopify parts company with the house clock for exactly one hour a night', () => {
-  // The hour that only exists because the store is UTC+8 and the marketplaces are UTC+7.
-  // If this count is not 6 - six ten-minute steps in one hour - the channel mechanism is
-  // either not applied or applied to everybody.
+test('a platform parts company with the house clock for exactly one hour a night', () => {
+  // The hour that exists because every platform we sell on is UTC+8 and the business
+  // keeps Jakarta time. Six ten-minute steps: if this is not 6, either the channel
+  // mechanism is not being applied or it is being applied to the house clock as well.
   const start = Math.floor(Date.parse('2026-09-14T17:00:00Z') / 1000);
   let differing = 0;
   for (let i = 0; i < 144; i += 1) {
     const at = start + i * 600;
-    if (jurnalDate(at, 'shopify') !== jurnalDate(at, 'tokopedia')) differing += 1;
+    if (channelDate(at, 'shopee') !== channelDate(at, 'manual')) differing += 1;
   }
   assert.equal(differing, 6, 'tepat satu jam sehari, tidak lebih dan tidak kurang');
 });
@@ -135,20 +134,18 @@ const { channelDate, zoneForChannel, CHANNEL_ZONES } = await import('../src/cloc
 const { jurnalDate: invoiceDate } = await import('../src/mekari/invoice.js');
 
 test('an invoice is dated by the clock of the platform it came from', () => {
-  // 23:30 in Jakarta, which is already the next day in Singapore - and the Shopify store
-  // is configured Asia/Singapore, read from the live shop rather than assumed. Finance
-  // recaps by opening each back office beside Jurnal, so both answers are right from
-  // where they are looking, and one house clock would make one of them wrong.
-  const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
+  // 23:38 in Jakarta on 13 September, which every platform we sell on calls the 14th -
+  // Shopee's seller centre says so outright ("New Order 14/09/2026 00:38") and its order
+  // id begins 260914. A sale typed in by hand has no platform and keeps the house day.
+  const at = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000);
 
-  for (const channel of ['tokopedia', 'tiktok_shop']) {
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
     assert.equal(channelDate(at, channel), '2026-09-14', channel);
     assert.equal(invoiceDate(at, channel), '2026-09-14', channel);
-    assert.equal(zoneForChannel(channel).offsetHours, 7, channel);
+    assert.equal(zoneForChannel(channel).offsetHours, 8, channel);
   }
-  assert.equal(channelDate(at, 'shopify'), '2026-09-15');
-  assert.equal(invoiceDate(at, 'shopify'), '2026-09-15');
-  assert.equal(zoneForChannel('shopify').offsetHours, 8);
+  assert.equal(invoiceDate(at, 'manual'), '2026-09-13');
+  assert.equal(invoiceDate(at, null), '2026-09-13');
 });
 
 test('a typed-in transaction has no platform, so it uses the house clock', () => {

@@ -12,7 +12,7 @@ import { collectOrders, summarize, CHANNELS, STAGES } from './omni.js';
 import { backfill } from './db/backfill.js';
 import { readCoverage, dbStats, DB_HISTORY_START } from './db/orders.js';
 import { isSupabaseConfigured } from './db/client.js';
-import { activeSources, rememberOrders } from './orders-source.js';
+import { activeSources, rememberOrders, loadOrders } from './orders-source.js';
 import { resolveRange, wibDate } from './range.js';
 import { buildPicklist } from './picklist.js';
 import { readCatalog } from './inventory.js';
@@ -654,19 +654,35 @@ async function mekariOrders(args) {
   // Tracking numbers cost an extra Shopee call per batch, and they are worth it: the
   // invoice carries the waybill, which is how a delivery dispute gets settled later.
   const range = resolveRange({ preset });
-  const live = await collectOrders({ range, tracking: true });
-  const { orders, errors } = live;
+
+  // A cap that silently trims is how sales go missing from the books.
+  //
+  // This read live with maxPerPlatform at its default of 800. Shopify alone has 861
+  // orders in a thirty-day window, so roughly sixty were cut off every single run -
+  // never invoiced, never reported, and invisible because a truncated read looks exactly
+  // like a complete one. Sixty-two Shopify orders were sitting uninvoiced when this was
+  // found, which is the same number twice.
+  //
+  // loadOrders reads the database when it covers the window, and the database has no cap
+  // - it holds every order the webhooks and sweeps have ever stored. It falls back to a
+  // live read when coverage is missing, and stores what it read, so the seam closes
+  // itself. That also means the books no longer spend marketplace quota to find out what
+  // we already know.
+  const source = await loadOrders({ range, tracking: true, maxPerPlatform: 5000 });
+  const { orders, errors } = source;
+
   // Posting is additive, so a dead channel only delays its own orders - but say so, never
   // let a missing channel read as "nothing to post".
-  for (const [channel, message] of Object.entries(errors)) {
+  for (const [channel, message] of Object.entries(errors ?? {})) {
     console.log(warn(`${channel} gagal dibaca: ${message} - pesanannya dilewati run ini`));
   }
-  // This run already paid three marketplaces for a fresh, tracked read of the last thirty
-  // days. Throwing it away and making the dashboard fetch the same thing again is the
-  // waste this whole change exists to remove, so it is kept - and because the read was
-  // live and complete, it is what carries the covered window forward every fifteen
-  // minutes without anybody running a backfill.
-  await rememberOrders(live, range);
+  // A truncated read is not an error and says so nowhere else. It has to be loud here,
+  // because the orders it dropped are sales that will not reach the books.
+  for (const cut of source.truncated ?? []) {
+    console.log(warn(`${cut} terpotong - sebagian pesanan tidak ikut dibukukan run ini`));
+  }
+  if (source.from === 'live') await rememberOrders(source, range);
+  console.log(info(`${orders.length} pesanan dibaca dari ${source.from === 'db' ? 'database' : 'platform'}`));
   return orders;
 }
 

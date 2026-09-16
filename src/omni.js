@@ -401,7 +401,13 @@ export async function fetchShopeeOrders({ since, until, max, tracking = true }) 
  * Every channel is fetched concurrently and failures are isolated: one dead integration
  * degrades the dashboard to the channels that still answer instead of blanking it.
  */
-export async function collectOrders({ range, maxPerPlatform = 800, tracking = true, ...rest } = {}) {
+/**
+ * @param {{range?: object, maxPerPlatform?: number, tracking?: boolean}} options
+ *   `maxPerPlatform` is a safety valve, not a page size: a read that hits it comes back
+ *   short and says so only through `truncated`, which several callers ignored. 800 was
+ *   below a single channel's thirty-day volume, so it trimmed on every run.
+ */
+export async function collectOrders({ range, maxPerPlatform = 3000, tracking = true, ...rest } = {}) {
   const window = range ?? resolveRange(rest);
   const { since, until } = window;
 

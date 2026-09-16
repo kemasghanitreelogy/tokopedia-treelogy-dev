@@ -524,9 +524,33 @@ export async function voidInvoice(order, entry, { dryRun = true, deadlineAt = nu
   // the list, and a real payment vanishes with nothing to say it ever existed; a bank
   // reconciliation months later is what would find it. postOrder was hardened the same way
   // when it started asking Number.isFinite before believing a figure Jurnal sent back.
-  const received = Number(invoice.payment_received_amount);
-  const settled = invoice.has_payments === true || received > 0 || invoice.deletable === false;
-  const answered = invoice.has_payments === false || Number.isFinite(received) || invoice.deletable === true;
+  // Absent is not zero. `payment_received_amount || 0` made a response that never
+  // mentioned payments look like one reporting none, which is the same mistake in a
+  // different place: absence of evidence read as evidence of absence.
+  const stated = invoice.payment_received_amount;
+  const received = stated === undefined || stated === null || stated === ''
+    ? null
+    : Math.round(Number(stated));
+  // has_payments is true on every invoice this system writes, so it cannot mean anything.
+  //
+  // A marketplace order is settled by the platform before it ships, so its invoice is
+  // created with a deposit - and Jurnal records that deposit as a payment. Reading
+  // has_payments as "somebody has paid, do not touch this" therefore blocked the
+  // cancellation of every marketplace sale there has ever been, which is the normal path
+  // and not an edge case. Two cancelled TikTok orders sat in the books as revenue for a
+  // day with a needs_review reading "sudah menerima pembayaran Rp0" - a sentence that
+  // states its own contradiction.
+  //
+  // What actually has to be protected is a payment somebody recorded separately, which has
+  // a counterpart in the bank and would be erased with the invoice. That is
+  // payment_received_amount, and it is zero here. Jurnal's own `deletable` is the second
+  // authority: when it says false, something it knows about is in the way.
+  const settled = (received ?? 0) > 0 || invoice.deletable === false;
+  // Evidence that Jurnal answered the question rather than omitting the fields. Any one of
+  // the three is enough; none of them is not permission.
+  const answered = invoice.has_payments === false
+    || Number.isFinite(received)
+    || typeof invoice.deletable === 'boolean';
   if (settled || !answered) {
     return {
       ...base, outcome: 'needs_review',

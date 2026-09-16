@@ -1231,3 +1231,55 @@ test('a cancellation still in progress leaves no mark, so the sweep looks again'
   // Nothing recorded, so the same order is still a candidate when the status goes final.
   assert.deepEqual(undoneCandidates([asked], ledger).map((o) => o.id), ['A']);
 });
+
+/* ------------------------- cancelling an invoice the platform already settled */
+
+test('our own deposit is not a payment that blocks a cancellation', async () => {
+  // Every invoice this system writes for a marketplace order carries a deposit, because
+  // the platform settles before it ships - and Jurnal records that deposit as a payment.
+  // Reading has_payments as "somebody has paid, do not touch this" blocked the
+  // cancellation of every marketplace sale there has ever been. Two cancelled TikTok
+  // orders sat in the books as revenue with a needs_review reading "sudah menerima
+  // pembayaran Rp0", a sentence that states its own contradiction.
+  const { voidInvoice } = await import('../src/mekari/sync.js');
+
+  const cancelled = { ...order(), channel: 'tiktok_shop', id: '586080163411035828', stage: 'cancelled', status: 'CANCELLED' };
+  const entry = { invoice_id: 1971676342, total: 845_000 };
+  const invoice = (extra) => ({
+    id: 1971676342, transaction_no: '11724', original_amount: '845000.0',
+    has_payments: true, deletable: true, payment_received_amount: '0.0', ...extra,
+  });
+
+  // The live shape, exactly: our deposit present, nothing received separately.
+  const deleted = [];
+  const ours = await voidInvoice(cancelled, entry, {
+    dryRun: false,
+    call: async ({ method, path }) => {
+      if (method === 'DELETE') { deleted.push(path); return {}; }
+      return { sales_invoice: invoice() };
+    },
+  });
+  assert.equal(ours.outcome, 'voided', 'deposit kita sendiri tidak boleh menahan pembatalan');
+  assert.equal(deleted.length, 1);
+
+  // A payment recorded separately has a counterpart in the bank and must not be erased.
+  const paid = await voidInvoice(cancelled, entry, {
+    dryRun: false,
+    call: async () => ({ sales_invoice: invoice({ payment_received_amount: '845000.0' }) }),
+  });
+  assert.equal(paid.outcome, 'needs_review');
+
+  // And Jurnal's own refusal is still authoritative.
+  const locked = await voidInvoice(cancelled, entry, {
+    dryRun: false,
+    call: async () => ({ sales_invoice: invoice({ deletable: false }) }),
+  });
+  assert.equal(locked.outcome, 'needs_review');
+
+  // A response that answers neither question is not permission.
+  const silent = await voidInvoice(cancelled, entry, {
+    dryRun: false,
+    call: async () => ({ sales_invoice: { id: 1, transaction_no: '1' } }),
+  });
+  assert.equal(silent.outcome, 'needs_review');
+});

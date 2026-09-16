@@ -63,6 +63,7 @@
     "mekari:dedupe": "node bin/tts.mjs mekari:dedupe",
     "mekari:reconcile": "node bin/tts.mjs mekari:reconcile",
     "mekari:settle": "node bin/tts.mjs mekari:settle",
+    "mekari:recap": "node bin/tts.mjs mekari:recap",
     "mekari:rebuild": "node bin/tts.mjs mekari:rebuild",
     "history:pull": "node bin/tts.mjs history:pull",
     "db:backfill": "node bin/tts.mjs db:backfill",

@@ -26,6 +26,7 @@ import { restate } from './mekari/restate.js';
 import { removeDuplicates } from './mekari/dedupe.js';
 import { reconcileLedger } from './mekari/reconcile.js';
 import { settleOpenInvoices } from './mekari/settle.js';
+import { dailyRecap } from './mekari/recap.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -70,6 +71,7 @@ Usage:
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
+  npm run mekari:recap        Bandingkan pesanan vs faktur per hari (rekap harian finance)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -1129,6 +1131,35 @@ async function cmdMekariSettle(config, args = []) {
   return r.failures.length > 0 ? 1 : 0;
 }
 
+/**
+ * The reconciliation finance actually does, done by the machine instead.
+ *
+ * Orders per day beside invoices per day, with every gap named. The alternative - which
+ * is what happened for weeks - is comparing two screenshots and guessing.
+ */
+async function cmdMekariRecap(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length) || '2026-09-01';
+  const r = await dailyRecap({ from });
+
+  console.log(`\n  ${'HARI'.padEnd(12)}${'PESANAN'.padStart(8)}${'FAKTUR'.padStart(8)}${'NILAI PESANAN'.padStart(17)}${'NILAI FAKTUR'.padStart(17)}   KETERANGAN`);
+  for (const row of r.rows) {
+    const cocok = row.difference === 0 && row.orders === row.invoices;
+    const note = cocok ? ok('cocok')
+      : row.missing > 0 ? fail(`${row.missing} belum difakturkan (${rupiah(row.missingValue)})`)
+      : warn(`selisih ${rupiah(row.difference)}`);
+    console.log(`  ${row.day.padEnd(12)}${String(row.orders).padStart(8)}${String(row.invoices).padStart(8)}` +
+      `${rupiah(row.orderValue).padStart(17)}${rupiah(row.invoiceValue).padStart(17)}   ${note}`);
+  }
+
+  console.log(`\n  ${r.matched}/${r.rows.length} hari cocok persis`);
+  console.log(`  nilai pesanan ${rupiah(r.orderValue)}  ·  nilai faktur ${rupiah(r.invoiceValue)}  ·  selisih ${rupiah(r.invoiceValue - r.orderValue)}`);
+  if (r.missing > 0) console.log(`  ${fail(`${r.missing} pesanan belum difakturkan senilai ${rupiah(r.missingValue)}`)}`);
+  else console.log(`  ${ok('setiap pesanan yang layak sudah punya faktur')}`);
+  console.log(`  ${info(`${r.requests} permintaan ke Jurnal${r.cached ? ' (pakai hasil pindai tersimpan)' : ''}`)}\n`);
+  return r.missing > 0 ? 1 : 0;
+}
+
 async function cmdMekariRebuild(config, args = []) {
   const result = await rebuildLedgerFromJurnal({ dryRun: !args.includes('--yes') });
   console.log(`\n  faktur TRL di Jurnal: ${result.inJurnal} (${result.pages} halaman)  ·  di ledger sekarang: ${result.before}  ·  akan ditambahkan: ${result.added}  ·  akan dikoreksi: ${result.corrected}`);
@@ -1295,6 +1326,7 @@ const COMMANDS = {
   'mekari:dedupe': cmdMekariDedupe,
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
+  'mekari:recap': cmdMekariRecap,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

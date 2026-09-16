@@ -652,10 +652,18 @@ function describeApiError(error) {
 
 /** Orders for the Mekari commands, over whatever window was asked for. */
 async function mekariOrders(args) {
+  // A calendar date beats a rolling preset for anything that touches the books.
+  //
+  // `--30d` means "thirty times twenty-four hours from this instant", so a run at 09:00
+  // silently excludes everything that happened before 09:00 on the first day of its own
+  // window. Invoicing a month that way leaves a sliver uninvoiced every time, and the
+  // sliver moves, which is why it took a day-by-day recap to see it at all.
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length);
+  const to = args.find((a) => a.startsWith('--to='))?.slice('--to='.length);
   const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
   // Tracking numbers cost an extra Shopee call per batch, and they are worth it: the
   // invoice carries the waybill, which is how a delivery dispute gets settled later.
-  const range = resolveRange({ preset });
+  const range = from ? resolveRange({ from, to: to ?? wibDate(Math.floor(Date.now() / 1000)) }) : resolveRange({ preset });
 
   // A cap that silently trims is how sales go missing from the books.
   //

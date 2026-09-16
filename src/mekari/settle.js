@@ -1,6 +1,6 @@
 import { mekari } from './client.js';
 import { sourceOf, poolingFor } from './sources.js';
-import { accountMap } from './accounts.js';
+import { postingAccounts } from './accounts.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { invoiceCatalogue, forgetCatalogue } from './catalogue.js';
 
@@ -103,7 +103,7 @@ export async function openInvoices({ since = null, deadlineAt = null } = {}) {
  * @param {{since?: string|null, dryRun?: boolean, onProgress?: Function}} options
  */
 export async function settleOpenInvoices({ since = null, dryRun = true, onProgress = () => {} } = {}) {
-  const [open, accounts] = await Promise.all([openInvoices({ since }), accountMap()]);
+  const [open, accounts] = await Promise.all([openInvoices({ since }), postingAccounts()]);
   // Settled into the channel's own pooling account, never one account for all of them:
   // a single deposit account is what put every marketplace sale into BCA weeks before the
   // platform paid out. An invoice whose channel has no pooling account is left alone

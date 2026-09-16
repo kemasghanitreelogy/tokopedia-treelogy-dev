@@ -3,7 +3,7 @@ import { loadSyncLedger, saveSyncLedger, forgetSyncLedgerEntries } from './sync.
 import { buildInvoice, verifyInvoice, customIdFor, InvoiceError } from './invoice.js';
 import { ordersInRange } from '../db/orders.js';
 import { isAutoPaid, receivableFor } from './sources.js';
-import { accountMap } from './accounts.js';
+import { postingAccounts } from './accounts.js';
 import { alignReceivables } from './receivables.js';
 import { customerFor } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -58,7 +58,7 @@ export async function planRestatement({ from }) {
   // The chart of accounts decides where a marketplace settlement is deposited, so a
   // restatement that could not read it would rewrite every paid invoice as an open one.
   const [ledger, orders, accounts] = await Promise.all([
-    loadSyncLedger(), ordersInRange({ since, until }), accountMap(),
+    loadSyncLedger(), ordersInRange({ since, until }), postingAccounts(),
   ]);
 
   const byCustomId = new Map(orders.map((order) => [customIdFor(order), order]));

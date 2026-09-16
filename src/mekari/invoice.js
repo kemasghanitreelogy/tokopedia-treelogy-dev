@@ -184,7 +184,7 @@ export function saleValue(order) {
 
 /**
  * @param {{order: object, accounts?: Record<string, {name: string}>|null}} input
- *        `accounts` is the chart of accounts by number, from accountMap(). Without it the
+ *        `accounts` is the chart of accounts by number, from postingAccounts(). Without it the
  *        invoice is raised open - which is what happens on a box that cannot reach Jurnal's
  *        account list, and is the safe way round: an open invoice gets chased, an invoice
  *        wrongly marked paid never does.

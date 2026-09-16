@@ -1,5 +1,5 @@
 import { mekari } from './client.js';
-import { accountMap } from './accounts.js';
+import { postingAccounts } from './accounts.js';
 import { invoiceCatalogue, forgetCatalogue } from './catalogue.js';
 import { orderOfCustomId } from './settle.js';
 import { poolingFor } from './sources.js';
@@ -83,7 +83,7 @@ export async function planRepool({ deadlineAt = null, onProgress = () => {} } = 
   const [{ payments, expected, complete }, catalogue, accounts] = await Promise.all([
     allPayments({ deadlineAt, onProgress }),
     invoiceCatalogue({ deadlineAt }),
-    accountMap(),
+    postingAccounts(),
   ]);
 
   // Invoice number to the custom_id we wrote, which is the only thing that says which

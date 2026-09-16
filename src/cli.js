@@ -21,7 +21,7 @@ import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './le
 import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
-import { accountMap, requiredAccounts, AccountMissingError } from './mekari/accounts.js';
+import { postingAccounts, requiredAccounts, AccountMissingError } from './mekari/accounts.js';
 import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
 import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
 import { restate } from './mekari/restate.js';
@@ -711,7 +711,7 @@ async function mekariOrders(args) {
  * marketplaces had paid out. The source table names a pooling account per channel and this
  * resolves their names; accountMap caches for a day, so it costs nothing to ask.
  */
-const chartArg = () => accountMap();
+const chartArg = () => postingAccounts();
 
 function printSyncResult(result) {
   const failed = result.results.filter((r) => r.status === 'failed' || r.status === 'mismatch');

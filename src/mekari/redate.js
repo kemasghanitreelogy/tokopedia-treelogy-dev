@@ -2,7 +2,7 @@ import { mekari } from './client.js';
 import { invoiceCatalogue, ours, forgetCatalogue } from './catalogue.js';
 import { ordersInRange } from '../db/orders.js';
 import { buildInvoice, customIdFor, jurnalDate } from './invoice.js';
-import { accountMap } from './accounts.js';
+import { postingAccounts } from './accounts.js';
 import { termDaysFor } from './sources.js';
 import { POSTABLE_STAGES } from './sync.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -133,7 +133,7 @@ export async function redateInvoices({ from, dryRun = true, accounts = null, onP
   // A rebuild without the chart of accounts would carry no deposit, and a paid invoice
   // whose replacement has none is refused by redatePayload - so the whole run would report
   // every marketplace invoice as unfixable. Read it once, here.
-  const chart = accounts ?? await accountMap();
+  const chart = accounts ?? await postingAccounts();
 
   let moved = 0;
   const failures = [];

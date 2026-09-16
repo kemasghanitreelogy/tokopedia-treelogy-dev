@@ -16,7 +16,7 @@ import { planSync, applySync, applyPrice, writeAudit } from '../src/stock-sync.j
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
-import { accountMap } from '../src/mekari/accounts.js';
+import { postingAccounts } from '../src/mekari/accounts.js';
 
 /**
  * How the screen describes where a settled marketplace sale lands.
@@ -258,7 +258,7 @@ async function handleWrite(form, ip) {
     const live = await collectOrders({ range, tracking: false });
     const { orders } = live;
     await rememberOrders(live, range);
-    const accounts = await accountMap();
+    const accounts = await postingAccounts();
 
     const ledgerNow = await loadSyncLedger();
     await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
@@ -317,7 +317,7 @@ async function handleWrite(form, ip) {
 
     // A typed-in sale is never auto-paid, so the chart only matters for the shape of the
     // payload - but it is read all the same, so manual and marketplace go through one path.
-    const accounts = await accountMap();
+    const accounts = await postingAccounts();
     const built = buildInvoice({ order, accounts });
     verifyInvoice(built, built.expectedTotal);
 
@@ -623,7 +623,7 @@ export default async function handler(req, res) {
         // Not cached: its whole point is to say what happened in the last few minutes.
         loadHeartbeat(),
       ]);
-      const overview = syncOverview({ orders: data.orders, ledger, accounts: await accountMap().catch(() => null) });
+      const overview = syncOverview({ orders: data.orders, ledger, accounts: await postingAccounts().catch(() => null) });
       console.log(`dashboard/jurnal: ${overview.synced} synced, ${overview.queued} queued, ${overview.broken} broken`);
       send(200, renderJurnal({
         ...data, overview, csrf, flash, depositTo: POOLED_LABEL, heartbeat, paging, baseQuery,

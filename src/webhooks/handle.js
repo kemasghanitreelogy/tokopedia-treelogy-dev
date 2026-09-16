@@ -1,7 +1,7 @@
 import { fetchOrdersByIds } from '../omni.js';
 import { fetchOrderByGid } from '../shopify/shop.js';
 import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES, voidInvoice } from '../mekari/sync.js';
-import { accountMap } from '../mekari/accounts.js';
+import { postingAccounts } from '../mekari/accounts.js';
 import { customIdFor } from '../mekari/invoice.js';
 import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
@@ -31,7 +31,7 @@ export const liveEnabled = () => process.env.MEKARI_SYNC_LIVE === '1';
  * Read through accountMap's own day-long cache in the state store, so a push costs no
  * extra request for a fact that changes twice a year.
  */
-export const chartOfAccounts = () => accountMap().catch(() => null);
+export const chartOfAccounts = () => postingAccounts().catch(() => null);
 
 /**
  * Re-read the one order the push named.

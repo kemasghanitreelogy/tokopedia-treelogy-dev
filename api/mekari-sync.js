@@ -1,7 +1,7 @@
 import { collectOrders } from '../src/omni.js';
 import { rememberOrders } from '../src/orders-source.js';
 import { runSync, loadSyncLedger } from '../src/mekari/sync.js';
-import { accountMap } from '../src/mekari/accounts.js';
+import { postingAccounts } from '../src/mekari/accounts.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
@@ -81,7 +81,7 @@ export default async function handler(req, res) {
   // From the source table only. Which account a sale is booked as paid into is an
   // accounting decision - one pooling account per channel - not something a caller with a
   // token gets to change per request. The chart is read to turn those numbers into names.
-  const accounts = await accountMap();
+  const accounts = await postingAccounts();
 
   // Live posting needs the flag AND the absence of the read-only brake. Asking for
   // `dry=0` without the flag is answered with a dry run, never with a surprise write.

@@ -111,3 +111,17 @@ export async function requiredAccounts(options = {}) {
   if (missing.length > 0) throw new AccountMissingError(missing);
   return Object.fromEntries(wanted.map((n) => [n, map[n]]));
 }
+
+/**
+ * The accounts a posting run needs, and the only map that should ever reach buildInvoice.
+ *
+ * accountMap alone is not enough, and the difference is not academic. Its cache lasts a
+ * day, so for the whole day after the pooling accounts were created in Jurnal it kept
+ * answering that 1111, 1112 and 1113 did not exist - and buildInvoice reads a missing
+ * pooling account as "raise this invoice open". Every marketplace sale posted in that
+ * window would have gone into the books unpaid, silently, with nothing to say why.
+ *
+ * This forces one fresh read the moment an account is missing, which is exactly the case a
+ * cache gets wrong, and refuses if it is still missing afterwards.
+ */
+export const postingAccounts = (options = {}) => requiredAccounts(options);

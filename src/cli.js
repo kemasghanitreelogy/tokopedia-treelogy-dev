@@ -20,7 +20,8 @@ import { readCatalog } from './inventory.js';
 import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './ledger.js';
 import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
-import { ensureCustomers, ensureProducts, ensureReady, findDepositAccount } from './mekari/setup.js';
+import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
+import { accountMap, requiredAccounts, AccountMissingError } from './mekari/accounts.js';
 import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
 import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
 import { restate } from './mekari/restate.js';
@@ -29,6 +30,7 @@ import { reconcileLedger } from './mekari/reconcile.js';
 import { settleOpenInvoices } from './mekari/settle.js';
 import { dailyRecap } from './mekari/recap.js';
 import { redateInvoices } from './mekari/redate.js';
+import { repoolPayments } from './mekari/repool.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
 import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
@@ -75,6 +77,7 @@ Usage:
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
   npm run mekari:recap        Bandingkan pesanan vs faktur per hari (rekap harian finance)
   npm run mekari:redate       Perbaiki tanggal faktur agar ikut jam platformnya (butuh --yes)
+  npm run mekari:repool       Pindahkan setoran dari bank ke akun penampung kanal (butuh --yes)
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
@@ -700,10 +703,15 @@ async function mekariOrders(args) {
   return orders;
 }
 
-const depositArg = (args) =>
-  args.find((a) => a.startsWith('--deposit='))?.slice('--deposit='.length)
-  ?? process.env.MEKARI_DEPOSIT_ACCOUNT
-  ?? null;
+/**
+ * The chart of accounts, which decides where each channel's settlement is deposited.
+ *
+ * There is no --deposit flag any more and no MEKARI_DEPOSIT_ACCOUNT: one account for every
+ * channel is exactly what put the whole month's online turnover into BCA before the
+ * marketplaces had paid out. The source table names a pooling account per channel and this
+ * resolves their names; accountMap caches for a day, so it costs nothing to ask.
+ */
+const chartArg = () => accountMap();
 
 function printSyncResult(result) {
   const failed = result.results.filter((r) => r.status === 'failed' || r.status === 'mismatch');
@@ -734,11 +742,17 @@ async function cmdMekariSetup(config, args = []) {
   // holds, so anything already there comes back as a 409 and is counted as existing.
   console.log(`  ${'(yang ternyata sudah ada akan dilewati, bukan digandakan)'}\n`);
 
-  const deposit = depositArg(args);
-  if (deposit) {
-    const account = await findDepositAccount(deposit);
-    console.log(account ? ok(`akun deposit "${deposit}" ditemukan`) : fail(`akun deposit "${deposit}" tidak ada di Jurnal`));
-    if (!account) return 1;
+  // Every account the books name - the receivables, the pooling accounts, the shipping
+  // account - checked in one read before anything is written. A missing pooling account is
+  // the failure worth catching here: the invoice would still post, silently open, and the
+  // money would simply never appear anywhere.
+  try {
+    const held = await requiredAccounts();
+    console.log(`  ${ok(`akun terpakai lengkap: ${Object.keys(held).join(', ')}`)}\n`);
+  } catch (error) {
+    if (!(error instanceof AccountMissingError)) throw error;
+    console.log(`  ${fail(error.message)}\n`);
+    return 1;
   }
 
   const todo = preview.customers.missing.length + preview.products.missing.length;
@@ -755,7 +769,7 @@ async function cmdMekariPlan(config, args = []) {
   if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
 
   const orders = await mekariOrders(args);
-  const result = await runSync({ orders, depositTo: depositArg(args), dryRun: true, limit: 1000 });
+  const result = await runSync({ orders, accounts: await chartArg(), dryRun: true, limit: 1000 });
   const code = printSyncResult(result);
   console.log(info('dry-run: tidak ada yang ditulis. Kirim dengan `npm run mekari:sync -- --yes`') + '\n');
   return code;
@@ -781,9 +795,9 @@ async function cmdMekariSync(config, args = []) {
   if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
 
   const orders = await mekariOrders(args);
-  const depositTo = depositArg(args);
+  const accounts = await chartArg();
 
-  const preview = await runSync({ orders, depositTo, dryRun: true, limit: 1000 });
+  const preview = await runSync({ orders, accounts, dryRun: true, limit: 1000 });
   printSyncResult(preview);
 
   if (preview.considered === 0) { console.log(`${ok('semua pesanan sudah ada di Jurnal')}\n`); return 0; }
@@ -811,7 +825,7 @@ async function cmdMekariSync(config, args = []) {
     await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
 
     const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
-    const result = await runSync({ orders, depositTo, dryRun: false, limit });
+    const result = await runSync({ orders, accounts, dryRun: false, limit });
     if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
     if (result.quotaExhausted) return reportQuotaExhausted();
     await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
@@ -1124,7 +1138,7 @@ async function cmdMekariSettle(config, args = []) {
     onProgress: (p) => { if (p.paid % 10 === 0) console.log(`  dilunasi ${p.paid}/${p.of}`); },
   });
 
-  console.log(`\n  ${r.open} faktur masih terbuka  ·  akun tujuan ${r.deposit}  ·  metode ${r.method?.name ?? '?'}\n`);
+  console.log(`\n  ${r.open} faktur masih terbuka  ·  disetor ke akun penampung kanalnya  ·  metode ${r.method?.name ?? '?'}\n`);
   console.log(`  ${r.settle.length} akan dilunasi (kanal online, uangnya sudah di platform):`);
   for (const i of r.settle.slice(0, 12)) console.log(`    #${i.no}  ${i.date}  ${rupiah(i.remaining).padStart(14)}  ${i.channel}`);
   if (r.settle.length > 12) console.log(`    ...dan ${r.settle.length - 12} lagi`);
@@ -1210,6 +1224,44 @@ async function cmdMekariRedate(config, args = []) {
   if (r.failures.length > 0) {
     console.log(`  ${fail(`${r.failures.length} gagal`)}`);
     for (const f of r.failures.slice(0, 5)) console.log(`    #${f.no}: ${f.error.slice(0, 80)}`);
+  }
+  console.log('');
+  return r.failures.length > 0 ? 1 : 0;
+}
+
+/**
+ * Move settled marketplace sales out of the bank and into their channel's pooling account.
+ *
+ * Every payment this system wrote went into one account, and that account was the bank - so
+ * the books held the cash from the moment the buyer paid, while the marketplace was still
+ * holding it. This is the correction; sources.js records why the pooling account is in Cash
+ * & Bank rather than the channel's A/R, which is what Jurnal refuses.
+ */
+async function cmdMekariRepool(config, args = []) {
+  if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
+  const dryRun = !args.includes('--yes');
+
+  const r = await repoolPayments({
+    dryRun,
+    onProgress: (p) => { if (p.moved % 25 === 0) console.log(`  dipindah ${p.moved}/${p.of}`); },
+  });
+
+  console.log(`\n  ${r.checked} pembayaran diperiksa  ·  ${r.wrong.length} masih di akun yang salah\n`);
+  const per = {};
+  for (const w of r.wrong) per[w.to] = { n: (per[w.to]?.n ?? 0) + 1, rp: (per[w.to]?.rp ?? 0) + w.amount };
+  for (const [to, v] of Object.entries(per)) {
+    console.log(`  ${to.padEnd(32)}${String(v.n).padStart(5)} pembayaran  ${rupiah(v.rp).padStart(16)}`);
+  }
+  if (r.unknown.length > 0) {
+    console.log(`\n  ${warn(`${r.unknown.length} dilewati karena tidak jelas kanalnya`)}`);
+    for (const u of r.unknown.slice(0, 5)) console.log(`    #${u.no}: ${u.reason}`);
+  }
+
+  if (dryRun) { console.log(`\n  ${info('dry-run: belum ada yang diubah. Ulangi dengan --yes')}\n`); return 0; }
+  console.log(`\n  ${ok(`${r.moved} pembayaran dipindah ke akun penampung kanalnya`)}`);
+  if (r.failures.length > 0) {
+    console.log(`  ${fail(`${r.failures.length} gagal`)}`);
+    for (const f of r.failures.slice(0, 5)) console.log(`    #${f.no}: ${f.error.slice(0, 90)}`);
   }
   console.log('');
   return r.failures.length > 0 ? 1 : 0;
@@ -1429,6 +1481,7 @@ const COMMANDS = {
   'mekari:settle': cmdMekariSettle,
   'mekari:recap': cmdMekariRecap,
   'mekari:redate': cmdMekariRedate,
+  'mekari:repool': cmdMekariRepool,
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,

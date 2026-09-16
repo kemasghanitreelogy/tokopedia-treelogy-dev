@@ -8,6 +8,19 @@ import {
 } from '../src/mekari/invoice.js';
 import { postable, postOrder, POSTABLE_STAGES } from '../src/mekari/sync.js';
 
+/**
+ * The three pooling accounts, as accountMap hands them over.
+ *
+ * Shopee's money waits in 1111 and the website's in 1113, so a test that used one account
+ * for everything could not catch an invoice settled into another channel's account - which
+ * is the whole reason the deposit stopped being a single environment variable.
+ */
+const CHART = {
+  1111: { id: 11, number: '1111', name: 'Pooling Account for Shopee' },
+  1112: { id: 12, number: '1112', name: 'Pooling Account for Tokopedia' },
+  1113: { id: 13, number: '1113', name: 'Pooling Account for Website' },
+};
+
 const order = (over = {}) => ({
   channel: 'shopee',
   id: '260911QF5PA82R',
@@ -80,9 +93,9 @@ test('a seller-funded discount reduces the line, quantity multiplies it', () => 
 });
 
 test('deposit_to marks the invoice paid for the exact total', () => {
-  const built = buildInvoice({ order: order({ finance: { lines: [{ sku: 'OMC-90-001', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 9_000 } }), depositTo: 'Cash' });
+  const built = buildInvoice({ order: order({ finance: { lines: [{ sku: 'OMC-90-001', qty: 2, unitPrice: 50_000, unitDiscount: 0 }], shipping: 9_000 } }), accounts: CHART });
   assert.equal(built.sales_invoice.deposit, 109_000);
-  assert.equal(built.sales_invoice.deposit_to_name, 'Cash');
+  assert.equal(built.sales_invoice.deposit_to_name, 'Pooling Account for Shopee');
   assert.equal(verifyInvoice(built, built.expectedTotal), 109_000);
 });
 
@@ -93,7 +106,7 @@ test('verification rejects a total that does not add up', () => {
 });
 
 test('verification rejects a deposit that disagrees with the total', () => {
-  const built = buildInvoice({ order: order(), depositTo: 'Cash' });
+  const built = buildInvoice({ order: order(), accounts: CHART });
   built.sales_invoice.deposit = 1;
   assert.throws(() => verifyInvoice(built, built.expectedTotal), InvoiceError);
 });
@@ -135,7 +148,7 @@ test('only paid, uncancelled, unsynced orders are queued', () => {
 });
 
 test('a dry run builds the payload and posts nothing', async () => {
-  const result = await postOrder(order(), { dryRun: true, depositTo: 'Cash' });
+  const result = await postOrder(order(), { dryRun: true, accounts: CHART });
   assert.equal(result.status, 'dry-run');
   assert.equal(result.total, 505_000);
   assert.equal(result.payload.sales_invoice.custom_id, 'TRL-shopee-260911QF5PA82R');
@@ -304,7 +317,7 @@ test('a typed transaction becomes the same order shape as an online one', () => 
   assert.equal(order.total, 300_000);
   assert.equal(order.finance.lines[0].name, 'Moringa Powder - 45 gram', 'nama diambil dari data master');
 
-  const built = buildInvoice({ order, depositTo: 'Cash' });
+  const built = buildInvoice({ order, accounts: CHART });
   assert.equal(verifyInvoice(built, built.expectedTotal), 300_000);
   assert.equal(built.sales_invoice.reference_no, 'CS-260911-001', 'kode tidak boleh diberi prefiks dua kali');
   assert.equal(built.sales_invoice.custom_id, 'TRL-manual-CS-260911-001');
@@ -671,14 +684,14 @@ test('an invoice carries its source tag, and refuses to exist without one', () =
 });
 
 test('only a platform that already took the money produces a paid invoice', () => {
-  const paid = buildInvoice({ order: order(), depositTo: 'BCA' }).sales_invoice;
-  assert.equal(paid.deposit_to_name, 'BCA');
+  const paid = buildInvoice({ order: order(), accounts: CHART }).sales_invoice;
+  assert.equal(paid.deposit_to_name, 'Pooling Account for Shopee');
 
   // A consignment shop pays later, by transfer. Marking it paid on the day it was raised
   // would empty the receivable that exists precisely so somebody can chase it.
   const manual = buildInvoice({
     order: { ...order(), channel: 'manual', id: 'CS-260901-001' },
-    depositTo: 'BCA',
+    accounts: CHART,
   }).sales_invoice;
   assert.equal(manual.deposit_to_name, undefined);
   assert.equal(manual.deposit, undefined);

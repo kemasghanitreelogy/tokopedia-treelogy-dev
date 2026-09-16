@@ -16,6 +16,16 @@ import { planSync, applySync, applyPrice, writeAudit } from '../src/stock-sync.j
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
+import { accountMap } from '../src/mekari/accounts.js';
+
+/**
+ * How the screen describes where a settled marketplace sale lands.
+ *
+ * Not an account name any more: each channel has its own pooling account, so there is no
+ * single one to name. The detail belongs in Jurnal; what the operator needs here is that
+ * it is not the bank.
+ */
+const POOLED_LABEL = 'akun penampung per kanal';
 import { buildManualOrder, suggestCode } from '../src/mekari/manual.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
@@ -247,13 +257,13 @@ async function handleWrite(form, ip) {
     const live = await collectOrders({ range, tracking: false });
     const { orders } = live;
     await rememberOrders(live, range);
-    const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
+    const accounts = await accountMap();
 
     const ledgerNow = await loadSyncLedger();
     await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
     // Sized to Jurnal's quota, like the sweep; whatever does not fit is picked up by the
     // next scheduled sweep, and the message says so rather than implying it was all sent.
-    const result = await runSync({ orders, depositTo, dryRun: false, limit: 15, deadlineMs: 80_000 });
+    const result = await runSync({ orders, accounts, dryRun: false, limit: 15, deadlineMs: 80_000 });
     invalidate('jurnal');
 
     if (result.skipped) return { view: 'jurnal', message: 'Sinkronisasi lain sedang berjalan' };
@@ -296,8 +306,10 @@ async function handleWrite(form, ip) {
       lines,
     });
 
-    const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
-    const built = buildInvoice({ order, depositTo });
+    // A typed-in sale is never auto-paid, so the chart only matters for the shape of the
+    // payload - but it is read all the same, so manual and marketplace go through one path.
+    const accounts = await accountMap();
+    const built = buildInvoice({ order, accounts });
     verifyInvoice(built, built.expectedTotal);
 
     // A disagreement between what the operator saw and what is about to be booked is a
@@ -311,7 +323,7 @@ async function handleWrite(form, ip) {
       throw new Error(`${order.id} valid senilai ${built.expectedTotal}, tapi MEKARI_SYNC_LIVE belum disetel`);
     }
 
-    const result = await postManual({ order, depositTo, dryRun: false });
+    const result = await postManual({ order, accounts, dryRun: false });
     if (result.status === 'failed') {
       await notifySyncFailures({ source: 'transaksi manual', results: [result] });
       throw new Error(`${order.id}: ${result.error}`);
@@ -522,7 +534,7 @@ export default async function handler(req, res) {
         source, code: suggestCode(source, used), today: wibDate(Math.floor(Date.now() / 1000)),
         contacts, existingCodes: used, images: await imagesByKey(),
         live: process.env.MEKARI_SYNC_LIVE === '1',
-        depositTo: process.env.MEKARI_DEPOSIT_ACCOUNT || null,
+        depositTo: POOLED_LABEL,
       }));
       return;
     }
@@ -598,11 +610,10 @@ export default async function handler(req, res) {
         // Not cached: its whole point is to say what happened in the last few minutes.
         loadHeartbeat(),
       ]);
-      const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
-      const overview = syncOverview({ orders: data.orders, ledger, depositTo });
+      const overview = syncOverview({ orders: data.orders, ledger, accounts: await accountMap().catch(() => null) });
       console.log(`dashboard/jurnal: ${overview.synced} synced, ${overview.queued} queued, ${overview.broken} broken`);
       send(200, renderJurnal({
-        ...data, overview, csrf, flash, depositTo, heartbeat, paging, baseQuery,
+        ...data, overview, csrf, flash, depositTo: POOLED_LABEL, heartbeat, paging, baseQuery,
         live: process.env.MEKARI_SYNC_LIVE === '1',
         configured: isMekariConfigured(),
       }));

@@ -8,6 +8,12 @@ import { jurnalDate } from '../src/mekari/invoice.js';
 // correction exists for.
 const AT = Date.parse('2026-09-13T16:30:00Z') / 1000;
 
+const CHART = {
+  1111: { id: 11, number: '1111', name: 'Pooling Account for Shopee' },
+  1112: { id: 12, number: '1112', name: 'Pooling Account for Tokopedia' },
+  1113: { id: 13, number: '1113', name: 'Pooling Account for Website' },
+};
+
 const order = (over = {}) => ({
   channel: 'shopee',
   id: '2609140FJEFCSW',
@@ -34,7 +40,7 @@ const item = (over = {}) => ({
 test('the correction sends the whole invoice, because Jurnal PATCH replaces rather than patches', () => {
   // A body of {transaction_date} alone was refused twenty-two times with "transaction_lines
   // must not be blank" - the replace had emptied the invoice it was meant to move.
-  const { payload } = redatePayload(item(), { depositTo: 'Kas' });
+  const { payload } = redatePayload(item(), { accounts: CHART });
   assert.equal(payload.sales_invoice.transaction_date, '2026-09-14');
   assert.equal(payload.sales_invoice.transaction_lines_attributes.length, 1);
   assert.ok(payload.sales_invoice.due_date);
@@ -42,12 +48,12 @@ test('the correction sends the whole invoice, because Jurnal PATCH replaces rath
 });
 
 test('a paid marketplace invoice keeps its deposit, so the payment moves with the date', () => {
-  const { payload } = redatePayload(item(), { depositTo: 'Kas' });
+  const { payload } = redatePayload(item(), { accounts: CHART });
   assert.equal(payload.sales_invoice.deposit, 505_000);
 });
 
 test('a rebuild that changes the money is refused - a date is not worth rewriting the amount', () => {
-  const { refuse, payload } = redatePayload(item({ total: 480_000 }), { depositTo: 'Kas' });
+  const { refuse, payload } = redatePayload(item({ total: 480_000 }), { accounts: CHART });
   assert.equal(payload, undefined);
   assert.match(refuse, /nilai berubah/);
 });
@@ -57,25 +63,25 @@ test('a settled invoice whose rebuild carries no deposit is refused - replacing 
   // would restate the payment somebody recorded by hand.
   const walkIn = item({ order: order({ channel: 'manual', id: 'DW-0007' }), settled: true,
     customId: 'TRL-manual-DW-0007', should: jurnalDate(AT, 'manual') });
-  const { refuse } = redatePayload(walkIn, { depositTo: 'Kas' });
+  const { refuse } = redatePayload(walkIn, { accounts: CHART });
   assert.match(refuse, /dicatat manual/);
 });
 
 test('an unpaid invoice is moved even though it carries no deposit', () => {
   const walkIn = item({ order: order({ channel: 'manual', id: 'DW-0007' }), settled: false,
     customId: 'TRL-manual-DW-0007', should: jurnalDate(AT, 'manual') });
-  const { payload, refuse } = redatePayload(walkIn, { depositTo: 'Kas' });
+  const { payload, refuse } = redatePayload(walkIn, { accounts: CHART });
   assert.equal(refuse, undefined);
   assert.equal(payload.sales_invoice.deposit, undefined);
 });
 
 test('a rebuild landing on a different day than planned is refused rather than sent', () => {
-  const { refuse } = redatePayload(item({ should: '2026-09-15' }), { depositTo: 'Kas' });
+  const { refuse } = redatePayload(item({ should: '2026-09-15' }), { accounts: CHART });
   assert.match(refuse, /tidak sesuai rencana/);
 });
 
 test('an order that cannot be rebuilt is reported, not thrown', () => {
   const broken = item({ order: order({ finance: { lines: [], shipping: 0 } }) });
-  const { refuse } = redatePayload(broken, { depositTo: 'Kas' });
+  const { refuse } = redatePayload(broken, { accounts: CHART });
   assert.match(refuse, /tidak bisa dibangun ulang/);
 });

@@ -1,6 +1,7 @@
 import { collectOrders } from '../src/omni.js';
 import { rememberOrders } from '../src/orders-source.js';
 import { runSync, loadSyncLedger } from '../src/mekari/sync.js';
+import { accountMap } from '../src/mekari/accounts.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { isReadOnly } from '../src/stock-sync.js';
@@ -77,9 +78,10 @@ export default async function handler(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const days = Math.min(Math.max(Number(url.searchParams.get('days')) || DEFAULT_WINDOW_DAYS, 1), 30);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || MAX_PER_RUN, 1), MAX_PER_RUN);
-  // From the environment only. Which account a sale is booked as paid into is an
-  // accounting decision, not something a caller with a token gets to change per request.
-  const depositTo = process.env.MEKARI_DEPOSIT_ACCOUNT || null;
+  // From the source table only. Which account a sale is booked as paid into is an
+  // accounting decision - one pooling account per channel - not something a caller with a
+  // token gets to change per request. The chart is read to turn those numbers into names.
+  const accounts = await accountMap();
 
   // Live posting needs the flag AND the absence of the read-only brake. Asking for
   // `dry=0` without the flag is answered with a dry run, never with a surprise write.
@@ -116,7 +118,7 @@ export default async function handler(req, res) {
     timings.prepare_ms = elapsed() - timings.collect_ms;
 
     const postBudget = Math.max(0, remaining() - RECOVERY_NEEDS_MS);
-    const result = await runSync({ orders, depositTo, dryRun, limit, deadlineMs: postBudget });
+    const result = await runSync({ orders, accounts, dryRun, limit, deadlineMs: postBudget });
     timings.post_ms = elapsed() - timings.collect_ms - timings.prepare_ms;
 
     // Shopee is the one platform that keeps a queue of pushes it could not deliver, and

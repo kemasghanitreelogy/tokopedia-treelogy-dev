@@ -1,6 +1,6 @@
 import { mekari } from './client.js';
 import { readDoc, writeDoc } from '../store/index.js';
-import { RECEIVABLE_NUMBERS, SHIPPING_ACCOUNT_NUMBER } from './sources.js';
+import { RECEIVABLE_NUMBERS, POOLING_NUMBERS, SHIPPING_ACCOUNT_NUMBER } from './sources.js';
 
 /**
  * Account numbers to Jurnal's internal ids, looked up once and then remembered.
@@ -99,7 +99,7 @@ export async function accountMap({ force = false, deadlineAt = null, call } = {}
  * balance and are wrong - which is the failure that takes months to notice.
  */
 export async function requiredAccounts(options = {}) {
-  const wanted = [...RECEIVABLE_NUMBERS, SHIPPING_ACCOUNT_NUMBER];
+  const wanted = [...RECEIVABLE_NUMBERS, ...POOLING_NUMBERS, SHIPPING_ACCOUNT_NUMBER];
   let map = await accountMap(options);
   let missing = wanted.filter((n) => !map[n]);
   // An account created in Jurnal a minute ago is exactly the case a cache gets wrong, so

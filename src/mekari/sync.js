@@ -283,7 +283,7 @@ export function postable(orders, ledger) {
  * question is answered from the ledger and the mapper alone - both of which are the same
  * code the real run uses, so what is shown is what would be posted.
  */
-export function syncOverview({ orders, ledger, depositTo = null }) {
+export function syncOverview({ orders, ledger, accounts = null }) {
   const rows = orders.map((order) => {
     const customId = customIdFor(order);
     const recorded = ledger.orders?.[customId] ?? null;
@@ -305,7 +305,7 @@ export function syncOverview({ orders, ledger, depositTo = null }) {
       return { order, customId, state: 'skipped', total: 0, reason: 'belum dibayar atau dibatalkan' };
     }
     try {
-      const built = buildInvoice({ order, depositTo });
+      const built = buildInvoice({ order, accounts });
       verifyInvoice({ sales_invoice: built.sales_invoice }, built.expectedTotal, order);
       return { order, customId, state: 'queued', total: built.expectedTotal };
     } catch (error) {
@@ -361,13 +361,13 @@ async function postInvoice(payload, { deadlineAt = null } = {}) {
  * Post one order. Returns what happened rather than throwing, so a single bad order
  * cannot stop the rest of the run.
  */
-export async function postOrder(order, { depositTo = null, dryRun = true, deadlineAt = null } = {}) {
+export async function postOrder(order, { accounts = null, dryRun = true, deadlineAt = null } = {}) {
   const customId = customIdFor(order);
   let payload;
   let expectedTotal;
 
   try {
-    const built = buildInvoice({ order, depositTo });
+    const built = buildInvoice({ order, accounts });
     payload = { sales_invoice: built.sales_invoice };
     expectedTotal = built.expectedTotal;
     // Checked against the order before sending: a mapping slip must never reach the books.
@@ -578,7 +578,7 @@ export async function voidInvoice(order, entry, { dryRun = true, deadlineAt = nu
  * The ledger is written after every success rather than at the end: a crash halfway
  * through must not make the next run repost what already landed.
  */
-export async function runSync({ orders, depositTo = null, dryRun = true, limit = 50, lock = !dryRun, deadlineMs = null } = {}) {
+export async function runSync({ orders, accounts = null, dryRun = true, limit = 50, lock = !dryRun, deadlineMs = null } = {}) {
   if (!isMekariConfigured()) throw new MekariError('kredensial Mekari belum diisi');
 
   // A dry run reads only, so it never queues behind a live one.
@@ -588,13 +588,13 @@ export async function runSync({ orders, depositTo = null, dryRun = true, limit =
   }
 
   try {
-    return await runBatch({ orders, depositTo, dryRun, limit, deadlineMs });
+    return await runBatch({ orders, accounts, dryRun, limit, deadlineMs });
   } finally {
     if (held.held) await releaseLock(held.owner);
   }
 }
 
-async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null }) {
+async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) {
   const ledger = await loadSyncLedger();
   // Contacts already settled with Jurnal, so a repeat buyer costs no request at all.
   rememberContacts(ledger.contacts);
@@ -611,7 +611,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     // next run picks up exactly where this one left off. Being killed mid-POST is not
     // free, so leave room rather than racing the platform timeout.
     if (Date.now() > stopAt) { ranOutOfTime = true; break; }
-    const result = await postOrder(order, { depositTo, dryRun, deadlineAt });
+    const result = await postOrder(order, { accounts, dryRun, deadlineAt });
     results.push(result);
     if (result.monthly) {
       // Every further order would fail the same way and spend nothing but time.
@@ -700,9 +700,9 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
  * contacts created at setup. Everything after that is the ordinary path - same mapper,
  * same total check, same idempotency key - because a manual sale is a sale.
  */
-export async function postManual({ order, depositTo = null, dryRun = true }) {
+export async function postManual({ order, accounts = null, dryRun = true }) {
   if (!dryRun && order.customer) await ensureContact(order.customer, { receivableId: await receivableIdFor(order) });
-  const result = await runSync({ orders: [order], depositTo, dryRun, limit: 1, lock: false });
+  const result = await runSync({ orders: [order], accounts, dryRun, limit: 1, lock: false });
   return result.results[0] ?? { status: 'failed', error: 'tidak ada yang diproses' };
 }
 

@@ -72,7 +72,8 @@
     "db:verify": "node bin/tts.mjs db:verify",
     "start": "node server.js",
     "forecast": "node bin/tts.mjs forecast",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "mekari:repool": "node bin/tts.mjs mekari:repool"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",

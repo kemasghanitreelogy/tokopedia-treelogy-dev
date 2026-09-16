@@ -3,6 +3,7 @@ import { loadSyncLedger, saveSyncLedger, forgetSyncLedgerEntries } from './sync.
 import { buildInvoice, verifyInvoice, customIdFor, InvoiceError } from './invoice.js';
 import { ordersInRange } from '../db/orders.js';
 import { isAutoPaid, receivableFor } from './sources.js';
+import { accountMap } from './accounts.js';
 import { alignReceivables } from './receivables.js';
 import { customerFor } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -54,7 +55,11 @@ export async function planRestatement({ from }) {
   if (since === null) throw new Error(`tanggal tidak valid: ${from}`);
   const until = Math.floor(Date.now() / 1000);
 
-  const [ledger, orders] = await Promise.all([loadSyncLedger(), ordersInRange({ since, until })]);
+  // The chart of accounts decides where a marketplace settlement is deposited, so a
+  // restatement that could not read it would rewrite every paid invoice as an open one.
+  const [ledger, orders, accounts] = await Promise.all([
+    loadSyncLedger(), ordersInRange({ since, until }), accountMap(),
+  ]);
 
   const byCustomId = new Map(orders.map((order) => [customIdFor(order), order]));
   const entries = Object.entries(ledger.orders ?? {});
@@ -73,7 +78,7 @@ export async function planRestatement({ from }) {
   const unbuildable = [];
   for (const item of doomed) {
     try {
-      const payload = buildInvoice({ order: item.order, depositTo: depositAccount() });
+      const payload = buildInvoice({ order: item.order, accounts });
       verifyInvoice(payload, payload.expectedTotal, item.order);
       rebuildable.push({ ...item, payload });
     } catch (error) {
@@ -103,8 +108,6 @@ export async function planRestatement({ from }) {
     autoPaid: rebuildable.filter((r) => isAutoPaid(r.order)).length,
   };
 }
-
-const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
 /**
  * Take the old invoices out of Jurnal, and out of the ledger as we go.

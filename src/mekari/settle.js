@@ -1,5 +1,6 @@
 import { mekari } from './client.js';
-import { sourceOf } from './sources.js';
+import { sourceOf, poolingFor } from './sources.js';
+import { accountMap } from './accounts.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { invoiceCatalogue, forgetCatalogue } from './catalogue.js';
 
@@ -50,8 +51,6 @@ async function paymentMethod({ deadlineAt = null } = {}) {
   return methodCache;
 }
 
-const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
-
 /**
  * The order an invoice belongs to, read back out of the custom_id we wrote.
  *
@@ -77,7 +76,7 @@ export const channelOfCustomId = (customId) => orderOfCustomId(customId)?.channe
 /**
  * Every invoice with something still owing on it, through the shared scan.
  *
- * @returns {Promise<Array<{id, no, customId, date, remaining, total, channel, autoPaid}>>}
+ * @returns {Promise<Array<{id, no, customId, date, remaining, total, channel, autoPaid, pooling}>>}
  */
 export async function openInvoices({ since = null, deadlineAt = null } = {}) {
   const { invoices } = await invoiceCatalogue({ since, deadlineAt });
@@ -93,6 +92,9 @@ export async function openInvoices({ since = null, deadlineAt = null } = {}) {
         // website's treatment and being marked paid. An invoice whose key will not parse
         // is never settled either: guessing here invents a payment.
         autoPaid: Boolean(order) && sourceOf(order).autoPaid,
+        // Which pooling account this channel's money waits in. Read from the same order,
+        // so an invoice can never be settled into another channel's account.
+        pooling: order ? poolingFor(order) : null,
       };
     });
 }
@@ -101,14 +103,16 @@ export async function openInvoices({ since = null, deadlineAt = null } = {}) {
  * @param {{since?: string|null, dryRun?: boolean, onProgress?: Function}} options
  */
 export async function settleOpenInvoices({ since = null, dryRun = true, onProgress = () => {} } = {}) {
-  const deposit = depositAccount();
-  if (!deposit) throw new Error('MEKARI_DEPOSIT_ACCOUNT belum disetel - tidak ada akun tujuan pembayaran');
+  const [open, accounts] = await Promise.all([openInvoices({ since }), accountMap()]);
+  // Settled into the channel's own pooling account, never one account for all of them:
+  // a single deposit account is what put every marketplace sale into BCA weeks before the
+  // platform paid out. An invoice whose channel has no pooling account is left alone
+  // rather than settled somewhere arbitrary.
+  const depositFor = (invoice) => accounts?.[invoice.pooling]?.name ?? null;
+  const settle = open.filter((i) => i.autoPaid && depositFor(i));
+  const leave = open.filter((i) => !i.autoPaid || !depositFor(i));
 
-  const open = await openInvoices({ since });
-  const settle = open.filter((i) => i.autoPaid);
-  const leave = open.filter((i) => !i.autoPaid);
-
-  if (dryRun) return { dryRun: true, deposit, open: open.length, settle, leave, paid: 0, failures: [] };
+  if (dryRun) return { dryRun: true, open: open.length, settle, leave, paid: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('catat pembayaran faktur');
 
   const method = await paymentMethod();
@@ -126,7 +130,7 @@ export async function settleOpenInvoices({ since = null, dryRun = true, onProgre
         body: {
           receive_payment: {
             transaction_date: invoice.date,
-            deposit_to_name: deposit,
+            deposit_to_name: depositFor(invoice),
             payment_method_id: method.id,
             payment_method_name: method.name,
             // Keyed so a re-run cannot pay the same invoice twice, the way the invoice
@@ -146,5 +150,5 @@ export async function settleOpenInvoices({ since = null, dryRun = true, onProgre
       failures.push({ no: invoice.no, customId: invoice.customId, error: error.message });
     }
   }
-  return { dryRun: false, deposit, method, open: open.length, settle, leave, paid, failures };
+  return { dryRun: false, method, open: open.length, settle, leave, paid, failures };
 }

@@ -1,6 +1,7 @@
 import { fetchOrdersByIds } from '../omni.js';
 import { fetchOrderByGid } from '../shopify/shop.js';
 import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES, voidInvoice } from '../mekari/sync.js';
+import { accountMap } from '../mekari/accounts.js';
 import { customIdFor } from '../mekari/invoice.js';
 import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
@@ -24,7 +25,13 @@ import { rememberOrder } from '../orders-source.js';
 let customersReady = false;
 
 export const liveEnabled = () => process.env.MEKARI_SYNC_LIVE === '1';
-export const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
+/**
+ * The chart of accounts, which decides where a marketplace settlement is deposited.
+ *
+ * Read through accountMap's own day-long cache in the state store, so a push costs no
+ * extra request for a fact that changes twice a year.
+ */
+export const chartOfAccounts = () => accountMap().catch(() => null);
 
 /**
  * Re-read the one order the push named.
@@ -122,7 +129,7 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   // No lock here. Locking would serialise unrelated pushes for the sake of a race the
   // custom_id probe already closes; the worst a lost race costs is a ledger entry that
   // has to be re-learned from Jurnal.
-  const result = await runSync({ orders: [order], depositTo: depositAccount(), dryRun: false, limit: 1, lock: false });
+  const result = await runSync({ orders: [order], accounts: await chartOfAccounts(), dryRun: false, limit: 1, lock: false });
   const outcome = result.results[0] ?? { status: 'ignored', reason: 'tidak ada yang diproses' };
 
   if (outcome.status === 'created') invalidate('jurnal');

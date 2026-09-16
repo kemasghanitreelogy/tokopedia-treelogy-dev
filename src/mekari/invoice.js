@@ -2,7 +2,7 @@ import { channelDate, zoneForChannel } from '../clock.js';
 import { CHANNELS } from '../omni.js';
 import { findProduct } from '../master.js';
 import { orderCode, orderPrefix, PREFIXES } from './prefix.js';
-import { termDaysFor, isAutoPaid, sourceOf } from './sources.js';
+import { termDaysFor, isAutoPaid, sourceOf, poolingFor } from './sources.js';
 
 /**
  * Turning an order into a Jurnal sales invoice.
@@ -183,10 +183,14 @@ export function saleValue(order) {
 }
 
 /**
- * @param {{order: object, depositTo?: string|null}} input
+ * @param {{order: object, accounts?: Record<string, {name: string}>|null}} input
+ *        `accounts` is the chart of accounts by number, from accountMap(). Without it the
+ *        invoice is raised open - which is what happens on a box that cannot reach Jurnal's
+ *        account list, and is the safe way round: an open invoice gets chased, an invoice
+ *        wrongly marked paid never does.
  * @returns {{sales_invoice: object}} the exact payload POSTed to Jurnal
  */
-export function buildInvoice({ order, depositTo = null }) {
+export function buildInvoice({ order, accounts = null }) {
   const finance = order.finance;
   if (!finance || !Array.isArray(finance.lines)) {
     throw new InvoiceError(`${order.id}: rincian keuangan tidak tersedia`);
@@ -284,8 +288,14 @@ export function buildInvoice({ order, depositTo = null }) {
   // WhatsApp order - the money for those arrives later, by transfer or in person, and
   // marking them paid on the day they were raised would empty the receivable that exists
   // precisely so somebody can chase them.
-  if (depositTo && isAutoPaid(order)) {
-    invoice.deposit_to_name = depositTo;
+  //
+  // And into the channel's own pooling account, not the bank. The buyer has paid; Shopee
+  // has not paid us yet. Booking it straight to BCA said the cash was already in the bank
+  // and put the whole month's online turnover there ahead of the real balance. The payout
+  // is a transfer from the pooling account to BCA on the day it actually lands.
+  const pooling = isAutoPaid(order) ? accounts?.[poolingFor(order)] : null;
+  if (pooling?.name) {
+    invoice.deposit_to_name = pooling.name;
     invoice.deposit = goods + shipping;
   }
 

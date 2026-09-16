@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   SOURCES, RECEIVABLE_NUMBERS, TAGS, SHIPPING_ACCOUNT_NUMBER,
   sourceOf, tagFor, receivableFor, termDaysFor, isAutoPaid, uncoveredPrefixes,
+  POOLING_NUMBERS, poolingFor,
 } from '../src/mekari/sources.js';
 import { PREFIXES } from '../src/mekari/prefix.js';
 
@@ -134,4 +135,36 @@ test('postage is booked to Other Income, and deliberately not to 5030', () => {
   assert.equal(SHIPPING_ACCOUNT_NUMBER, '7-70099');
   assert.notEqual(SHIPPING_ACCOUNT_NUMBER, '5030');
   assert.ok(!RECEIVABLE_NUMBERS.includes(SHIPPING_ACCOUNT_NUMBER), 'ongkir bukan piutang');
+});
+
+test('each channel settles into its own pooling account, and TikTok shares Tokopedia\'s', () => {
+  // The account is read from the order, not from configuration, so a Shopee sale can never
+  // be deposited into the website's account - which one shared deposit account made
+  // impossible to even express, let alone catch.
+  const sale = (channel, id) => ({
+    channel, id, stage: 'to_ship', createdAt: 1_757_500_000,
+    finance: { lines: [{ sku: 'OMO-30-001', name: 'Moringa Seed Oil 30ml', qty: 1, unitPrice: 100_000, unitDiscount: 0 }], shipping: 0 },
+  });
+  assert.equal(poolingFor(sale('shopee', '2609140FJEFCSW')), '1111');
+  assert.equal(poolingFor(sale('tokopedia', '585859894801303056')), '1112');
+  assert.equal(poolingFor(sale('tiktok_shop', '577000000000000000')), '1112',
+    'TikTok Shop settles through the same entity as Tokopedia, by decision');
+  assert.equal(poolingFor(sale('shopify', '10899')), '1113');
+});
+
+test('a source somebody has to chase has no pooling account at all', () => {
+  // Nothing has been received, so there is nowhere for it to wait. An account here would
+  // book money the business does not have.
+  for (const prefix of ['CS', 'WS', 'LB', 'DP', 'DW']) {
+    assert.equal(SOURCES[prefix].pooling, null, `${prefix} tidak boleh punya akun penampung`);
+    assert.equal(SOURCES[prefix].autoPaid, false);
+  }
+});
+
+test('every pooling account a source names is one the system checks for', () => {
+  // requiredAccounts is what fails loudly when an account is missing from Jurnal; a
+  // pooling account left out of that list would fail silently as an invoice raised open.
+  for (const source of Object.values(SOURCES)) {
+    if (source.pooling) assert.ok(POOLING_NUMBERS.includes(source.pooling));
+  }
 });

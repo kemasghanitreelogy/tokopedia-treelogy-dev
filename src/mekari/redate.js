@@ -1,7 +1,8 @@
 import { mekari } from './client.js';
-import { invoiceCatalogue, ours } from './catalogue.js';
+import { invoiceCatalogue, ours, forgetCatalogue } from './catalogue.js';
 import { ordersInRange } from '../db/orders.js';
 import { buildInvoice, customIdFor, jurnalDate } from './invoice.js';
+import { accountMap } from './accounts.js';
 import { termDaysFor } from './sources.js';
 import { POSTABLE_STAGES } from './sync.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -45,8 +46,6 @@ import { wibDayStart } from '../range.js';
  */
 
 const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
-
-const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
 /** @param {{from: string, until?: number}} options */
 export async function planRedate({ from, until = Math.floor(Date.now() / 1000) } = {}) {
@@ -100,10 +99,10 @@ export async function planRedate({ from, until = Math.floor(Date.now() / 1000) }
  *
  * @returns {{payload: object}|{refuse: string}}
  */
-export function redatePayload(item, { depositTo = null } = {}) {
+export function redatePayload(item, { accounts = null } = {}) {
   let built;
   try {
-    built = buildInvoice({ order: item.order, depositTo });
+    built = buildInvoice({ order: item.order, accounts });
   } catch (error) {
     return { refuse: `tidak bisa dibangun ulang: ${error.message}` };
   }
@@ -121,9 +120,9 @@ export function redatePayload(item, { depositTo = null } = {}) {
 }
 
 /**
- * @param {{from: string, dryRun?: boolean, depositTo?: string|null, onProgress?: Function}} options
+ * @param {{from: string, dryRun?: boolean, accounts?: object|null, onProgress?: Function}} options
  */
-export async function redateInvoices({ from, dryRun = true, depositTo = depositAccount(), onProgress = () => {} } = {}) {
+export async function redateInvoices({ from, dryRun = true, accounts = null, onProgress = () => {} } = {}) {
   const plan = await planRedate({ from });
   // A scan that came back short would make correct invoices look absent rather than wrong,
   // which is harmless here - but it would also hide the ones that need moving, and a
@@ -131,11 +130,15 @@ export async function redateInvoices({ from, dryRun = true, depositTo = depositA
   if (plan.complete === false) throw new Error('pindai faktur tidak lengkap - jangan perbaiki tanggal dari daftar yang kurang');
   if (dryRun) return { ...plan, dryRun: true, moved: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('perbaiki tanggal faktur');
+  // A rebuild without the chart of accounts would carry no deposit, and a paid invoice
+  // whose replacement has none is refused by redatePayload - so the whole run would report
+  // every marketplace invoice as unfixable. Read it once, here.
+  const chart = accounts ?? await accountMap();
 
   let moved = 0;
   const failures = [];
   for (const item of plan.wrong) {
-    const attempt = redatePayload(item, { depositTo });
+    const attempt = redatePayload(item, { accounts: chart });
     if (attempt.refuse) {
       failures.push({ no: item.no, customId: item.customId, error: attempt.refuse });
       continue;
@@ -148,5 +151,10 @@ export async function redateInvoices({ from, dryRun = true, depositTo = depositA
       failures.push({ no: item.no, customId: item.customId, error: error.message });
     }
   }
+  // The cached scan still holds the dates these invoices had a moment ago, and catalogue.js
+  // is explicit that anything changing what Jurnal holds must drop it - a date is as much a
+  // change as a delete or a payment. Without this the next five minutes of reconciling,
+  // recapping and deduplicating all read the dates this run just corrected away.
+  if (moved > 0) await forgetCatalogue();
   return { ...plan, dryRun: false, moved, failures };
 }

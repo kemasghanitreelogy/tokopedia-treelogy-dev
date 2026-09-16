@@ -74,7 +74,7 @@ export async function planRestatement({ from }) {
   for (const item of doomed) {
     try {
       const payload = buildInvoice({ order: item.order, depositTo: depositAccount() });
-      verifyInvoice(payload, payload.expectedTotal);
+      verifyInvoice(payload, payload.expectedTotal, item.order);
       rebuildable.push({ ...item, payload });
     } catch (error) {
       unbuildable.push({ ...item, error: error instanceof InvoiceError ? error.message : String(error.message) });
@@ -107,12 +107,90 @@ export async function planRestatement({ from }) {
 const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
 /**
+ * Take the old invoices out of Jurnal, and out of the ledger as we go.
+ *
+ * Its own function because everything that can go wrong in a restatement goes wrong here,
+ * and the three ways it can are all silent unless they are handled apart:
+ *
+ *   a refused DELETE  the invoice is still in Jurnal. It must NOT be written again -
+ *                     batch_create does not reject a repeated custom_id, so a rewrite
+ *                     makes a second copy of the sale rather than replacing one. Only
+ *                     what actually went is returned as rewritable.
+ *   an unreachable store  the forget used to sit outside any try. A store down for a few
+ *                     seconds threw straight out of the loop: invoices already deleted
+ *                     from Jurnal, the ledger still naming them, and no rewrite, because
+ *                     the throw skipped it - the exact "silently missing sales" state
+ *                     forgetSyncLedgerEntries was written to prevent. Now the deleting
+ *                     stops there, and what has already gone is still handed back to be
+ *                     written, which is what puts the ledger right: a fresh invoice id
+ *                     overwrites the stale entry.
+ *   an invoice already gone  the state we were trying to reach, so not a failure at all.
+ *
+ * @param {{items: Array, ledger: object, del?: Function, forget?: Function, onProgress?: Function}} input
+ */
+export async function clearFromJurnal({
+  items,
+  ledger,
+  del = (invoiceId) => mekari({ method: 'DELETE', path: `${INVOICES_PATH}/${invoiceId}` }),
+  forget = forgetSyncLedgerEntries,
+  onProgress = () => {},
+}) {
+  const rewritable = [];
+  const failures = [];
+  let deleted = 0;
+  let alreadyGone = 0;
+  let processed = 0;
+  let storeFailure = null;
+
+  for (const item of items) {
+    processed += 1;
+    try {
+      await del(item.invoiceId);
+      deleted += 1;
+    } catch (error) {
+      // Jurnal says "already gone" with 422 "Data not found", not 404 - a quirk this
+      // codebase has met before, and one worth matching on the status rather than on the
+      // words, because a message that happens to contain "not found" is luck, not a rule.
+      if (!isMissing(error)) {
+        failures.push({ customId: item.customId, stage: 'hapus', error: error.message });
+        continue;
+      }
+      alreadyGone += 1;
+    }
+    // Past this line the invoice is not in Jurnal, so this order has to be written again
+    // whatever happens to the ledger next. Recorded before the store is touched, for
+    // exactly that reason.
+    rewritable.push(item);
+    delete ledger.orders[item.customId];
+    try {
+      // Through the one call that can actually remove: saveSyncLedger takes the union of
+      // what is stored and what the caller holds, so a deletion written through it comes
+      // straight back.
+      await forget([item.customId]);
+    } catch (error) {
+      // Every later forget would fail the same way and each one widens the gap between
+      // what Jurnal holds and what the ledger claims, so this is where the deleting ends.
+      storeFailure = error.message;
+      failures.push({ customId: item.customId, stage: 'lupakan', error: error.message });
+      break;
+    }
+    onProgress({ stage: 'hapus', customId: item.customId, deleted, alreadyGone, processed, of: items.length });
+  }
+
+  return { rewritable, deleted, alreadyGone, failures, storeFailure };
+}
+
+/**
  * Delete, then write again.
  *
  * Deliberately sequenced delete-all-then-create-all rather than pairwise. A pairwise loop
  * that dies in the middle leaves the books half restated with no way to tell which half;
  * this way the ledger is emptied of exactly what was deleted as it goes, so a run that
  * stops can be run again and picks up from where it stood.
+ *
+ * Only what was actually deleted is written back. The two sets look identical and are not:
+ * a refused DELETE leaves the invoice in Jurnal, and batch_create will happily add a
+ * second one beside it.
  */
 export async function restate({ from, dryRun = true, onProgress = () => {} }) {
   const plan = await planRestatement({ from });
@@ -131,50 +209,27 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
   });
 
   const ledger = await loadSyncLedger();
-  let deleted = 0;
   const failures = [];
   for (const f of aligned.failures) failures.push({ customId: f.name, stage: 'piutang', error: f.error });
 
-  // Only what can be written again.
+  // Only what can be written again is deleted in the first place.
   //
-  // This used to delete plan.unbuildable too, and the create loop below only ever walks
-  // rebuildable - so an order whose invoice cannot be built (an unmapped SKU, a negative
-  // price) was deleted from Jurnal and never replaced. A real sale erased, and the sweep
-  // could not restore it because it fails to build for the same reason every time.
+  // This used to delete plan.unbuildable too, while nothing ever rewrote it - so an order
+  // whose invoice cannot be built (an unmapped SKU, a negative price) was deleted from
+  // Jurnal and never replaced. A real sale erased, and the sweep could not restore it
+  // because it fails to build for the same reason every time.
   //
   // An invoice that cannot be rebuilt stays exactly where it is. It is reported instead,
   // which is the only honest thing to do about a sale nobody can express yet.
   const all = plan.rebuildable;
-  let alreadyGone = 0;
-  let processed = 0;
-
-  for (const item of all) {
-    processed += 1;
-    try {
-      await mekari({ method: 'DELETE', path: `${INVOICES_PATH}/${item.invoiceId}` });
-      deleted += 1;
-    } catch (error) {
-      // An invoice that is already gone is the state we were trying to reach, so it is
-      // not a failure. Jurnal says so with 422 "Data not found", not 404 - a quirk this
-      // codebase has met before, and one worth matching on the status rather than on the
-      // words, because a message that happens to contain "not found" is luck, not a rule.
-      if (!isMissing(error)) {
-        failures.push({ customId: item.customId, stage: 'hapus', error: error.message });
-        continue;
-      }
-      alreadyGone += 1;
-    }
-    delete ledger.orders[item.customId];
-    // Removed as we go, and through the one call that can actually remove: a run that
-    // stops halfway must not leave the ledger claiming invoices that are already gone,
-    // because the sweep trusts it and would never re-post those orders.
-    await forgetSyncLedgerEntries([item.customId]);
-    onProgress({ stage: 'hapus', customId: item.customId, deleted, alreadyGone, processed, of: all.length });
-  }
+  const cleared = await clearFromJurnal({ items: all, ledger, onProgress });
+  const { rewritable, deleted, alreadyGone } = cleared;
+  let storeFailure = cleared.storeFailure;
+  for (const f of cleared.failures) failures.push(f);
 
   let created = 0;
-  for (let i = 0; i < plan.rebuildable.length; i += BATCH) {
-    const slice = plan.rebuildable.slice(i, i + BATCH);
+  for (let i = 0; i < rewritable.length; i += BATCH) {
+    const slice = rewritable.slice(i, i + BATCH);
     let response;
     try {
       response = await mekari({
@@ -204,11 +259,25 @@ export async function restate({ from, dryRun = true, onProgress = () => {} }) {
       };
       created += 1;
     });
-    await saveSyncLedger(ledger);
-    onProgress({ stage: 'buat', created, of: plan.rebuildable.length });
+    try {
+      await saveSyncLedger(ledger);
+    } catch (error) {
+      // Fifty invoices that exist in Jurnal and are not in the ledger. The sweep recovers
+      // from that on its own - it posts through the single-invoice endpoint, which refuses
+      // a repeated custom_id with 409 and hands back the id - so this is reported and the
+      // run carries on rather than throwing away the record of the batches that did land.
+      storeFailure = error.message;
+      for (const item of slice) failures.push({ customId: item.customId, stage: 'catat', error: error.message });
+    }
+    onProgress({ stage: 'buat', created, of: rewritable.length });
   }
 
-  return { ...plan, dryRun: false, aligned, deleted, alreadyGone, created, failures };
+  return {
+    ...plan, dryRun: false, aligned, deleted, alreadyGone, created, failures,
+    // Still in Jurnal because the delete was refused, so deliberately not rewritten.
+    notDeleted: all.length - rewritable.length,
+    storeFailure,
+  };
 }
 
 export { wibDate };

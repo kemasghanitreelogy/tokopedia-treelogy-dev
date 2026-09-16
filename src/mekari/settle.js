@@ -52,11 +52,27 @@ async function paymentMethod({ deadlineAt = null } = {}) {
 
 const depositAccount = () => process.env.MEKARI_DEPOSIT_ACCOUNT || null;
 
-/** The channel an invoice belongs to, read back out of the custom_id we wrote. */
-export function channelOfCustomId(customId) {
-  const m = /^TRL-([a-z_]+)-/.exec(String(customId ?? ''));
-  return m ? m[1] : null;
+/**
+ * The order an invoice belongs to, read back out of the custom_id we wrote.
+ *
+ * Returns the id as well as the channel, and that is the whole point. A typed-in sale is
+ * keyed TRL-manual-CS-260916-01: the channel is "manual" and the source lives in the id's
+ * own prefix, CS for consignment. Reading only the channel and asking sourceOf about
+ * "manual" walked straight into orderPrefix's manual branch, which splits an id that was
+ * never passed, gets nothing, and falls back to the website's treatment - autoPaid.
+ *
+ * So every open consignment, wholesale, La Brisa, WhatsApp and walk-in invoice was in the
+ * settle set: the exact sources that are open because nobody has paid yet. It would have
+ * recorded payments that never happened, which is a worse error than the unpaid balance
+ * it was written to clear, and it was one manual sale away from firing.
+ */
+export function orderOfCustomId(customId) {
+  const m = /^TRL-([a-z_]+)-(.+)$/.exec(String(customId ?? ''));
+  return m ? { channel: m[1], id: m[2] } : null;
 }
+
+/** @deprecated kept for the tests that name it; prefer orderOfCustomId. */
+export const channelOfCustomId = (customId) => orderOfCustomId(customId)?.channel ?? null;
 
 /**
  * Every invoice with something still owing on it, through the shared scan.
@@ -68,12 +84,15 @@ export async function openInvoices({ since = null, deadlineAt = null } = {}) {
   return invoices
     .filter((invoice) => invoice.remaining > 0)
     .map((invoice) => {
-      const channel = channelOfCustomId(invoice.customId);
+      const order = orderOfCustomId(invoice.customId);
       return {
         ...invoice,
-        channel,
-        // A typed-in transaction has no channel in its custom_id and is not ours to settle.
-        autoPaid: Boolean(channel) && sourceOf({ channel }).autoPaid,
+        channel: order?.channel ?? null,
+        // The id goes to sourceOf as well as the channel, so a typed-in sale is read by
+        // its own prefix - CS, WS, LB, DP, DW - rather than falling through to the
+        // website's treatment and being marked paid. An invoice whose key will not parse
+        // is never settled either: guessing here invents a payment.
+        autoPaid: Boolean(order) && sourceOf(order).autoPaid,
       };
     });
 }

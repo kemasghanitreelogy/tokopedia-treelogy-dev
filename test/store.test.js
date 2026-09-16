@@ -93,3 +93,75 @@ test('the shared request budget hands out a window, then makes callers wait', as
   const wait = await reserveSlot(key, 3, 5000);
   assert.ok(wait > 0 && wait <= 5100, `harus menunggu, dapat ${wait}`);
 });
+
+/* ---------------------------------------- the compare-and-set Blob does not have natively */
+
+/**
+ * A stand-in for Vercel Blob: a put is last-write-wins and there is no conditional write.
+ *
+ * `intruder`, when set, is the other process landing in the same instant ours does - the
+ * interleaving that used to leave two sweeps both believing they had taken the sync lock.
+ * It fires once, so a retry gets a quiet store to write into, exactly as a real race does.
+ */
+function fakeBlob(initial = null) {
+  const store = { value: initial, intruder: null, writes: 0 };
+  store.io = {
+    async read() { return store.value === null ? null : JSON.parse(JSON.stringify(store.value)); },
+    async write(_key, value) {
+      store.writes += 1;
+      store.value = JSON.parse(JSON.stringify(value));
+      if (store.intruder) { store.value = store.intruder; store.intruder = null; }
+    },
+  };
+  return store;
+}
+
+test('a Blob write somebody else overtook is noticed, so the lock still has one winner', async () => {
+  const { verifiedUpdate } = await import('../src/store/index.js');
+  const now = Date.now();
+  // The updater acquireLock uses: take it when it is free or stale, decline when it is held.
+  const take = (owner) => (current) => (
+    current?.owner && now - Number(current.at) < 300_000 ? current : { owner, at: now }
+  );
+
+  const blob = fakeBlob();
+  blob.intruder = { owner: 'sweep-B', at: now };
+  const outcome = await verifiedUpdate(blob.io, 'mekari/sync.lock', take('sweep-A'), { owner: null, at: 0 });
+
+  // Before the read-back, both runs returned their own owner and both posted to Jurnal.
+  assert.deepEqual(outcome, { owner: 'sweep-B', at: now }, 'A membaca ulang dan menemukan pemilik yang menang');
+  assert.deepEqual(blob.value, { owner: 'sweep-B', at: now });
+  assert.equal(blob.writes, 1, 'yang kalah tidak menulis lagi di atas pemenang');
+});
+
+test('a keyed document overtaken mid-write is re-applied rather than lost', async () => {
+  const { verifiedUpdate } = await import('../src/store/index.js');
+  const blob = fakeBlob({ orders: {} });
+  blob.intruder = { orders: { 'TRL-2': true } };
+  const next = await verifiedUpdate(
+    blob.io,
+    'mekari/ledger.json',
+    (current) => ({ orders: { ...current.orders, 'TRL-1': true } }),
+    { orders: {} },
+  );
+  // The failure this replaces: the ledger entry for TRL-1 was written, overwritten, and
+  // never mentioned again, so the next sweep posted that invoice to Jurnal a second time.
+  assert.deepEqual(Object.keys(next.orders).sort(), ['TRL-1', 'TRL-2']);
+  assert.deepEqual(blob.value, next);
+});
+
+test('a Blob write that never lands is a throw, not a quiet success', async () => {
+  const { verifiedUpdate } = await import('../src/store/index.js');
+  const blob = fakeBlob();
+  const io = {
+    read: blob.io.read,
+    // Somebody else wins every single time. Returning happily here is what the old
+    // read-then-write did on every one of them.
+    async write() { blob.value = { owner: 'selalu-orang-lain', at: 1 }; },
+  };
+  await assert.rejects(
+    () => verifiedUpdate(io, 'mekari/sync.lock', () => ({ owner: 'kita', at: 2 }), null, 3),
+    /dibatalkan setelah 3 percobaan/,
+  );
+  assert.deepEqual(blob.value, { owner: 'selalu-orang-lain', at: 1 });
+});

@@ -165,7 +165,15 @@ export async function orderById(channel, id) {
  * @returns {Promise<Record<string, {from: number, through: number, at: string}>>}
  */
 export async function readCoverage(options = {}) {
-  const rows = await selectAll('ingest_coverage', { select: '*' }, options);
+  // Ordered for the same reason ordersInRange is, one table smaller.
+  //
+  // Postgres returns rows in no particular order, and selectAll pages by offset, so a read
+  // that ever needs a second page can serve one row twice and another not at all. Three
+  // sources will not reach a thousand rows this decade - but this is the same select the
+  // next table to grow will be read with, and the failure it produces is a source silently
+  // missing from the coverage map, which reads as "never ingested" and sends every
+  // dashboard back to the platforms with nothing to explain why.
+  const rows = await selectAll('ingest_coverage', { select: '*', order: 'source.asc' }, options);
   const out = {};
   for (const row of rows) {
     out[row.source] = {
@@ -183,6 +191,15 @@ export async function readCoverage(options = {}) {
  *
  * Only ever widens: a sweep covering the last seven days must not shrink the window a
  * full backfill established, and a backfill re-run for one month must not erase the rest.
+ *
+ * The widening is read-modify-write and PostgREST has no compare-and-set to do it with, so
+ * two writers - the sweep and a dashboard that just read a window live - can read the same
+ * row and the later upsert wins. That race is worth naming rather than fixing, because of
+ * which way it falls: every writer stores the union of what it read and what it just
+ * covered for real, so a lost update can only ever leave the window *narrower* than the
+ * truth, never wider. A narrow window is read live again; a wide one is never revisited.
+ * The number this returns is therefore what was asked for, not a promise about what is in
+ * the table a moment later - no caller treats it as one, and none should start.
  */
 export async function recordCoverage(source, { from, through, note = '' }) {
   const existing = (await readCoverage())[source];

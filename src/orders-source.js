@@ -59,7 +59,12 @@ export function activeSources() {
 function healthySources({ errors, truncated }) {
   const cut = new Set(truncated ?? []);
   return activeSources().filter((source) => {
-    if (errors?.[source]) return false;
+    // An error is an error even when it has nothing to say. This asked whether the
+    // *message* was truthy, so a platform client that threw `new Error()`, or an abort that
+    // carried only a name, read as a source that answered perfectly - and the window was
+    // then claimed as covered and never read live again. The backfill had the same line and
+    // the same hole.
+    if (source in (errors ?? {})) return false;
     if (source === 'tiktok') return !cut.has('Tokopedia + TikTok Shop');
     if (source === 'shopee') return !cut.has('Shopee');
     return true;
@@ -107,7 +112,14 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
 
   if (coverage && coversRange(coverage, window, sources)) {
     try {
-      const orders = await ordersInRange({ since: window.since, until: window.until });
+      // Only the channels this deployment still reads live, because those are the only ones
+      // coverage was just checked for. With Shopify unconfigured, activeSources drops it and
+      // a live read returns nothing for it - while the table still holds every Shopify row
+      // from when it was configured, so the same window answered from the database came back
+      // with revenue the live path did not have. Two answers to one question, differing by
+      // which path happened to serve it.
+      const channels = sources.flatMap((source) => SOURCE_CHANNELS[source] ?? []);
+      const orders = await ordersInRange({ since: window.since, until: window.until, channels });
       return {
         orders,
         errors: {},
@@ -145,25 +157,50 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
  * partial answer in place for every later reader.
  */
 export async function rememberOrders(live, window) {
+  let written;
   try {
-    const written = await saveOrders(live.orders, { source: 'live-read' });
-    // An order the database refused is a hole in this window, and a claimed window is
-    // never read live again - so the claim would freeze that hole in place for good. The
-    // backfill already refuses the claim in this case; this file used to discard the
-    // rejections entirely, which is the same author disagreeing with himself on the same
-    // day in two files.
-    const rejected = new Set((written.rejected ?? []).map((r) => sourceOfChannel(r.channel)));
-    for (const source of healthySources(live)) {
-      if (rejected.has(source)) {
-        console.warn(`db: ${source} tidak diklaim - ${written.rejected.length} pesanan ditolak database`);
-        continue;
-      }
-      await recordCoverage(source, { from: window.since, through: window.until, note: 'live-read' });
-    }
-    forgetCoverage();
+    written = await saveOrders(live.orders, { source: 'live-read' });
   } catch (error) {
+    // Nothing is claimed when the write did not happen, which is the whole of the handling
+    // this needs: an unclaimed window is read live again.
     console.warn(`db: pesanan tidak tersimpan - ${error.message}`);
+    return { written: 0, claimed: [], claimFailed: [], rejected: [], error: error.message };
   }
+
+  const rejects = written.rejected ?? [];
+  // An order the database refused is a hole in this window, and a claimed window is never
+  // read live again - so the claim would freeze that hole in place for good. The backfill
+  // already refuses the claim in this case; this file used to discard the rejections
+  // entirely, which is the same author disagreeing with himself on the same day in two
+  // files.
+  const holes = new Set(rejects.map((r) => sourceOfChannel(r.channel)));
+  // A rejected order whose channel cannot be placed is a hole of unknown position, so it
+  // costs every claim rather than none. sourceOfChannel answers null there and null matches
+  // no source, so the one rejection nobody could explain was also the only one that cost
+  // nothing at all - and the backfill, three files away, has always read it the other way.
+  const unplaceable = holes.has(null);
+
+  const claimed = [];
+  const claimFailed = [];
+  for (const source of healthySources(live)) {
+    if (unplaceable || holes.has(source)) {
+      console.warn(`db: ${source} tidak diklaim - ${rejects.length} pesanan ditolak database`);
+      continue;
+    }
+    try {
+      await recordCoverage(source, { from: window.since, through: window.until, note: 'live-read' });
+      claimed.push(source);
+    } catch (error) {
+      // One source's claim failing is not the next source's business, and it is certainly
+      // not grounds for reporting the orders as unsaved - they are saved. The loop used to
+      // be inside the same try as the write, so the first refusal skipped every source
+      // after it and logged "pesanan tidak tersimpan" over a write that had gone through.
+      claimFailed.push({ source, error: error.message });
+      console.warn(`db: cakupan ${source} tidak tercatat - ${error.message}`);
+    }
+  }
+  forgetCoverage();
+  return { written: written.written, claimed, claimFailed, rejected: rejects };
 }
 
 /**

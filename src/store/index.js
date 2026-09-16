@@ -13,8 +13,9 @@ import { loadConfig } from '../config.js';
  *   sqlite  one file on local disk via node:sqlite - ACID, transactional, no service to
  *           run, no quota. The default on the VPS. `updateDoc` is a real transaction, so
  *           two writers can no longer lose each other's changes.
- *   blob    Vercel Blob, kept for the Vercel deployment. `updateDoc` there is
- *           read-then-write and only narrows the race, as before.
+ *   blob    Vercel Blob, kept for the Vercel deployment. It has no conditional write at
+ *           all, so `updateDoc` there writes and then reads the key back, and treats
+ *           finding somebody else's document as having lost - see verifiedUpdate.
  *
  * STATE_BACKEND=sqlite|blob picks explicitly; otherwise sqlite when STATE_DB_PATH is set,
  * blob when a Blob token is, sqlite in a temp dir when neither (tests, local dry runs).
@@ -283,6 +284,54 @@ const redisBackend = {
 
 const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken || '';
 
+/** How many times a Blob write that somebody else overtook is re-applied before giving up. */
+const BLOB_CAS_ATTEMPTS = 8;
+
+/**
+ * Read, modify, write - and then read back, because Blob will not promise anything else.
+ *
+ * There is no conditional put here and no etag precondition: `put` with allowOverwrite is
+ * last-write-wins, so the read-then-write this used to be let two processes both believe
+ * they had changed the document, and the earlier one's change was gone with no error
+ * anywhere. acquireLock in src/mekari/sync.js is built on updateDoc and calls it a
+ * compare-and-set, which it is inside SQLite's BEGIN IMMEDIATE and inside Redis's WATCH -
+ * and was not here. Two sweeps racing on Vercel would both have taken the lock.
+ *
+ * What Blob can do is say what is there now. So a write is followed by a read of the same
+ * key, and a document that is not the one just written means somebody landed after us: the
+ * winner's document is read again, `fn` is applied to that instead, and the loser's change
+ * is re-made on top rather than silently discarded. For the two shapes this store keeps
+ * that is a genuine compare-and-set. The lock's document carries its owner, so the loser
+ * re-reads, sees a holder that is not itself, and its updater declines - exactly one winner.
+ * The ledger's orders are keyed, so re-applying merges.
+ *
+ * The honest limit: two writers whose results are byte-identical cannot tell each other
+ * apart, so each sees "its own" write and both return happy. For keyed maps and an owner
+ * field, identical means interchangeable and nothing is lost. For a counter it would not -
+ * there is no counter in this store, and this paragraph is the reason not to add one
+ * without moving that document to Redis.
+ *
+ * Exported for the tests, which drive it against a stand-in store rather than a real Blob.
+ */
+export async function verifiedUpdate(io, key, fn, initial, attempts = BLOB_CAS_ATTEMPTS) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const current = (await io.read(key).catch(() => null)) ?? structuredClone(initial ?? null);
+    const next = fn(current);
+    const mine = JSON.stringify(next);
+    // An updater that changed nothing - the lock refusing a caller because a live holder is
+    // already there - has nothing to race over, and writing its unchanged document back
+    // would only hand it another chance to land on top of the winner.
+    if (mine === JSON.stringify(current)) return next;
+    await io.write(key, next);
+    const landed = await io.read(key).catch(() => null);
+    if (JSON.stringify(landed) === mine) return next;
+  }
+  // Losing eight times running is not a busy moment, it is a key being written faster than
+  // it can be read back. Callers treat a throw as "did not happen", which is true, and is
+  // the only thing that can be said honestly at this point.
+  throw new Error(`blob: ${key} ditulis bersamaan terus-menerus, update dibatalkan setelah ${attempts} percobaan`);
+}
+
 const blobBackend = {
   async read(key) {
     const token = blobToken();
@@ -300,11 +349,8 @@ const blobBackend = {
       access: 'private', allowOverwrite: true, contentType: 'application/json', token, cacheControlMaxAge: 0,
     });
   },
-  async update(key, fn, initial) {
-    const current = (await this.read(key).catch(() => null)) ?? structuredClone(initial ?? null);
-    const next = fn(current);
-    await this.write(key, next);
-    return next;
+  update(key, fn, initial) {
+    return verifiedUpdate(this, key, fn, initial);
   },
   async list(prefix) {
     const token = blobToken();
@@ -365,7 +411,16 @@ export const reserveSlot = (key, limit, windowMs) => {
 
 export const readDoc = (key) => backend().read(key);
 export const writeDoc = (key, value) => backend().write(key, value);
-/** Atomic read-modify-write. `fn` must be synchronous and return the next document. */
+/**
+ * Atomic read-modify-write. `fn` must be synchronous and return the next document.
+ *
+ * "Atomic" means the same thing on all three backends but is bought three different ways -
+ * a transaction in SQLite, WATCH/MULTI in Redis, and write-then-read-back on Blob - and
+ * every one of them can lose the race and run `fn` again. So `fn` has to be a pure function
+ * of the document it is handed: anything it does besides returning the next document may
+ * happen more than once, and a caller reading its own outcome out of a closure needs that
+ * closure written last-one-wins, the way acquireLock does.
+ */
 export const updateDoc = (key, fn, initial = null) => backend().update(key, fn, initial);
 export const listDocs = (prefix = '') => backend().list(prefix);
 export const deleteDoc = (key) => backend().remove(key);

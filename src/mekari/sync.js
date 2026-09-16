@@ -306,7 +306,7 @@ export function syncOverview({ orders, ledger, depositTo = null }) {
     }
     try {
       const built = buildInvoice({ order, depositTo });
-      verifyInvoice({ sales_invoice: built.sales_invoice }, built.expectedTotal);
+      verifyInvoice({ sales_invoice: built.sales_invoice }, built.expectedTotal, order);
       return { order, customId, state: 'queued', total: built.expectedTotal };
     } catch (error) {
       return { order, customId, state: 'broken', total: 0, reason: error.message };
@@ -370,8 +370,8 @@ export async function postOrder(order, { depositTo = null, dryRun = true, deadli
     const built = buildInvoice({ order, depositTo });
     payload = { sales_invoice: built.sales_invoice };
     expectedTotal = built.expectedTotal;
-    // Recompute before sending: a mapping slip must never reach the books.
-    verifyInvoice(payload, expectedTotal);
+    // Checked against the order before sending: a mapping slip must never reach the books.
+    verifyInvoice(payload, expectedTotal, order);
   } catch (error) {
     return { customId, id: order.id, channel: order.channel, status: 'failed', error: error.message };
   }
@@ -469,36 +469,80 @@ export function undoneCandidates(orders, ledger) {
   });
 }
 
-export async function voidInvoice(order, entry, { dryRun = true, deadlineAt = null } = {}) {
+/**
+ * Outcomes that are written into the ledger entry, and the ones deliberately absent.
+ *
+ * 'pending' is not here: a cancellation the seller can still refuse must leave no trace,
+ * because undoneCandidates skips any entry carrying needs_review and flagging one latched
+ * the order out of every later sweep - the invoice stayed in the books after the
+ * cancellation went final, and the dashboard called the order broken for good. 'failed'
+ * and 'deferred' are absent for the older reason: the next run sees the same order in the
+ * same state and tries again.
+ */
+export const RECORDED_UNDONE = new Set(['voided', 'gone', 'needs_review']);
+
+export async function voidInvoice(order, entry, { dryRun = true, deadlineAt = null, call = mekari } = {}) {
   const customId = customIdFor(order);
   const base = { customId, id: order.id, channel: order.channel, invoiceId: entry.invoice_id, stage: order.stage, status: order.status };
 
   const final = VOID_STATUSES.has(order.status) || (order.channel === 'shopify' && order.stage === 'cancelled');
   if (!final) {
-    return { ...base, outcome: 'needs_review', reason: `${order.status}: pembatalan/retur belum final, faktur dibiarkan` };
+    // 'pending', not 'needs_review', and the difference is the whole point.
+    //
+    // A needs_review is written into the ledger entry, and undoneCandidates skips anything
+    // carrying one - so flagging an IN_CANCEL this way latched the order out of every
+    // later sweep. When the buyer's request went through a day later and the status became
+    // CANCELLED, nothing looked at it again: the invoice stayed in the books for a sale
+    // that no longer existed, and the dashboard showed the order as "broken" for good on
+    // the strength of a cancellation request that had long since resolved itself.
+    //
+    // Nothing is written for a pending one. It is simply not final yet, and the next sweep
+    // reads the same order and decides again.
+    return { ...base, outcome: 'pending', reason: `${order.status}: pembatalan/retur belum final, faktur dibiarkan` };
   }
   if (dryRun) return { ...base, outcome: 'dry-run' };
   if (isReadOnly()) throw new ReadOnlyError(`hapus faktur ${customId}`);
 
   let invoice;
   try {
-    const found = await mekari({ path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
+    const found = await call({ path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
     invoice = found?.sales_invoice ?? found;
   } catch (error) {
     if (isMissingInvoice(error)) return { ...base, outcome: 'gone', reason: 'faktur sudah tidak ada di Jurnal' };
     return { ...base, outcome: failureOf(error), reason: error.message };
   }
 
-  if (invoice.has_payments || Number(invoice.payment_received_amount) > 0 || invoice.deletable === false) {
+  // Whether money has been received against this invoice - and, separately, whether Jurnal
+  // said anything about it at all.
+  //
+  // This used to be one expression: `invoice.has_payments ||
+  // Number(invoice.payment_received_amount) > 0 || invoice.deletable === false`. On a
+  // response carrying none of the three that reads `undefined || NaN > 0 || undefined ===
+  // false`, which is false, and the invoice is deleted - absence of evidence taken for
+  // evidence of absence, on the single check standing between a received payment and its
+  // erasure. A field renamed on Jurnal's side, or a leaner body on this endpoint than on
+  // the list, and a real payment vanishes with nothing to say it ever existed; a bank
+  // reconciliation months later is what would find it. postOrder was hardened the same way
+  // when it started asking Number.isFinite before believing a figure Jurnal sent back.
+  const received = Number(invoice.payment_received_amount);
+  const settled = invoice.has_payments === true || received > 0 || invoice.deletable === false;
+  const answered = invoice.has_payments === false || Number.isFinite(received) || invoice.deletable === true;
+  if (settled || !answered) {
     return {
       ...base, outcome: 'needs_review',
-      reason: `pesanan ${order.status} tapi faktur ${invoice.transaction_no} sudah menerima pembayaran Rp${Math.round(Number(invoice.payment_received_amount || 0)).toLocaleString('id-ID')} - perlu retur/kredit nota manual`,
+      reason: settled
+        ? `pesanan ${order.status} tapi faktur ${invoice.transaction_no} sudah menerima pembayaran Rp${Math.round(Number(invoice.payment_received_amount || 0)).toLocaleString('id-ID')} - perlu retur/kredit nota manual`
+        : `faktur ${invoice.transaction_no ?? entry.invoice_id} tidak menyebut status pembayaran - tidak dihapus tanpa bukti bahwa belum ada pembayaran`,
     };
   }
 
   try {
-    await mekari({ method: 'DELETE', path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
-    return { ...base, outcome: 'voided', transactionNo: invoice.transaction_no, total: Math.round(Number(invoice.original_amount)) };
+    await call({ method: 'DELETE', path: `/public/jurnal/api/v1/sales_invoices/${entry.invoice_id}`, deadlineAt });
+    // An amount Jurnal did not send as a number must not become one: Math.round(NaN) is
+    // NaN, NaN serialises to null, and a voided sale worth "nothing" is indistinguishable
+    // from a real zero in every report that adds these up. Null says unknown out loud.
+    const amount = Math.round(Number(invoice.original_amount));
+    return { ...base, outcome: 'voided', transactionNo: invoice.transaction_no ?? null, total: Number.isFinite(amount) ? amount : null };
   } catch (error) {
     return { ...base, outcome: failureOf(error), reason: error.message };
   }
@@ -576,7 +620,7 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     const entry = ledger.orders[customIdFor(order)];
     const outcome = await voidInvoice(order, entry, { dryRun, deadlineAt });
     undone.push(outcome);
-    if (!dryRun && (outcome.outcome === 'voided' || outcome.outcome === 'gone' || outcome.outcome === 'needs_review')) {
+    if (!dryRun && RECORDED_UNDONE.has(outcome.outcome)) {
       ledger.orders[outcome.customId] = {
         ...entry,
         ...(outcome.outcome === 'needs_review' ? { needs_review: outcome.reason } : { voided: true, voided_at: new Date().toISOString() }),
@@ -616,6 +660,10 @@ async function runBatch({ orders, depositTo, dryRun, limit, deadlineMs = null })
     undone,
     voided: undone.filter((u) => u.outcome === 'voided').length,
     needsReview: undone.filter((u) => u.outcome === 'needs_review').length,
+    // Cancellations and returns still in progress. Counted, never recorded: the next sweep
+    // takes the same orders again and they stay visible until the platform makes up its
+    // mind, which is the opposite of what flagging them in the ledger used to do.
+    pending: undone.filter((u) => u.outcome === 'pending').length,
     syncedTotal: Object.keys(ledger.orders).length,
   };
 }

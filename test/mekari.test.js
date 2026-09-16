@@ -615,9 +615,9 @@ test('a cancellation request or a return in progress is handed to a person, not 
   assert.deepEqual([...UNDONE_STAGES].sort(), ['cancelled', 'returned']);
 
   const asked = await voidInvoice(order({ stage: 'cancelled', status: 'IN_CANCEL' }), { invoice_id: 9 }, { dryRun: true });
-  assert.equal(asked.outcome, 'needs_review');
+  assert.equal(asked.outcome, 'pending');
   const returned = await voidInvoice(order({ stage: 'returned', status: 'TO_RETURN' }), { invoice_id: 9 }, { dryRun: true });
-  assert.equal(returned.outcome, 'needs_review');
+  assert.equal(returned.outcome, 'pending');
   // A final cancellation would be acted on - and a dry run says so without touching Jurnal.
   const final = await voidInvoice(order({ stage: 'cancelled', status: 'CANCELLED' }), { invoice_id: 9 }, { dryRun: true });
   assert.equal(final.outcome, 'dry-run');
@@ -982,4 +982,252 @@ test('the shared request budget does not treat a store outage as permission', as
   // One window, so a blink costs a window rather than the rest of the run.
   assert.equal(localBudget(now + 61_000), REQUESTS_PER_MINUTE);
   resetBudget();
+});
+
+/* ------------------------------------------- findings from an independent review */
+
+test('the shipping-account guard is gone, not merely unused', async () => {
+  // It held back every invoice carrying postage while the books credited delivery to the
+  // wrong account, and it came out when postage was left in 7-70099 Other Income by
+  // decision (see SHIPPING_ACCOUNT_NUMBER in sources.js). What stayed behind was the
+  // function, its cache, and two comments in two files still claiming the sync checks the
+  // setting before it will post - which is the kind of thing somebody reads and trusts.
+  const coa = await import('../src/mekari/coa.js');
+  assert.equal(coa.shippingAccountReady, undefined);
+  assert.equal(coa.forgetShippingCheck, undefined);
+
+  const invoice = await import('node:fs/promises').then((fs) => fs.readFile('src/mekari/invoice.js', 'utf8'));
+  assert.doesNotMatch(invoice, /sync\s+\/\/?\s*checks that setting|checks that setting before/);
+});
+
+test('an invoice is checked against the order, not against its own arithmetic', () => {
+  // The old check recomputed goods + shipping off the payload and compared it with
+  // buildInvoice's own expectedTotal - the same sum by the same route, so it could only
+  // fail if addition stopped working. A line dropped on the way in shrinks both halves
+  // equally and the invoice goes into the books understated, having passed every check.
+  const twoLines = order({ finance: { lines: [
+    { sku: 'OMO-30-001', name: 'A', qty: 1, unitPrice: 505_000, unitDiscount: 0 },
+    { sku: 'OMP-45-001', name: 'B', qty: 2, unitPrice: 100_000, unitDiscount: 0 },
+  ], shipping: 20_000 } });
+
+  const built = buildInvoice({ order: twoLines });
+  assert.equal(verifyInvoice(built, built.expectedTotal, twoLines), 725_000);
+
+  // One line lost, and the total recomputed from what survived - exactly the shape a
+  // mapping slip produces, and exactly what used to pass.
+  const short = {
+    sales_invoice: {
+      ...built.sales_invoice,
+      transaction_lines_attributes: built.sales_invoice.transaction_lines_attributes.slice(0, 1),
+    },
+  };
+  const shortTotal = 505_000 + 20_000;
+  assert.equal(verifyInvoice(short, shortTotal), shortTotal, 'tanpa pesanan, faktur pendek ini lolos - itulah celahnya');
+  assert.throws(() => verifyInvoice(short, shortTotal, twoLines), /2 baris|1 baris/);
+
+  // Two slips that cancel in the sum cannot cancel in a count of units.
+  const swapped = {
+    sales_invoice: {
+      ...built.sales_invoice,
+      transaction_lines_attributes: [
+        { ...built.sales_invoice.transaction_lines_attributes[0], quantity: 2 },
+        { ...built.sales_invoice.transaction_lines_attributes[1], rate: 100_000 - 505_000 / 2 },
+      ],
+    },
+  };
+  assert.throws(() => verifyInvoice(swapped, built.expectedTotal, twoLines), InvoiceError);
+});
+
+const { clearFromJurnal } = await import('../src/mekari/restate.js');
+
+const doomed = (n) => ({ customId: `TRL-shopee-${n}`, invoiceId: n, order: order({ id: String(n) }), payload: {} });
+
+test('a store that stops answering mid-restatement stops the deleting, and what went is still rewritten', async () => {
+  // The forget used to sit outside any try. A store unreachable for a few seconds threw
+  // straight out of the loop: invoices already deleted from Jurnal, the ledger still
+  // naming them, and no rewrite because the throw skipped it. The sweep trusts the ledger
+  // and would never post those orders again - silently missing sales.
+  const ledger = { orders: { 'TRL-shopee-1': { invoice_id: 1 }, 'TRL-shopee-2': { invoice_id: 2 }, 'TRL-shopee-3': { invoice_id: 3 } } };
+  const deletedIds = [];
+  const result = await clearFromJurnal({
+    items: [doomed(1), doomed(2), doomed(3)],
+    ledger,
+    del: async (id) => { deletedIds.push(id); },
+    forget: async ([customId]) => {
+      if (customId === 'TRL-shopee-2') throw new Error('Redis tidak terjangkau');
+    },
+  });
+
+  assert.deepEqual(deletedIds, [1, 2], 'berhenti menghapus begitu ledger tidak bisa diperbarui');
+  assert.deepEqual(result.rewritable.map((i) => i.invoiceId), [1, 2], 'yang sudah hilang dari Jurnal tetap harus ditulis ulang');
+  assert.match(result.storeFailure, /Redis/);
+  assert.deepEqual(result.failures.map((f) => f.stage), ['lupakan']);
+});
+
+test('an invoice Jurnal refused to delete is never written again', async () => {
+  // batch_create does not reject a repeated custom_id - that is why the single-invoice
+  // endpoint is the one marked safe to retry - so rewriting an invoice that is still
+  // there makes a second copy of the sale instead of replacing one.
+  const ledger = { orders: { 'TRL-shopee-1': { invoice_id: 1 }, 'TRL-shopee-2': { invoice_id: 2 } } };
+  const refused = Object.assign(new Error('HTTP 422: invoice has payments'), { status: 422, body: { message: 'has payments' } });
+  const gone = Object.assign(new Error('HTTP 422: Data not found'), { status: 422, body: { message: 'Data not found' } });
+
+  const result = await clearFromJurnal({
+    items: [doomed(1), doomed(2)],
+    ledger,
+    del: async (id) => { throw id === 1 ? refused : gone; },
+    forget: async () => {},
+  });
+
+  assert.deepEqual(result.rewritable.map((i) => i.invoiceId), [2]);
+  assert.equal(result.alreadyGone, 1, 'faktur yang memang sudah hilang bukan kegagalan');
+  assert.deepEqual(result.failures.map((f) => f.customId), ['TRL-shopee-1']);
+  assert.ok(ledger.orders['TRL-shopee-1'], 'masih di Jurnal, jadi masih di ledger');
+});
+
+/* ------------------------------------------------ pagination over an unstable sort */
+
+const pageOf = (key, rows, { page, size, total }) => ({
+  [key]: rows.slice((page - 1) * size, page * size),
+  total_pages: Math.ceil(total / size),
+  total_count: total,
+});
+
+test('the ledger rebuild pages on created_at, and says so when it comes back short', async () => {
+  // transaction_date is a date with no time on it, so the 235 invoices sharing 31 August
+  // compare equal and shift between pages; a scan built that way came back 48 invoices
+  // short with no error at all. Jurnal refuses sort_key=id and sort_key=transaction_no
+  // with a 422, so created_at is the one that both works and holds still.
+  const { rebuildLedgerFromJurnal } = await import('../src/mekari/rebuild.js');
+  const rows = Array.from({ length: 120 }, (_, i) => ({
+    id: 1000 + i, custom_id: `TRL-shopee-R${i}`, original_amount: '50000',
+    transaction_date: '31/08/2026', created_at: `2026-08-31T00:${String(i).padStart(2, '0')}:00Z`,
+  }));
+
+  const paths = [];
+  const whole = await rebuildLedgerFromJurnal({ dryRun: true, call: async ({ path }) => {
+    paths.push(path);
+    const page = Number(/page=(\d+)/.exec(path)[1]);
+    return pageOf('sales_invoices', rows, { page, size: 50, total: rows.length });
+  } });
+  assert.ok(paths.every((p) => p.includes('sort_key=created_at')), 'bukan transaction_date');
+  assert.ok(paths.every((p) => !p.includes('sort_key=transaction_date')));
+  assert.equal(whole.inJurnal, 120);
+  assert.equal(whole.complete, true);
+
+  // The same walk, one page short of what Jurnal itself says it holds.
+  const short = await rebuildLedgerFromJurnal({ dryRun: true, call: async ({ path }) => {
+    const page = Number(/page=(\d+)/.exec(path)[1]);
+    return { ...pageOf('sales_invoices', rows.slice(0, 100), { page, size: 50, total: 100 }), total_count: 120 };
+  } });
+  assert.equal(short.walked, 100);
+  assert.equal(short.expected, 120);
+  assert.equal(short.complete, false, 'pindaian yang diam-diam kurang lebih buruk daripada yang gagal');
+});
+
+test('a chart of accounts that came back short is never cached for a day', async () => {
+  const { accountMap } = await import('../src/mekari/accounts.js');
+  const full = Array.from({ length: 210 }, (_, i) => ({ id: i + 1, number: `ACC-${i}`, name: `Akun ${i}` }));
+
+  await accountMap({ force: true, call: async ({ path }) => {
+    const page = Number(/page=(\d+)/.exec(path)[1]);
+    return pageOf('accounts', full, { page, size: 200, total: full.length });
+  } });
+  const cached = await accountMap({ call: async () => { throw new Error('tidak boleh dipanggil lagi'); } });
+  assert.equal(Object.keys(cached).length, 210, 'bacaan lengkap memang disimpan');
+
+  // A short read must not replace it. The TTL here is twenty-four hours, so caching one
+  // would turn a moment's bad pagination into a day of "akun 1501 tidak ada di Jurnal" -
+  // and requiredAccounts, which forces a fresh read on a miss, would force it against a
+  // cache it had just written itself.
+  const partial = await accountMap({ force: true, call: async () => ({ accounts: full.slice(0, 5), total_pages: 1, total_count: 210 }) });
+  assert.equal(Object.keys(partial).length, 5, 'yang terbaca tetap dikembalikan');
+  const after = await accountMap({ call: async () => { throw new Error('tidak boleh dipanggil lagi'); } });
+  assert.equal(Object.keys(after).length, 210, 'cache masih berisi bacaan yang lengkap');
+});
+
+test('a short customer list refuses to move anybody, before the first PATCH', async () => {
+  // plannedMoves reads a name it cannot find as a buyer with no contact yet - who gets the
+  // right account for free when the contact is created. That is true of a new buyer and
+  // false of one the walk missed: theirs is an existing contact still on 1100 General.
+  // The restatement runs this first and then deletes several hundred invoices it can never
+  // get back, so a half-done move costs the books, not a re-run.
+  const { alignReceivables, PartialCustomerListError } = await import('../src/mekari/receivables.js');
+  const customers = Array.from({ length: 499 }, (_, i) => ({ id: i + 1, display_name: `Pembeli ${i}`, default_ar_account: { number: '1100', name: 'General' } }));
+  const accounts = [{ id: 77, number: '1503', name: 'Piutang Shopee' }];
+  const wanted = new Map([['Pembeli 0', '1503']]);
+
+  const patched = [];
+  const call = async ({ path, method }) => {
+    if (method === 'PATCH') { patched.push(path); return {}; }
+    if (path.startsWith('/public/jurnal/api/v1/accounts')) return { accounts, total_pages: 1, total_count: accounts.length };
+    const page = Number(/page=(\d+)/.exec(path)[1]);
+    // Four pages of a hundred where Jurnal says there are 499 - one page worth of buyers
+    // silently absent, which is what an unstable sort does.
+    return { ...pageOf('customers', customers.slice(0, 400), { page, size: 100, total: 400 }), total_count: 499 };
+  };
+
+  await assert.rejects(() => alignReceivables(wanted, { dryRun: false, call }), PartialCustomerListError);
+  assert.deepEqual(patched, [], 'tidak satu pun pelanggan dipindahkan');
+
+  const seen = await alignReceivables(wanted, { dryRun: true, call });
+  assert.equal(seen.complete, false);
+  assert.deepEqual([seen.walked, seen.expected], [400, 499]);
+});
+
+/* ----------------------------------------------- what voiding an invoice may assume */
+
+test('an invoice is deleted only on evidence that nothing was received against it', async () => {
+  // The guard used to read `has_payments || Number(payment_received_amount) > 0 ||
+  // deletable === false`. On a response carrying none of the three that is
+  // `undefined || NaN > 0 || undefined === false` - false - and the invoice goes.
+  // Absence of evidence taken for evidence of absence, on the single check standing
+  // between a received payment and its erasure.
+  const { voidInvoice: doVoid } = await import('../src/mekari/sync.js');
+  const cancelled = order({ stage: 'cancelled', status: 'CANCELLED' });
+  const deletes = [];
+  const answering = (invoice) => async ({ method }) => {
+    if (method === 'DELETE') { deletes.push(1); return {}; }
+    return { sales_invoice: invoice };
+  };
+
+  const silent = await doVoid(cancelled, { invoice_id: 9 }, { dryRun: false, call: answering({ id: 9, transaction_no: 'SI-1', original_amount: '505000' }) });
+  assert.equal(silent.outcome, 'needs_review');
+  assert.match(silent.reason, /tidak menyebut status pembayaran/);
+  assert.equal(deletes.length, 0, 'tidak ada bukti belum dibayar, jadi tidak dihapus');
+
+  const unpaid = await doVoid(cancelled, { invoice_id: 9 }, { dryRun: false, call: answering({ id: 9, transaction_no: 'SI-1', original_amount: '505000', has_payments: false, payment_received_amount: '0.0' }) });
+  assert.equal(unpaid.outcome, 'voided');
+  assert.equal(unpaid.total, 505_000);
+  assert.equal(deletes.length, 1);
+
+  const paid = await doVoid(cancelled, { invoice_id: 9 }, { dryRun: false, call: answering({ id: 9, transaction_no: 'SI-2', original_amount: '505000', has_payments: true, payment_received_amount: '505000' }) });
+  assert.equal(paid.outcome, 'needs_review');
+  assert.match(paid.reason, /sudah menerima pembayaran/);
+  assert.equal(deletes.length, 1, 'faktur yang sudah dibayar tidak ikut terhapus');
+
+  // An amount Jurnal did not send as a number must stay unknown rather than become a
+  // voided sale worth nothing, which no report would ever single out.
+  const unnumbered = await doVoid(cancelled, { invoice_id: 9 }, { dryRun: false, call: answering({ id: 9, transaction_no: 'SI-3', has_payments: false }) });
+  assert.equal(unnumbered.outcome, 'voided');
+  assert.equal(unnumbered.total, null);
+});
+
+test('a cancellation still in progress leaves no mark, so the sweep looks again', async () => {
+  // needs_review is written into the ledger entry and undoneCandidates skips anything
+  // carrying one, so flagging an IN_CANCEL latched the order out of every later sweep:
+  // when the cancellation went final a day later nothing looked at it again, the invoice
+  // stayed in the books for a sale that no longer existed, and the dashboard called the
+  // order broken for good.
+  const { RECORDED_UNDONE } = await import('../src/mekari/sync.js');
+  assert.equal(RECORDED_UNDONE.has('pending'), false);
+  assert.deepEqual([...RECORDED_UNDONE].sort(), ['gone', 'needs_review', 'voided']);
+
+  const ledger = { orders: { 'TRL-shopee-A': { invoice_id: 1 } } };
+  const asked = order({ id: 'A', stage: 'cancelled', status: 'IN_CANCEL' });
+  assert.deepEqual(undoneCandidates([asked], ledger).map((o) => o.id), ['A']);
+  const outcome = await voidInvoice(asked, ledger.orders['TRL-shopee-A'], { dryRun: false });
+  assert.equal(outcome.outcome, 'pending');
+  // Nothing recorded, so the same order is still a candidate when the status goes final.
+  assert.deepEqual(undoneCandidates([asked], ledger).map((o) => o.id), ['A']);
 });

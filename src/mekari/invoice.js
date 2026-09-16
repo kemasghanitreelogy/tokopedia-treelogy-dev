@@ -248,8 +248,9 @@ export function buildInvoice({ order, depositTo = null }) {
     transaction_lines_attributes: lines,
     // Jurnal's own delivery field, which is where postage belongs and where it reads
     // properly - under the subtotal, not as a product nobody sells. Which account it
-    // credits is a company setting rather than anything on this payload, so the sync
-    // checks that setting before it will post an invoice carrying postage at all.
+    // credits is a company mapping rather than anything on this payload, and it is not
+    // writable through the public API; sources.js records the account it lands in and the
+    // investigation behind it. Nothing gates on that mapping, by decision.
     shipping_price: shipping,
     // Written on every invoice rather than typed in afterwards. A tag that depends on
     // somebody remembering is a tag that is right for a fortnight and then silently is
@@ -292,20 +293,57 @@ export function buildInvoice({ order, depositTo = null }) {
 }
 
 /**
- * Recompute the payload's own total and compare it with what was intended.
+ * Check the built payload against the order it came from, before it reaches the books.
  *
- * Cheap, and the one check that catches a mapping mistake before it reaches the books -
- * a wrong number in accounting is worse than no number at all.
+ * Read what this does and does not prove, because for a long time it proved less than it
+ * looked like it did. Recomputing goods + shipping off the payload and comparing that
+ * with buildInvoice's own expectedTotal compares a sum with itself: both come from the
+ * same lines by the same arithmetic, so the equality holds even when a line was dropped or
+ * mapped onto the wrong quantity on the way in - the shortfall lands in both halves and
+ * cancels. An understated invoice passed every check here and went into the books clean.
+ *
+ * So the order is the thing it is checked against. saleValue reads order.finance directly
+ * - it is the same definition the dashboard totals by, so if these two ever disagree one
+ * of them is wrong and it matters either way - and the line count and total quantity are
+ * compared too, because two mapping slips can cancel in a sum and cannot cancel in a
+ * count.
+ *
+ * What it still cannot catch: a price the platform reported wrongly, or a SKU that maps to
+ * the wrong Jurnal product. Both are faithful copies of what the order says, and nothing
+ * in this file has anything truer to compare them with.
+ *
+ * @param {object} payload        the {sales_invoice} buildInvoice produced
+ * @param {number} expectedTotal  buildInvoice's own total
+ * @param {object|null} order     the order it was built from; omitted only where there is
+ *                                none to hand, which costs the whole cross-check
  */
-export function verifyInvoice(payload, expectedTotal) {
+export function verifyInvoice(payload, expectedTotal, order = null) {
   const invoice = payload.sales_invoice;
   const lines = invoice.transaction_lines_attributes;
-  // Every rupiah is in the lines now, postage included, so this is the whole invoice.
+  // Goods only: postage travels in Jurnal's own shipping field, not as a line.
   const goods = lines.reduce((n, l) => n + l.rate * l.quantity, 0);
   const shipping = invoice.shipping_price ?? 0;
   const total = goods + shipping;
   if (total !== expectedTotal) {
     throw new InvoiceError(`total faktur ${total} tidak sama dengan ${expectedTotal}`);
+  }
+
+  if (order) {
+    const sourceLines = order.finance?.lines ?? [];
+    // A line that never made it onto the invoice is a sale understated by the whole of
+    // that line, and it is invisible in a total that was derived from the same mapping.
+    if (lines.length !== sourceLines.length) {
+      throw new InvoiceError(`faktur punya ${lines.length} baris, pesanan ${order.id} punya ${sourceLines.length}`);
+    }
+    const invoiceQty = lines.reduce((n, l) => n + l.quantity, 0);
+    const orderQty = sourceLines.reduce((n, l) => n + (Number(l.qty) || 0), 0);
+    if (invoiceQty !== orderQty) {
+      throw new InvoiceError(`faktur menagih ${invoiceQty} unit, pesanan ${order.id} berisi ${orderQty}`);
+    }
+    const worth = saleValue(order);
+    if (worth !== null && worth !== total) {
+      throw new InvoiceError(`total faktur ${total} tidak sama dengan nilai pesanan ${order.id} sebesar ${worth}`);
+    }
   }
   // Postage that is charged but not declared shipped is stored as zero by Jurnal, so the
   // invoice would be short by exactly the postage - five went into the books that way

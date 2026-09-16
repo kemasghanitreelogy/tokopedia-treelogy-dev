@@ -158,13 +158,6 @@ export async function rpc(name, args = {}, options = {}) {
   return body;
 }
 
-/**
- * Read a table or view, following PostgREST's 1000-row pages to the end.
- *
- * The page ceiling is not a suggestion: a query matching 4,000 rows returns 1,000 and no
- * error, so a caller that ignores it silently works on a quarter of the data. Paging is
- * therefore not optional and does not belong at the call site.
- */
 /** Pages fetched at once after the first. Enough to hide the latency, few enough to be polite. */
 const PAGE_CONCURRENCY = 4;
 
@@ -176,7 +169,63 @@ const PAGE_CONCURRENCY = 4;
  */
 const MAX_FALLBACK_ROWS = 500 * PAGE_SIZE;
 
+/** How many times a torn read is started over before the caller is told it could not be had. */
+const REREADS = 3;
+
+/** What readPages returns instead of rows when the table moved underneath the offsets. */
+const TORN = Symbol('torn');
+
+const countOf = (contentRange) => Number(String(contentRange ?? '').split('/')[1]);
+
+/**
+ * Read a table or view, following PostgREST's 1000-row pages to the end.
+ *
+ * The page ceiling is not a suggestion: a query matching 4,000 rows returns 1,000 and no
+ * error, so a caller that ignores it silently works on a quarter of the data. Paging is
+ * therefore not optional and does not belong at the call site.
+ *
+ * Orders arrive by webhook while this is paging, and a list of offsets does not survive that.
+ *
+ * The offsets are arithmetic done once, from the count the first page reported. With
+ * `created_at.desc` a row inserted while page three is in flight pushes every older row one
+ * place further down, so the oldest rows in the window slide past the last offset we ever
+ * ask for and are simply never requested - no error, no short page, just a window quietly
+ * missing its earliest sales. A delete shifts rows the other way and skips one in the
+ * middle. Either way the caller gets an array that looks exactly like a complete answer.
+ *
+ * Keyset pagination on (created_at, id) is immune to both and is the right answer for a
+ * cursor that belongs to one query. This helper is not that: it pages whatever params the
+ * call site passes, and the orders window is sorted by three columns with `channel` in the
+ * middle, so the "after this row" predicate would have to be composed per call site and
+ * every caller taught to carry its key. What is cheap here is noticing. The last page is
+ * asked for with an exact count as well - the request happens either way, so the count
+ * costs no round trip - and a total that no longer matches the first page's means the
+ * offsets were computed against a table that has since moved. Then the whole read starts
+ * again rather than handing back a window with a hole in it.
+ *
+ * What that leaves: an insert and a delete landing between the same two requests keep the
+ * count identical and would still slip through. That is a far narrower race than the one
+ * this closes, and closing it needs the keyset.
+ */
 export async function selectAll(table, params = {}, options = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    const rows = await readPages(table, params, options);
+    if (rows !== TORN) return rows;
+    if (attempt === REREADS) {
+      // Three torn reads in a row is not a busy minute, it is a table being written faster
+      // than it can be read. Saying so lets loadOrders fall back to the platforms; a
+      // silently short array gives it nothing to fall back from.
+      const error = new SupabaseError(
+        `${table}: berubah di tengah ${REREADS} kali pembacaan berturut-turut - hasilnya tidak utuh`,
+        { status: 0 },
+      );
+      error.retryable = false;
+      throw error;
+    }
+  }
+}
+
+async function readPages(table, params, options) {
   // The first page is asked for with an exact count, which is what turns the rest from a
   // guessing game into arithmetic: over a link to another continent, three pages fetched
   // one after another is three round trips of latency for data that has no order
@@ -189,9 +238,10 @@ export async function selectAll(table, params = {}, options = {}) {
     prefer: 'count=exact',
   });
   const rows = Array.isArray(first.body) ? first.body : [];
+  // One request cannot tear: whatever the table did afterwards, this is a whole answer.
   if (rows.length < PAGE_SIZE) return rows;
 
-  const total = Number(String(first.contentRange ?? '').split('/')[1]);
+  const total = countOf(first.contentRange);
   if (!Number.isFinite(total)) {
     // PostgREST declined to count. Fall back to walking until a short page ends it - but
     // only ever forwards, and never forever.
@@ -202,6 +252,11 @@ export async function selectAll(table, params = {}, options = {}) {
     // thousand rows on every pass, advancing nothing, until the process runs out of memory
     // with no error to explain it. Refusing loudly costs the caller one read; the other
     // way costs the box.
+    //
+    // A walk cannot be checked against a count it was never given, so this path keeps the
+    // tearing the counted path above now rejects. It is the path nothing takes: PostgREST
+    // counts when it is asked to, and a deployment where it does not is already broken in
+    // a way worth noticing on its own.
     let marker = JSON.stringify(rows[0] ?? null);
     for (let from = rows.length; from < MAX_FALLBACK_ROWS; from += PAGE_SIZE) {
       const { body } = await request(table, { ...options, params, range: `${from}-${from + PAGE_SIZE - 1}` });
@@ -224,17 +279,41 @@ export async function selectAll(table, params = {}, options = {}) {
 
   const offsets = [];
   for (let from = PAGE_SIZE; from < total; from += PAGE_SIZE) offsets.push(from);
+  // A window of exactly one full page is still a single request, and single requests are
+  // whole. Checking it against a second count would only invent a failure.
+  if (offsets.length === 0) return rows;
 
+  const last = offsets[offsets.length - 1];
+  let after = total;
   // Ordering is restored by offset, not by arrival: pages come back in whatever order the
   // network hands them over, and the caller asked for a sorted list.
   const pages = new Array(offsets.length);
   for (let i = 0; i < offsets.length; i += PAGE_CONCURRENCY) {
     const group = offsets.slice(i, i + PAGE_CONCURRENCY);
+    let shrank = false;
     await Promise.all(group.map(async (from, j) => {
-      const { body } = await request(table, { ...options, params, range: `${from}-${from + PAGE_SIZE - 1}` });
-      pages[i + j] = Array.isArray(body) ? body : [];
+      try {
+        const { body, contentRange } = await request(table, {
+          ...options,
+          params,
+          range: `${from}-${from + PAGE_SIZE - 1}`,
+          ...(from === last ? { prefer: 'count=exact' } : {}),
+        });
+        pages[i + j] = Array.isArray(body) ? body : [];
+        if (from === last) after = countOf(contentRange);
+      } catch (error) {
+        // PostgREST answers 416 when a range starts past the end of the result. That is not
+        // a malformed request, it is rows having been deleted since the count was taken -
+        // the same tearing the total check catches, arriving as an error instead of as a
+        // number. Anything else is a real failure and belongs to the caller.
+        if (error?.status !== 416 && error?.code !== 'PGRST103') throw error;
+        shrank = true;
+      }
     }));
+    if (shrank) return TORN;
   }
+  if (!Number.isFinite(after) || after !== total) return TORN;
+
   for (const page of pages) rows.push(...(page ?? []));
   return rows;
 }

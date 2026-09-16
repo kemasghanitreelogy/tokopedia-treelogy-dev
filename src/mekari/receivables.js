@@ -34,14 +34,32 @@ const PAGE_SIZE = 100;
  * kept one record per name patched one of them and reported every one of them as moved,
  * so a sale could still land in the general receivable with the run calling itself clean.
  *
- * @returns {Promise<Map<string, Array<{id: number, arNumber: string, arName: string}>>>}
+ * Checked against Jurnal's own total_count, which rides free on the first page, because a
+ * customer lost to pagination is the quietest failure in this file. plannedMoves reads a
+ * name it cannot find as a buyer with no contact yet - "they get the right account for
+ * free at the moment the contact is created" - and that sentence is true of a new buyer
+ * and false of one the walk simply missed. Theirs is an existing contact still on 1100
+ * General, and every sale of theirs keeps landing there while the run reports itself
+ * clean. The invoice list lost 48 rows to exactly this and said nothing.
+ *
+ * No sort_key is asked for, deliberately. The invoice scan's remedy was to sort on
+ * created_at rather than the date with ties, but Jurnal answers 422 for two of the three
+ * sort keys tried on that endpoint and this one has never been asked for a sort at all -
+ * a 422 here would abort a restatement before it moved a single customer. The count is
+ * what catches the failure; the sort is what to try next if the count ever trips.
+ *
+ * @returns {Promise<{byName: Map<string, Array<{id: number, arNumber: string, arName: string}>>, walked: number, expected: number, complete: boolean}>}
  */
-export async function customersByName({ deadlineAt = null } = {}) {
+export async function customersByName({ deadlineAt = null, call = mekari } = {}) {
   const byName = new Map();
+  let walked = 0;
+  let expected = null;
   for (let page = 1; ; page += 1) {
-    const result = await mekari({ path: `${CUSTOMERS_PATH}?page=${page}&page_size=${PAGE_SIZE}`, deadlineAt });
+    const result = await call({ path: `${CUSTOMERS_PATH}?page=${page}&page_size=${PAGE_SIZE}`, deadlineAt });
     const rows = result?.customers ?? [];
+    if (expected === null) expected = Number(result?.total_count);
     for (const row of rows) {
+      walked += 1;
       const person = row?.person ?? row;
       const name = String(person?.display_name ?? person?.name ?? '').trim();
       if (!name || !person?.id) continue;
@@ -54,7 +72,19 @@ export async function customersByName({ deadlineAt = null } = {}) {
       byName.set(name, held);
     }
     const pages = Number(result?.total_pages) || 1;
-    if (page >= pages || rows.length === 0) return byName;
+    if (page >= pages || rows.length === 0) {
+      return { byName, walked, expected, complete: !Number.isFinite(expected) || walked >= expected };
+    }
+  }
+}
+
+/** A walk that came back short, refusing rather than moving the customers it did see. */
+export class PartialCustomerListError extends Error {
+  constructor(walked, expected) {
+    super(`daftar pelanggan Jurnal hanya terbaca ${walked} dari ${expected} - tidak aman memindahkan piutang`);
+    this.name = 'PartialCustomerListError';
+    this.walked = walked;
+    this.expected = expected;
   }
 }
 
@@ -99,20 +129,32 @@ export function plannedMoves(wanted, accounts, customers) {
  * @param {Map<string, string>} wanted  customer display name -> A/R account number
  * @param {{dryRun?: boolean, onProgress?: Function, deadlineAt?: number|null}} options
  */
-export async function alignReceivables(wanted, { dryRun = true, onProgress = () => {}, deadlineAt = null } = {}) {
-  const [accounts, customers] = await Promise.all([accountMap({ deadlineAt }), customersByName({ deadlineAt })]);
+export async function alignReceivables(wanted, { dryRun = true, onProgress = () => {}, deadlineAt = null, call } = {}) {
+  const options = { deadlineAt, ...(call ? { call } : {}) };
+  const [accounts, read] = await Promise.all([accountMap(options), customersByName(options)]);
+  const { byName: customers, walked, expected, complete } = read;
 
   const { toChange, unknown, collisions } = plannedMoves(wanted, accounts, customers);
 
   const total = customerCount(customers);
-  if (dryRun) return { dryRun: true, customers: total, toChange, unknown, collisions, changed: 0, failures: [] };
+  if (dryRun) return { dryRun: true, customers: total, walked, expected, complete, toChange, unknown, collisions, changed: 0, failures: [] };
   if (isReadOnly()) throw new ReadOnlyError('akun piutang pelanggan');
+  // Refused rather than partly done, and refused here rather than reported afterwards.
+  //
+  // The caller that matters is the restatement, which runs this first and then deletes
+  // several hundred invoices it can never get back. Moving the customers the walk happened
+  // to see and rewriting every invoice against them puts the ones it missed straight back
+  // into 1100 General - the whole exercise spent, the old invoice numbers gone, and
+  // nothing in the output saying which sales it happened to. Throwing before the first
+  // PATCH costs a re-run; the alternative costs the books.
+  if (!complete) throw new PartialCustomerListError(walked, expected);
 
   let changed = 0;
   const failures = [];
+  const patch = call ?? mekari;
   for (const item of toChange) {
     try {
-      await mekari({
+      await patch({
         method: 'PATCH',
         path: `${CONTACTS_PATH}/${item.id}`,
         deadlineAt,
@@ -124,5 +166,5 @@ export async function alignReceivables(wanted, { dryRun = true, onProgress = () 
       failures.push({ name: item.name, error: error.message });
     }
   }
-  return { dryRun: false, customers: total, toChange, unknown, collisions, changed, failures };
+  return { dryRun: false, customers: total, walked, expected, complete, toChange, unknown, collisions, changed, failures };
 }

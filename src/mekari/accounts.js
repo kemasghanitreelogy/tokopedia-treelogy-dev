@@ -29,12 +29,30 @@ export class AccountMissingError extends Error {
   }
 }
 
-/** Read the whole chart once. One request per 200 accounts, and there are 210. */
-async function fetchAccounts({ deadlineAt = null } = {}) {
+/**
+ * Read the whole chart once. One request per 200 accounts, and there are 210.
+ *
+ * Checked against Jurnal's own total_count, which rides free on the first page.
+ *
+ * The invoice list was losing rows to pagination over a sort with ties - transaction_date
+ * has no time on it, so equal rows came back in a different order each request and a scan
+ * finished 48 invoices short with no error - and the remedy there was to sort on
+ * created_at instead. It is not applied here on purpose: the accounts endpoint has never
+ * been asked for a sort_key, Jurnal answers 422 for the two other keys that were tried on
+ * the invoice list, and a 422 on this read would take down every write in the system,
+ * since each of them resolves its account through this map. Counting the rows catches the
+ * same failure without betting the chart of accounts on an unverified parameter. If a
+ * short read ever does show up here, adding the sort is the next thing to try.
+ *
+ * @returns {Promise<{byNumber: object, walked: number, expected: number, complete: boolean}>}
+ */
+async function fetchAccounts({ deadlineAt = null, call = mekari } = {}) {
   const rows = [];
+  let expected = null;
   for (let page = 1; ; page += 1) {
-    const result = await mekari({ path: `/public/jurnal/api/v1/accounts?page=${page}&page_size=${PAGE_SIZE}`, deadlineAt });
+    const result = await call({ path: `/public/jurnal/api/v1/accounts?page=${page}&page_size=${PAGE_SIZE}`, deadlineAt });
     const chunk = result?.accounts ?? [];
+    if (expected === null) expected = Number(result?.total_count);
     rows.push(...chunk);
     const pages = Number(result?.total_pages) || 1;
     if (page >= pages || chunk.length === 0) break;
@@ -44,7 +62,8 @@ async function fetchAccounts({ deadlineAt = null } = {}) {
     const number = String(account.number ?? account.account_number ?? '').trim();
     if (number) byNumber[number] = { id: account.id, number, name: account.name ?? '' };
   }
-  return byNumber;
+  const complete = !Number.isFinite(expected) || rows.length >= expected;
+  return { byNumber, walked: rows.length, expected, complete };
 }
 
 /**
@@ -53,15 +72,23 @@ async function fetchAccounts({ deadlineAt = null } = {}) {
  * @param {{force?: boolean, deadlineAt?: number|null}} options
  * @returns {Promise<Record<string, {id: number, number: string, name: string}>>}
  */
-export async function accountMap({ force = false, deadlineAt = null } = {}) {
+export async function accountMap({ force = false, deadlineAt = null, call } = {}) {
   if (!force) {
     const cached = await readDoc(ACCOUNTS_PATHNAME).catch(() => null);
     const at = Date.parse(cached?.at ?? '');
     if (cached?.accounts && Number.isFinite(at) && Date.now() - at < TTL_MS) return cached.accounts;
   }
-  const accounts = await fetchAccounts({ deadlineAt });
-  await writeDoc(ACCOUNTS_PATHNAME, { version: 1, at: new Date().toISOString(), accounts }).catch(() => {});
-  return accounts;
+  const { byNumber, walked, expected, complete } = await fetchAccounts({ deadlineAt, ...(call ? { call } : {}) });
+  // A short read is never cached. The TTL here is a day, so caching one would make a
+  // moment's bad pagination into twenty-four hours of "akun 1501 tidak ada di Jurnal" -
+  // and requiredAccounts, which forces a fresh read on a miss, would be forcing it against
+  // a cache it had just written itself.
+  if (complete) {
+    await writeDoc(ACCOUNTS_PATHNAME, { version: 1, at: new Date().toISOString(), accounts: byNumber }).catch(() => {});
+  } else {
+    console.warn(`mekari: daftar akun dapat ${walked} dari ${expected} baris - tidak disimpan ke cache`);
+  }
+  return byNumber;
 }
 
 /**

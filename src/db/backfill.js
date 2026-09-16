@@ -85,16 +85,47 @@ export function mergeReads(first, second) {
  * Only a chunk with something wrong is re-read, so a healthy run pays nothing at all, and
  * every attempt's orders are kept rather than only the last one's.
  */
-async function readChunk(window, attempts, collect) {
+async function readChunk(window, attempts, collect, sources) {
+  // Nought attempts used to mean the loop never ran and `null` came back, and the run then
+  // died several chunks in on `live.orders.length` with nothing reported at all. One read
+  // is the least that can be called a read.
+  const rounds = Math.max(1, Math.floor(Number(attempts)) || 1);
   let merged = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const live = await collect({ range: window, maxPerPlatform: 5000, tracking: false });
+  for (let attempt = 1; attempt <= rounds; attempt += 1) {
+    const live = await readOnce(window, collect, sources);
     merged = merged === null ? live : mergeReads(merged, live);
     const failed = Object.keys(merged.errors ?? {}).length > 0;
-    if (!failed || attempt === attempts) return merged;
+    if (!failed || attempt === rounds) return merged;
     await sleep(attempt * 2000);
   }
   return merged;
+}
+
+/**
+ * One read, where a thrown one is every source failing rather than the end of the run.
+ *
+ * collectOrders puts each platform behind allSettled and hands failures back as `errors`,
+ * so in the ordinary way of things nothing escapes it - which is exactly what was true of
+ * the write below until a database went down mid-backfill and the exception carried off
+ * five weeks of stored chunks along with the report of them. Anything that does get out
+ * here - a token refresh rejecting outside the settle, a range helper handed a bad date -
+ * would do the same thing one step earlier.
+ *
+ * Named as a failure of every source, so the merge treats it as precisely what it is: an
+ * attempt in which nobody answered. It is retried like any other, and if the retries do not
+ * rescue it, it costs those sources their coverage claim rather than being claimed blind.
+ */
+async function readOnce(window, collect, sources) {
+  try {
+    const live = await collect({ range: window, maxPerPlatform: 5000, tracking: false });
+    return { ...live, orders: live?.orders ?? [] };
+  } catch (error) {
+    return {
+      orders: [],
+      errors: Object.fromEntries((sources ?? []).map((source) => [source, error.message])),
+      truncated: [],
+    };
+  }
 }
 
 /**
@@ -129,15 +160,31 @@ export async function backfill({
   let seen = 0;
 
   for (let start = since; start < until; start += chunkDays * DAY) {
-    const end = Math.min(start + chunkDays * DAY - 1, until);
+    // The last chunk swallows the remainder instead of stopping one second short of it.
+    //
+    // Chunks are half-open in disguise: each ends at `start + span - 1` so the next can
+    // begin at `start + span` with nothing in between. That is right everywhere except the
+    // end, where the loop stops as soon as `start` reaches `until` - so a range whose
+    // length divides exactly by the chunk span left the single instant `until` unread while
+    // coverage was still claimed through it. Both bounds are inclusive here and in
+    // ordersInRange, and a claimed window is never read live again, so an order created on
+    // that second would have been lost for good on a one-second hole nobody could see.
+    const edge = start + chunkDays * DAY - 1;
+    const end = edge >= until - 1 ? until : edge;
     const window = { since: start, until: end, label: `${wibDate(start)} s/d ${wibDate(end)}` };
 
     // maxPerPlatform is set high deliberately: a cap that trims here does not show up as
     // an error, it shows up months later as a week that is quietly short of orders.
-    const live = await readChunk(window, attempts, collect);
+    const live = await readChunk(window, attempts, collect, sources);
 
     for (const source of sources) {
-      const failed = Boolean(live.errors?.[source]);
+      // Named, not weighed. `Boolean(live.errors[source])` asked whether the *message* was
+      // truthy, and an Error thrown with no message - `new Error()`, an abort, a platform
+      // client that only sets a status - reads as no error at all. readChunk counts the same
+      // failure by key and retries it three times; this line then handed the source its
+      // coverage claim anyway. Two answers to one question in one file, and the permissive
+      // one was the one that decided what the dashboard would stop reading live.
+      const failed = source in (live.errors ?? {});
       // A ternary with two arms for three sources: shopify took the Shopee branch, so a
       // truncated Shopee read revoked shopify's claim and a truncated Shopify read
       // revoked nothing. Named explicitly now, and a source with no marker is simply not
@@ -191,10 +238,29 @@ export async function backfill({
   // What a clean run would claim, worked out the same way whether or not it is written.
   // A dry run that reported nothing claimable would say the run had failed when it had
   // only been asked not to write.
-  const claimed = sources.filter((source) => whole.has(source));
-  if (!dryRun) {
-    for (const source of claimed) {
-      await recordCoverage(source, { from: since, through: until, note: 'backfill' });
+  const claimable = sources.filter((source) => whole.has(source));
+  const claimed = [];
+  const claimFailed = [];
+  if (dryRun) {
+    claimed.push(...claimable);
+  } else {
+    for (const source of claimable) {
+      try {
+        await recordCoverage(source, { from: since, through: until, note: 'backfill' });
+        claimed.push(source);
+      } catch (error) {
+        // The same lesson as the per-chunk write above, one step later and much easier to
+        // miss: this loop runs after every chunk is already stored, so one throw here threw
+        // away the entire report - every chunk, every rejected order, both counts - over a
+        // failure that costs a single source its claim. The claim not landing is the safe
+        // half: an unclaimed window is read live again. The report nobody ever sees is not,
+        // and the operator's only way to find out how far the run got was to start again.
+        //
+        // `claimed` is what the table now says, not what this run hoped it would say. The
+        // whole point of the list is that the operator can read "the dashboard may answer
+        // for these from the database", and a source whose write failed may not.
+        claimFailed.push({ source, error: error.message });
+      }
     }
   }
 
@@ -208,6 +274,10 @@ export async function backfill({
     // Named so the operator can see at a glance which channels the dashboard may now
     // answer for from the database, and which are still going to the platforms.
     claimed,
+    // A source that came back whole in every chunk and then could not have its claim
+    // written. Separate from `unclaimed` because the cure is different: this one is worth
+    // re-running, a source that read short is worth looking at first.
+    claimFailed,
     unclaimed: sources.filter((s) => !claimed.includes(s)),
     channels: claimed.flatMap((s) => SOURCE_CHANNELS[s] ?? []),
     dryRun,

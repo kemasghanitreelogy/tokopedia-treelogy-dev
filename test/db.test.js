@@ -280,3 +280,265 @@ test('a database that refuses one chunk costs that chunk, not the whole run', as
   assert.deepEqual(result.claimed, []);
   assert.ok(result.unclaimed.includes('shopee') && result.unclaimed.includes('tiktok'));
 });
+
+/* ------------------------------------------- paging a table that is being written into */
+
+/**
+ * Point the client at a host that does not exist for the length of one test.
+ *
+ * The environment wins over .env in loadSupabaseConfig, so the real project is out of reach
+ * from here even before fetch is replaced - and it is put back afterwards whatever happens,
+ * because a leaked SUPABASE_TEST_LIVE would let every later test in this file reach out.
+ */
+async function withFakeProject(run) {
+  const before = {
+    SUPABASE_TEST_LIVE: process.env.SUPABASE_TEST_LIVE,
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
+  };
+  process.env.SUPABASE_TEST_LIVE = '1';
+  process.env.SUPABASE_URL = FAKE.url;
+  process.env.SUPABASE_SECRET_KEY = FAKE.secretKey;
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+}
+
+const rangeStart = (init) => Number(String(init.headers.range).split('-')[0]);
+
+test('a counted read carries the count on its last page as well, at no extra round trip', async () => {
+  const { selectAll } = await import('../src/db/client.js');
+  const seen = [];
+  const restore = stubFetch((url, init) => {
+    const from = rangeStart(init);
+    seen.push({ from, counted: String(init.headers.prefer ?? '').includes('count=exact') });
+    return answer(rowsFrom(from, from >= 2000 ? 500 : 1000), { contentRange: `${from}-${from + 999}/2500` });
+  });
+  try {
+    const rows = await selectAll('orders', { select: 'n' }, { config: FAKE });
+    assert.equal(rows.length, 2500);
+    assert.deepEqual(rows.at(-1), { n: 2499 });
+    // The count on the last page is what the check below compares against, and it rides a
+    // request that was going out anyway.
+    assert.deepEqual(seen, [{ from: 0, counted: true }, { from: 1000, counted: false }, { from: 2000, counted: true }]);
+  } finally {
+    restore();
+  }
+});
+
+test('a window written into while it is being paged is refused, not silently short', async () => {
+  const { selectAll, SupabaseError } = await import('../src/db/client.js');
+  let reads = 0;
+  // One webhook lands while page two is in flight. Ordered created_at.desc, that pushes
+  // every older row one place down, so the oldest row in the window slides past offset 2499
+  // - the last one the arithmetic ever asks for - and was dropped with no error at all.
+  const restore = stubFetch((url, init) => {
+    reads += 1;
+    const from = rangeStart(init);
+    const total = from === 2000 ? 2501 : 2500;
+    return answer(rowsFrom(from, from >= 2000 ? 500 : 1000), { contentRange: `${from}-${from + 999}/${total}` });
+  });
+  try {
+    await assert.rejects(
+      () => selectAll('orders', { select: 'n' }, { config: FAKE }),
+      (error) => {
+        assert.ok(error instanceof SupabaseError);
+        assert.match(error.message, /tidak utuh/);
+        assert.equal(error.retryable, false, 'pembacaan ulang sudah dilakukan tiga kali di dalam');
+        return true;
+      },
+    );
+    assert.equal(reads, 9, 'tiga kali baca ulang, tiga halaman tiap kali');
+  } finally {
+    restore();
+  }
+});
+
+test('a page whose offset no longer exists is a table that shrank, not a broken request', async () => {
+  const { selectAll } = await import('../src/db/client.js');
+  // PostgREST answers 416 when a range starts past the end of the result, which after a
+  // delete is what the last offset becomes. Treated as a request error it ended the read
+  // outright; it is the same tearing the count catches, arriving as a status.
+  let attempts = 0;
+  const restore = stubFetch((url, init) => {
+    const from = rangeStart(init);
+    if (from === 1000) {
+      attempts += 1;
+      if (attempts === 1) return answer({ message: 'Requested Range Not Satisfiable', code: 'PGRST103' }, { status: 416 });
+      return answer(rowsFrom(from, 200), { contentRange: `1000-1199/1200` });
+    }
+    return answer(rowsFrom(from, 1000), { contentRange: `0-999/${attempts === 0 ? 1500 : 1200}` });
+  });
+  try {
+    const rows = await selectAll('orders', { select: 'n' }, { config: FAKE });
+    assert.equal(rows.length, 1200, 'dibaca ulang dari awal, bukan dilempar ke pemanggil');
+  } finally {
+    restore();
+  }
+});
+
+test('the coverage table is read in a fixed order, so paging it cannot drop a source', async () => {
+  const { readCoverage } = await import('../src/db/orders.js');
+  let asked = '';
+  const restore = stubFetch((url) => {
+    asked = decodeURIComponent(url);
+    return answer([], { contentRange: '0-0/0' });
+  });
+  try {
+    await withFakeProject(() => readCoverage());
+    // Postgres orders nothing it is not asked to, and selectAll pages by offset. A source
+    // missing from the coverage map reads as "never ingested", which is the one answer that
+    // sends every dashboard back to the platforms with nothing to explain why.
+    assert.match(asked, /order=source\.asc/);
+  } finally {
+    restore();
+  }
+});
+
+/* ------------------------------------------------- the chunk boundary, and what it claims */
+
+const noStore = async () => ({ written: 0, rejected: [] });
+const WEEK = 7 * 24 * 3600;
+
+test('the last chunk reaches the end of the range instead of stopping a second short', async () => {
+  const { backfill } = await import('../src/db/backfill.js');
+  const windows = [];
+  const collect = async ({ range }) => { windows.push(range); return read([]); };
+
+  // A range that divides exactly by the chunk span: the loop stopped as soon as `start`
+  // reached `until`, leaving the single instant `until` unread while coverage was claimed
+  // through it - and a claimed window is never read live again.
+  const until = DB_HISTORY_START_EPOCH + 2 * WEEK;
+  await backfill({ until, attempts: 1, collect, store: noStore, dryRun: true });
+
+  assert.equal(windows.length, 2);
+  assert.equal(windows[0].since, DB_HISTORY_START_EPOCH);
+  assert.equal(windows[1].since, windows[0].until + 1, 'tanpa celah di antara dua potongan');
+  assert.equal(windows.at(-1).until, until, 'detik terakhir ikut dibaca, bukan hanya diklaim');
+});
+
+test('a coverage claim that cannot be written costs the claim, not the report', async () => {
+  const { backfill } = await import('../src/db/backfill.js');
+  // recordCoverage goes through the real client, which under the test runner refuses for
+  // want of credentials - which is exactly the failure being exercised: one throw after
+  // every chunk is already stored used to carry off the whole report with it, and the
+  // operator's only way to learn how far the run had got was to start it again.
+  const collect = async () => read([anOrder('shopee', 'S1')]);
+  const store = async (orders) => ({ written: orders.length, rejected: [] });
+  const result = await backfill({ until: DB_HISTORY_START_EPOCH + WEEK, attempts: 1, collect, store });
+
+  assert.equal(result.stored, 1, 'yang sudah tersimpan tetap dilaporkan');
+  assert.equal(result.chunks.length, 1);
+  assert.deepEqual(result.claimed, [], 'dan tidak ada sumber yang mengaku tercatat');
+  assert.deepEqual([...result.claimFailed.map((c) => c.source)].sort(), [...result.unclaimed].sort());
+  assert.match(result.claimFailed[0].error, /belum diisi/);
+});
+
+test('a failure that arrives with no message still costs the source its claim', async () => {
+  const { backfill } = await import('../src/db/backfill.js');
+  // `new Error()` carries an empty message, and the claim test weighed the message rather
+  // than looking for the source - so the one failure that said nothing was also the only
+  // one that was forgiven, and the week was claimed with Shopee missing from it.
+  const collect = async () => read([], { errors: { shopee: '' } });
+  const result = await backfill({ until: DB_HISTORY_START_EPOCH + WEEK, attempts: 1, collect, store: noStore, dryRun: true });
+  assert.ok(!result.claimed.includes('shopee'), 'shopee gagal, walau tanpa kata-kata');
+  assert.ok(result.unclaimed.includes('shopee'));
+  assert.ok(result.claimed.includes('tiktok'), 'dan yang lain tidak ikut kena');
+});
+
+test('a read that throws costs its sources, not the rest of the run', async () => {
+  const { backfill } = await import('../src/db/backfill.js');
+  let calls = 0;
+  const collect = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('fetch failed');
+    return read([anOrder('shopee', 'S2')]);
+  };
+  const result = await backfill({ until: DB_HISTORY_START_EPOCH + 2 * WEEK, attempts: 1, collect, store: noStore, dryRun: true });
+
+  assert.equal(result.chunks.length, 2, 'minggu kedua tetap dibaca');
+  assert.match(result.chunks[0].errors.shopee, /fetch failed/);
+  assert.match(result.chunks[0].errors.tiktok, /fetch failed/, 'satu lemparan adalah kegagalan semua sumber');
+  assert.equal(result.seen, 1);
+  assert.deepEqual(result.claimed, [], 'dan tidak ada yang diklaim di atas potongan yang tak terbaca');
+});
+
+test('retrying a chunk cannot launder a platform that is simply down', async () => {
+  const { mergeReads } = await import('../src/db/backfill.js');
+  // The retries exist for a flaky link, so the question worth pinning is whether three goes
+  // can turn a permanent failure into a clean read. They cannot: an error survives the merge
+  // only by being in both sides, so what comes out is the set of sources that failed every
+  // single time - and a source that answered once keeps its orders and loses its error.
+  const first = read([], { errors: { tiktok: 'fetch failed', shopee: 'fetch failed' } });
+  const second = read([anOrder('shopee', 'S1')], { errors: { tiktok: 'fetch failed' } });
+  const third = read([anOrder('shopee', 'S2')], { errors: { tiktok: '401 unauthorized' } });
+
+  const merged = mergeReads(mergeReads(first, second), third);
+  assert.deepEqual(Object.keys(merged.errors), ['tiktok']);
+  assert.equal(merged.errors.tiktok, '401 unauthorized', 'dilaporkan dengan kegagalan terakhirnya');
+  assert.deepEqual(merged.orders.map((o) => o.id), ['S1', 'S2']);
+});
+
+/* ----------------------------------------------- what a live read is allowed to claim */
+
+test('a rejected order nobody can place costs every claim, not none of them', async () => {
+  const { rememberOrders } = await import('../src/orders-source.js');
+  const claims = [];
+  const restore = stubFetch(async (url, init) => {
+    if (url.includes('/rpc/ingest_orders')) {
+      const body = JSON.parse(init.body);
+      // A channel the database has never heard of, refused one order at a time.
+      if (body.p_orders.some((o) => o.channel === 'martabak')) {
+        if (body.p_orders.length === 1) return answer({ message: 'channel tidak dikenal', code: '23514' }, { status: 400 });
+        return answer({ message: 'batch gagal', code: '23514' }, { status: 400 });
+      }
+      return answer(body.p_orders.length);
+    }
+    if (init.method === 'POST') { claims.push(JSON.parse(init.body)[0].source); return answer(null); }
+    return answer([], { contentRange: '0-0/0' });
+  });
+
+  try {
+    const live = { orders: [anOrder('shopee', 'S1'), anOrder('martabak', 'X1')], errors: {}, truncated: [] };
+    const result = await withFakeProject(() => rememberOrders(live, { since: 1, until: 2 }));
+    // sourceOfChannel answers null for a channel it cannot place, and null matched no
+    // source - so the one rejection nobody could explain was the only one that cost
+    // nothing, and the window was claimed with a hole of unknown position frozen into it.
+    assert.deepEqual(result.claimed, [], 'lubang yang tak diketahui letaknya membatalkan semua klaim');
+    assert.deepEqual(claims, []);
+    assert.equal(result.written, 1, 'pesanan yang baik tetap tersimpan dan terhitung');
+    assert.equal(result.rejected.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('a rejected order that can be placed costs only its own source', async () => {
+  const { rememberOrders } = await import('../src/orders-source.js');
+  const claims = [];
+  const restore = stubFetch(async (url, init) => {
+    if (url.includes('/rpc/ingest_orders')) {
+      const body = JSON.parse(init.body);
+      if (body.p_orders.some((o) => o.id === 'S-buruk')) {
+        return answer({ message: 'invalid input syntax for type bigint', code: '22P02' }, { status: 400 });
+      }
+      return answer(body.p_orders.length);
+    }
+    if (init.method === 'POST') { claims.push(JSON.parse(init.body)[0].source); return answer(null); }
+    return answer([], { contentRange: '0-0/0' });
+  });
+
+  try {
+    const live = { orders: [anOrder('tokopedia', 'T1'), anOrder('shopee', 'S-buruk')], errors: {}, truncated: [] };
+    const result = await withFakeProject(() => rememberOrders(live, { since: 1, until: 2 }));
+    assert.ok(result.claimed.includes('tiktok'), 'sumber yang utuh tetap boleh diklaim');
+    assert.ok(!result.claimed.includes('shopee'));
+    assert.ok(!claims.includes('shopee'), 'shopee punya lubang, jadi jendelanya dibaca langsung lagi');
+  } finally {
+    restore();
+  }
+});

@@ -83,31 +83,61 @@ export function mergeRebuilt(stored, found) {
 }
 
 /**
- * @param {{dryRun?: boolean, since?: string|null}} options
- *   `since` is a WIB calendar date; pages are walked newest-first and the walk stops as
- *   soon as one ends before it. On books with a year of history that is the difference
- *   between five requests and fifty, and requests are the scarce thing here.
+ * Sorted on created_at, and the whole list is walked.
+ *
+ * This used to page on transaction_date, which is a date with no time on it: the 235
+ * invoices sharing 31 August all compare equal, their order between two requests is
+ * unspecified, and rows shift between pages as a result. A scan of the same list came back
+ * 48 invoices short with no error at all, and a ledger rebuilt from a short read is a
+ * ledger that quietly agrees with itself while sales sit outside it. created_at carries a
+ * timestamp, so it is effectively unique and the order holds still. Jurnal refuses
+ * sort_key=id and sort_key=transaction_no with a 422; created_at is the one that works.
+ *
+ * The cost is the early stop, which is gone with it: creation order and transaction order
+ * are different things - a restatement rewrites August invoices today - so reaching a row
+ * older than `since` no longer says anything about the rows after it. The list is walked
+ * to the end and filtered here instead. Catalogue made exactly this trade for exactly this
+ * reason, and paid the same price.
  */
-export async function rebuildLedgerFromJurnal({ dryRun = true, since = null } = {}) {
+const SORT = 'sort_key=created_at&sort_order=desc';
+
+/**
+ * @param {{dryRun?: boolean, since?: string|null, call?: Function}} options
+ *   `since` is a WIB calendar date, applied as a filter rather than as a stopping point.
+ */
+export async function rebuildLedgerFromJurnal({ dryRun = true, since = null, call = mekari } = {}) {
   const found = {};
   let page = 1;
   let pages = 1;
+  let walked = 0;
+  let expected = null;
   for (;;) {
-    const r = await mekari({
-      path: `/public/jurnal/api/v1/sales_invoices?page=${page}&page_size=${PAGE_SIZE}&sort_key=transaction_date&sort_order=desc`,
+    const r = await call({
+      path: `/public/jurnal/api/v1/sales_invoices?page=${page}&page_size=${PAGE_SIZE}&${SORT}`,
     });
-    const rows = r.sales_invoices ?? [];
-    let reachedStart = false;
+    const rows = r?.sales_invoices ?? [];
+    if (expected === null) expected = Number(r?.total_count);
     for (const inv of rows) {
+      walked += 1;
       const iso = jurnalDateToIso(inv.transaction_date);
-      if (since && iso && iso < since) { reachedStart = true; continue; }
+      if (since && iso && iso < since) continue;
       const ours = rebuiltEntry(inv);
       if (!ours) continue;
       found[ours.customId] = ours.entry;
     }
-    pages = Number(r.total_pages) || 1;
-    if (reachedStart || page >= pages || rows.length === 0) break;
+    pages = Number(r?.total_pages) || 1;
+    if (page >= pages || rows.length === 0) break;
     page += 1;
+  }
+
+  // Jurnal's own count, which rides free on the first page. A rebuild that came back short
+  // does not fail - it still corrects everything it did read, and mergeRebuilt only ever
+  // adds and amends - but it must not be reported as a complete picture of the books,
+  // because "every order that was ever posted is known again" is the whole claim this tool
+  // makes and a short read quietly breaks it.
+  const complete = !Number.isFinite(expected) || walked >= expected;
+  if (!complete) {
+    console.warn(`mekari: rebuild membaca ${walked} dari ${expected} faktur - hasil tidak lengkap`);
   }
 
   const current = await loadSyncLedger();
@@ -124,6 +154,6 @@ export async function rebuildLedgerFromJurnal({ dryRun = true, since = null } = 
   }
   return {
     dryRun, since, inJurnal: Object.keys(found).length, before, added: added.length,
-    corrected: corrected.length, unreadable, pagesRead: page, pages,
+    corrected: corrected.length, unreadable, pagesRead: page, pages, walked, expected, complete,
   };
 }

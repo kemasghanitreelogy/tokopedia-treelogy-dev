@@ -10,6 +10,7 @@ import { mask, ok, fail, warn, info, humanTime } from './format.js';
 import { signRequest } from './sign.js';
 import { collectOrders, summarize, CHANNELS, STAGES } from './omni.js';
 import { backfill } from './db/backfill.js';
+import { verifyAgainstPlatforms } from './db/verify.js';
 import { readCoverage, dbStats, DB_HISTORY_START } from './db/orders.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { activeSources, rememberOrders, loadOrders } from './orders-source.js';
@@ -75,6 +76,7 @@ Usage:
   npm run mekari:rebuild      Bangun ulang ledger faktur dari Jurnal (butuh --yes)
   npm run db:backfill         Isi database dari 1 Agustus 2026 sampai sekarang (butuh --yes)
   npm run db:status           Isi database, cakupan per sumber, dan dari mana dashboard membaca
+  npm run db:verify           Cocokkan isi database dengan platform aslinya (pakai kuota marketplace)
   npm run history:pull        Tarik riwayat penjualan semua kanal ke state (bulan demi bulan)
   npm run forecast            Ramal permintaan & kebutuhan stok per SKU dari riwayat
   npm run doctor              End-to-end health check
@@ -1183,6 +1185,52 @@ async function cmdMekariRebuild(config, args = []) {
   return 0;
 }
 
+/**
+ * Is the stored data actually right?
+ *
+ * Everything downstream reads the database, so they all agree with each other by
+ * construction - which proves nothing. An order that never reached Postgres leaves the
+ * dashboard and the books short by the same amount, reconciling perfectly while both are
+ * wrong. Only the marketplaces can settle it.
+ */
+async function cmdDbVerify(config, args = []) {
+  const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length);
+  const to = args.find((a) => a.startsWith('--to='))?.slice('--to='.length);
+  const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
+  const range = from ? resolveRange({ from, to: to ?? wibDate(Math.floor(Date.now() / 1000)) }) : resolveRange({ preset });
+
+  console.log(`\n  Membandingkan ${range.label} dengan platform aslinya...\n`);
+  const r = await verifyAgainstPlatforms({ range });
+
+  console.log(`  ${'KANAL'.padEnd(14)}${'DB'.padStart(7)}${'PLATFORM'.padStart(10)}${'NILAI DB'.padStart(17)}${'NILAI PLATFORM'.padStart(17)}   KETERANGAN`);
+  for (const row of r.rows) {
+    const same = row.stored === row.live && row.storedValue === row.liveValue;
+    const note = same ? ok('cocok')
+      : row.missingFromDb.length > 0 ? fail(`${row.missingFromDb.length} pesanan tidak ada di database`)
+      : row.valueMismatch.length > 0 ? warn(`${row.valueMismatch.length} nilai berbeda`)
+      : warn(`${row.missingFromPlatform.length} tidak dilaporkan platform`);
+    console.log(`  ${row.label.padEnd(14)}${String(row.stored).padStart(7)}${String(row.live).padStart(10)}` +
+      `${rupiah(row.storedValue).padStart(17)}${rupiah(row.liveValue).padStart(17)}   ${note}`);
+  }
+
+  for (const row of r.rows) {
+    if (row.missingFromDb.length > 0) {
+      console.log(`\n  ${fail(`${row.label} - ada di platform, tidak ada di database:`)}`);
+      for (const id of row.missingFromDb.slice(0, 10)) console.log(`    ${id}`);
+      if (row.missingFromDb.length > 10) console.log(`    ...dan ${row.missingFromDb.length - 10} lagi`);
+    }
+    for (const bad of row.valueMismatch.slice(0, 5)) {
+      console.log(`  ${warn(`${row.label} ${bad.id}: database ${rupiah(bad.stored)} vs platform ${rupiah(bad.live)}`)}`);
+    }
+  }
+
+  for (const cut of r.truncated) console.log(`\n  ${warn(`${cut} terpotong - perbandingan kanal itu tidak lengkap`)}`);
+  for (const [ch, msg] of Object.entries(r.errors)) console.log(`  ${fail(`${ch} gagal dibaca: ${msg}`)}`);
+
+  console.log(`\n  ${r.missingFromDb === 0 && r.mismatched === 0 ? ok('database cocok dengan platform') : fail(`${r.missingFromDb} pesanan hilang, ${r.mismatched} nilai berbeda`)}\n`);
+  return r.missingFromDb > 0 ? 1 : 0;
+}
+
 async function cmdHistoryPull(config, args = []) {
   const only = args.find((a) => /^--(shopify|tiktok|shopee)$/.test(a))?.slice(2);
   const t0 = Date.now();
@@ -1343,6 +1391,7 @@ const COMMANDS = {
   'mekari:rebuild': cmdMekariRebuild,
   'db:backfill': cmdDbBackfill,
   'db:status': cmdDbStatus,
+  'db:verify': cmdDbVerify,
   'history:pull': cmdHistoryPull,
   forecast: cmdForecast,
   doctor: cmdDoctor,

@@ -1164,6 +1164,11 @@ async function cmdMekariRecap(config, args = []) {
   console.log(`  nilai pesanan ${rupiah(r.orderValue)}  ·  nilai faktur ${rupiah(r.invoiceValue)}  ·  selisih ${rupiah(r.invoiceValue - r.orderValue)}`);
   if (r.missing > 0) console.log(`  ${fail(`${r.missing} pesanan belum difakturkan senilai ${rupiah(r.missingValue)}`)}`);
   else console.log(`  ${ok('setiap pesanan yang layak sudah punya faktur')}`);
+  if (r.complete === false) {
+    // Said before the findings, not after: every "belum difakturkan" above is suspect when
+    // the scan that produced it came back short.
+    console.log(`  ${fail(`PINDAI TIDAK LENGKAP - ${r.walked} dari ${r.expected} faktur terbaca, angka di atas tidak bisa dipercaya`)}`);
+  }
   console.log(`  ${info(`${r.requests} permintaan ke Jurnal${r.cached ? ' (pakai hasil pindai tersimpan)' : ''}`)}\n`);
   return r.missing > 0 ? 1 : 0;
 }

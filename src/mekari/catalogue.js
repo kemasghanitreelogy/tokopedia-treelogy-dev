@@ -37,18 +37,40 @@ export const TTL_MS = 5 * 60 * 1000;
  */
 export const PAGE_SIZES = [100, 50, 25];
 
+/** Which size worked last, so a refusal is not re-learned on every scan. */
+let lastGoodSize = 0;
+
+/**
+ * Sorted on created_at, and the whole list is walked.
+ *
+ * transaction_date is a date with no time on it, so the 235 invoices sharing 31 August all
+ * compare equal and their order between two requests is unspecified. Paging through that
+ * silently loses rows: a scan reported 2,024 invoices when Jurnal held 2,072, and the
+ * recap built on it declared 27 sales uninvoiced that were invoiced all along. created_at
+ * carries a timestamp, so it is effectively unique and the order holds still.
+ *
+ * The cost is that we can no longer stop early on reaching an older transaction_date -
+ * creation order and transaction order are different things, especially after a
+ * restatement rewrote August invoices today. So the list is walked to the end and filtered
+ * here. At fifty a page that is about forty requests for two thousand invoices, once,
+ * shared by every consumer.
+ */
+const SORT = 'sort_key=created_at&sort_order=desc';
+
 /** @returns {{invoices: Array, at: string, since: string|null, requests: number}} */
 async function scan(since, { deadlineAt = null, onProgress = () => {} } = {}) {
   const invoices = [];
   let requests = 0;
-  let sizeIndex = 0;
+  let walked = 0;
+  let sizeIndex = lastGoodSize;
+  let expected = null;
 
   for (let page = 1; ; page += 1) {
     let result;
     for (;;) {
       try {
         result = await mekari({
-          path: `${INVOICES_PATH}?page=${page}&page_size=${PAGE_SIZES[sizeIndex]}&sort_key=transaction_date&sort_order=desc`,
+          path: `${INVOICES_PATH}?page=${page}&page_size=${PAGE_SIZES[sizeIndex]}&${SORT}`,
           deadlineAt,
         });
         requests += 1;
@@ -59,6 +81,10 @@ async function scan(since, { deadlineAt = null, onProgress = () => {} } = {}) {
         // size, which is why the walk restarts from the top when the size changes.
         if (sizeIndex + 1 >= PAGE_SIZES.length) throw error;
         sizeIndex += 1;
+        // Remembered for the rest of the process, because the next scan a minute later was
+        // asking for a hundred again and paying the same restart from nothing. A page size
+        // this API has already refused is not worth offering it twice.
+        lastGoodSize = sizeIndex;
         requests += 1;
         page = 1;
         invoices.length = 0;
@@ -67,12 +93,14 @@ async function scan(since, { deadlineAt = null, onProgress = () => {} } = {}) {
     }
 
     const rows = result?.sales_invoices ?? [];
+    if (expected === null) expected = Number(result?.total_count);
     if (rows.length === 0) break;
 
-    let reachedStart = false;
+    let seenAll = 0;
     for (const invoice of rows) {
+      seenAll += 1;
       const date = jurnalDateToIso(invoice.transaction_date);
-      if (since && date && date < since) { reachedStart = true; continue; }
+      if (since && date && date < since) continue;
       invoices.push({
         id: invoice.id,
         no: invoice.transaction_no,
@@ -86,11 +114,20 @@ async function scan(since, { deadlineAt = null, onProgress = () => {} } = {}) {
         remaining: Math.round(Number(invoice.remaining) || 0),
       });
     }
+    walked += seenAll;
     onProgress({ page, invoices: invoices.length, requests });
-    if (reachedStart || page >= (Number(result?.total_pages) || 1)) break;
+    if (page >= (Number(result?.total_pages) || 1)) break;
   }
 
-  return { invoices, at: new Date().toISOString(), since: since ?? null, requests };
+  // A scan that quietly came back short is worse than one that failed: everything built on
+  // it looks like a finding. Jurnal's own count is the check, and it is free - it rides on
+  // the first page.
+  const complete = !Number.isFinite(expected) || walked >= expected;
+  if (!complete) {
+    console.warn(`mekari: pindai dapat ${walked} dari ${expected} faktur - hasil tidak lengkap`);
+  }
+
+  return { invoices, at: new Date().toISOString(), since: since ?? null, requests, walked, expected, complete };
 }
 
 /**
@@ -113,7 +150,9 @@ export async function invoiceCatalogue({ since = null, force = false, deadlineAt
   }
 
   const fresh = await scan(since, { deadlineAt, onProgress });
-  await writeDoc(CATALOGUE_PATHNAME, { version: 1, ...fresh }).catch(() => {});
+  // An incomplete scan is never cached. Serving it again would spread one bad read across
+  // every consumer for the next five minutes.
+  if (fresh.complete) await writeDoc(CATALOGUE_PATHNAME, { version: 1, ...fresh }).catch(() => {});
   return { ...fresh, cached: false };
 }
 

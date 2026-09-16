@@ -79,5 +79,8 @@ export async function dailyRecap({ from, until = Math.floor(Date.now() / 1000) }
     invoiceValue: rows.reduce((n, r) => n + r.invoiceValue, 0),
     requests: catalogue.requests,
     cached: catalogue.cached,
+    complete: catalogue.complete,
+    walked: catalogue.walked,
+    expected: catalogue.expected,
   };
 }

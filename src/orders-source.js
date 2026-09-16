@@ -3,6 +3,7 @@ import { isShopifyConfigured } from './shopify/config.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { ordersInRange, readCoverage, recordCoverage, saveOrders, coversRange } from './db/orders.js';
 import { resolveRange } from './range.js';
+import { withinDays, ZONE_SPREAD_SECONDS } from './clock.js';
 import { cached, invalidate } from './cache.js';
 
 /**
@@ -96,9 +97,29 @@ export const forgetCoverage = () => invalidate('db:coverage');
  * test - can tell, and every caller that does not can ignore it.
  */
 export async function loadOrders({ range, maxPerPlatform = 800, tracking = true, ...rest } = {}) {
-  const window = range ?? resolveRange(rest);
+  const asked = range ?? resolveRange(rest);
 
-  if (!isSupabaseConfigured()) return { ...(await collectOrders({ range: window, maxPerPlatform, tracking })), from: 'live' };
+  // Fetched an hour wide on both ends, then filtered by each platform's own calendar day.
+  //
+  // The invoice date follows the platform - a Shopify order at 23:30 Jakarta is already
+  // the next day to Shopify, and is invoiced as such - while this screen filtered by one
+  // Jakarta window for everybody. Four Shopify sales in a single month landed in August on
+  // one side and September on the other, and no amount of comparing the two could ever
+  // reconcile them.
+  //
+  // The widening is not optional: a day named by two clocks an hour apart spans 25 hours,
+  // so a fetch aligned to one of them cannot contain the other's.
+  const window = {
+    ...asked,
+    since: asked.since - ZONE_SPREAD_SECONDS,
+    until: asked.until + ZONE_SPREAD_SECONDS,
+  };
+  const inRange = (orders) => orders.filter((order) => withinDays(order, asked));
+
+  if (!isSupabaseConfigured()) {
+    const live = await collectOrders({ range: window, maxPerPlatform, tracking });
+    return { ...live, orders: inRange(live.orders), range: asked, from: 'live' };
+  }
 
   const sources = activeSources();
   let coverage = null;
@@ -125,7 +146,7 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
         errors: {},
         truncated: [],
         maxPerPlatform,
-        range: window,
+        range: asked,
         shopeeShop: null,
         generatedAt: Date.now(),
         from: 'db',
@@ -136,8 +157,10 @@ export async function loadOrders({ range, maxPerPlatform = 800, tracking = true,
   }
 
   const live = await collectOrders({ range: window, maxPerPlatform, tracking });
+  // Stored as read - the wider set is genuinely what we fetched, and throwing away the
+  // hour at each edge would leave a hole the next reader has to pay for again.
   await rememberOrders(live, window);
-  return { ...live, from: 'live' };
+  return { ...live, orders: inRange(live.orders), range: asked, from: 'live' };
 }
 
 /**

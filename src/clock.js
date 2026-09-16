@@ -136,3 +136,32 @@ export function zoneForChannel(channel) {
 /** The calendar date an instant belongs to, on the clock of the platform it came from. */
 export const channelDate = (epochSeconds, channel) =>
   new Date((epochSeconds + zoneForChannel(channel).offsetHours * 3600) * 1000).toISOString().slice(0, 10);
+
+/**
+ * The widest the zones we book in are apart, in seconds.
+ *
+ * WIB is +7 and the Shopify store is +8, so a single calendar day spans 25 hours once both
+ * clocks are allowed to name it. Anything fetching by epoch and then filtering by each
+ * platform's own day has to reach an hour past both ends, or it drops the orders that sit
+ * in the overlap - which is precisely the four Shopify sales that made a month's dashboard
+ * and a month's invoices disagree.
+ */
+export const ZONE_SPREAD_SECONDS = (() => {
+  const offsets = Object.values(ZONES).map((z) => z.offsetHours);
+  return (Math.max(...offsets) - Math.min(...offsets)) * 3600;
+})();
+
+/**
+ * Does this order fall inside a range of calendar days, on its own platform's clock?
+ *
+ * The dashboard filtered by a single WIB window while the invoice date follows the
+ * platform. So a Shopify order at 23:30 Jakarta on 31 August - already 1 September to
+ * Shopify, and invoiced as such - was counted in August by one screen and September by the
+ * other. Four of them in a single month, and the two sides could never be reconciled by
+ * anybody comparing them.
+ */
+export function withinDays(order, { from, to }) {
+  if (!from || !to) return true;
+  const day = channelDate(order.createdAt ?? order.at, order.channel);
+  return day >= from && day <= to;
+}

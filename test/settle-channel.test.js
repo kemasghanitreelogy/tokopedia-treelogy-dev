@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { channelOfCustomId, openInvoices } from '../src/mekari/settle.js';
+import { channelOfCustomId, openInvoices, orderOfCustomId } from '../src/mekari/settle.js';
 import { customIdFor } from '../src/mekari/invoice.js';
 import { sourceOf } from '../src/mekari/sources.js';
 import { CATALOGUE_PATHNAME, forgetCatalogue } from '../src/mekari/catalogue.js';
@@ -128,29 +128,36 @@ test('the settler pays the platforms that already took the money, and leaves the
   }
 });
 
-test('a typed-in sale is never auto-paid, whatever its custom_id says', { todo: 'src/mekari/settle.js: channel "manual" resolves to SHF and is auto-paid' }, () => {
-  // KNOWN DEFECT, left as a todo rather than a green test because pinning the current
-  // answer would punish the fix.
-  //
-  // settle.js says "a typed-in transaction has no channel in its custom_id and is not ours
-  // to settle" - but a manual sale does have one. buildManualOrder sets channel 'manual',
-  // so its key is TRL-manual-CS-260916-01 and the regex reads "manual" happily. sourceOf
-  // is then called with a channel but no id, orderPrefix's manual branch splits an empty
-  // id and falls back to 'SHF', and SHF is auto-paid. So every open consignment, La Brisa,
-  // WhatsApp, wholesale and walk-in invoice is a payment waiting to be invented - and
-  // those are exactly the sources that are open *because nobody has paid yet*.
-  //
-  // The fix belongs in settle.js: treat 'manual' as unsettleable alongside an unparsed
-  // channel, or pass the code through so sourceOf can read the real prefix.
-  for (const customId of [
-    'TRL-manual-CS-260916-01',
-    'TRL-manual-LB-260916-01',
-    'TRL-manual-DP-260916-01',
-    'TRL-manual-DW-260916-01',
-    'TRL-manual-WS-260916-01',
+test('a typed-in sale is never auto-paid, whatever its custom_id says', () => {
+  // settle.js used to read only the channel out of the key. A manual sale is keyed
+  // TRL-manual-CS-260916-01: the channel is "manual" and the source lives in the id's own
+  // prefix. sourceOf was then asked about "manual" with no id, walked into orderPrefix's
+  // manual branch, split an id it never got, and fell back to the website's treatment -
+  // which is auto-paid. So every open consignment, La Brisa, WhatsApp, wholesale and
+  // walk-in invoice was in the settle set: exactly the sources that are open *because
+  // nobody has paid yet*. It was one manual sale away from recording payments that never
+  // happened.
+  for (const [customId, expected] of [
+    ['TRL-manual-CS-260916-01', 'Consignment'],
+    ['TRL-manual-LB-260916-01', 'La Brisa'],
+    ['TRL-manual-DP-260916-01', 'WhatsApp'],
+    ['TRL-manual-DW-260916-01', 'Walk in'],
+    ['TRL-manual-WS-260916-01', 'Wholesale'],
   ]) {
-    const channel = channelOfCustomId(customId);
-    assert.equal(Boolean(channel) && sourceOf({ channel }).autoPaid, false,
+    const order = orderOfCustomId(customId);
+    assert.equal(order.channel, 'manual');
+    const source = sourceOf(order);
+    assert.equal(source.label, expected, `${customId} harus terbaca sebagai ${expected}`);
+    assert.equal(source.autoPaid, false,
       `${customId} adalah penjualan yang belum dibayar - melunasinya berarti mengarang pembayaran`);
   }
+
+  // The marketplaces and the web shop really are settled by the platform, so they stay.
+  for (const customId of ['TRL-shopee-260915X', 'TRL-tokopedia-5860', 'TRL-shopify-10892']) {
+    assert.equal(sourceOf(orderOfCustomId(customId)).autoPaid, true, customId);
+  }
+
+  // A key that will not parse is never settled either: guessing invents a payment.
+  assert.equal(orderOfCustomId('rusak'), null);
+  assert.equal(orderOfCustomId(''), null);
 });

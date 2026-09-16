@@ -121,7 +121,18 @@ export const businessToday = () => businessDate(Math.floor(Date.now() / 1000));
  * should do: it has no platform of its own.
  */
 export const CHANNEL_ZONES = {
-  shopee: 'Asia/Jakarta',
+  // UTC+8, proved by Shopee itself rather than inferred from the shop's region.
+  //
+  // Shopee writes the date into the first six characters of every order id, so its own
+  // opinion of which day a sale belongs to is checkable against ours. Across 328 September
+  // orders, UTC+8 matched all 328 and WIB matched 319 - the nine misses being the orders
+  // placed between 23:00 and midnight. The seller centre agrees: order 2609140FJEFCSW is
+  // "New Order 14/09/2026 00:38" there and was 13 Sep 23:38 here.
+  //
+  // The shop's region is ID and its buyers are Indonesian, which is what made WIB look
+  // obvious. It was assumed, not established, and it put nine invoices a month on the
+  // wrong day - including the one that made a single day's dashboard and Jurnal disagree.
+  shopee: 'Asia/Singapore',
   tokopedia: 'Asia/Jakarta',
   tiktok_shop: 'Asia/Jakarta',
   shopify: 'Asia/Singapore',

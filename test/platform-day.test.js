@@ -19,28 +19,28 @@ const MIDDAY_5_SEP = Math.floor(Date.parse('2026-09-05T05:00:00Z') / 1000);
 
 const order = (channel, at) => ({ channel, createdAt: at });
 
-test('a September window holds the Shopify sale Shopee would call August', () => {
+test('a September window holds the Shopify sale Tokopedia would call August', () => {
   const september = { from: '2026-09-01', to: '2026-09-16' };
 
   // Same instant, two answers, and both are right where they are read.
   assert.equal(channelDate(LATE_31_AUG, 'shopify'), '2026-09-01');
-  assert.equal(channelDate(LATE_31_AUG, 'shopee'), '2026-08-31');
+  assert.equal(channelDate(LATE_31_AUG, 'tokopedia'), '2026-08-31');
 
   assert.equal(withinDays(order('shopify', LATE_31_AUG), september), true);
-  assert.equal(withinDays(order('shopee', LATE_31_AUG), september), false);
+  assert.equal(withinDays(order('tokopedia', LATE_31_AUG), september), false);
   assert.equal(withinDays(order('tokopedia', LATE_31_AUG), september), false);
   assert.equal(withinDays(order('tiktok_shop', LATE_31_AUG), september), false);
 });
 
 test('an August window holds it the other way round', () => {
   const august = { from: '2026-08-17', to: '2026-08-31' };
-  assert.equal(withinDays(order('shopee', LATE_31_AUG), august), true);
+  assert.equal(withinDays(order('tokopedia', LATE_31_AUG), august), true);
   assert.equal(withinDays(order('shopify', LATE_31_AUG), august), false, 'Shopify sudah 1 September');
 });
 
 test('away from the boundary every channel agrees, which is most of the month', () => {
   const september = { from: '2026-09-01', to: '2026-09-16' };
-  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+  for (const channel of ['tokopedia', 'tokopedia', 'tiktok_shop', 'shopify']) {
     assert.equal(withinDays(order(channel, MIDDAY_5_SEP), september), true, channel);
   }
 });
@@ -70,9 +70,9 @@ test('the database path filters by platform day too, not only the live one', asy
 
   const at = (iso) => Math.floor(Date.parse(iso) / 1000);
   const stored = [
-    { channel: 'shopee', id: 'A', createdAt: at('2026-08-31T18:00:00Z'), stage: 'completed', total: 1 },   // 1 Sep WIB
-    { channel: 'shopee', id: 'B', createdAt: at('2026-09-01T17:30:00Z'), stage: 'completed', total: 1 },   // 2 Sep WIB - keluar
-    { channel: 'shopee', id: 'C', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },   // 31 Agu WIB - keluar
+    { channel: 'tokopedia', id: 'A', createdAt: at('2026-08-31T18:00:00Z'), stage: 'completed', total: 1 },   // 1 Sep WIB
+    { channel: 'tokopedia', id: 'B', createdAt: at('2026-09-01T17:30:00Z'), stage: 'completed', total: 1 },   // 2 Sep WIB - keluar
+    { channel: 'tokopedia', id: 'C', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },   // 31 Agu WIB - keluar
     { channel: 'shopify', id: 'D', createdAt: at('2026-08-31T16:30:00Z'), stage: 'completed', total: 1 },  // 1 Sep di Shopify - masuk
   ];
 

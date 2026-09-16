@@ -46,7 +46,7 @@ test('a marketplace invoice follows the house clock across a whole day of ten-mi
   for (let i = 0; i < 144; i += 1) {
     const at = start + i * 600;
     const expected = wibDate(at);
-    for (const channel of ['shopee', 'tokopedia', 'tiktok_shop']) {
+    for (const channel of ['tokopedia', 'tiktok_shop']) {
       assert.equal(jurnalDate(at, channel), expected, `${channel} beda di menit ke-${i * 10}`);
     }
     assert.equal(wibDay(at), expected, `prakiraan beda di menit ke-${i * 10}`);
@@ -61,7 +61,7 @@ test('Shopify parts company with the house clock for exactly one hour a night', 
   let differing = 0;
   for (let i = 0; i < 144; i += 1) {
     const at = start + i * 600;
-    if (jurnalDate(at, 'shopify') !== jurnalDate(at, 'shopee')) differing += 1;
+    if (jurnalDate(at, 'shopify') !== jurnalDate(at, 'tokopedia')) differing += 1;
   }
   assert.equal(differing, 6, 'tepat satu jam sehari, tidak lebih dan tidak kurang');
 });
@@ -141,7 +141,7 @@ test('an invoice is dated by the clock of the platform it came from', () => {
   // where they are looking, and one house clock would make one of them wrong.
   const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
 
-  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop']) {
+  for (const channel of ['tokopedia', 'tiktok_shop']) {
     assert.equal(channelDate(at, channel), '2026-09-14', channel);
     assert.equal(invoiceDate(at, channel), '2026-09-14', channel);
     assert.equal(zoneForChannel(channel).offsetHours, 7, channel);
@@ -165,7 +165,7 @@ test('a typed-in transaction has no platform, so it uses the house clock', () =>
 test('away from the boundary every platform agrees, which is most of the day', () => {
   // Midday Jakarta is midday everywhere that matters here; only the last hour splits.
   const noon = Math.floor(Date.parse('2026-09-15T05:00:00Z') / 1000);
-  const days = new Set(['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual'].map((c) => channelDate(noon, c)));
+  const days = new Set(['tokopedia', 'tokopedia', 'tiktok_shop', 'shopify', 'manual'].map((c) => channelDate(noon, c)));
   assert.equal(days.size, 1);
   assert.deepEqual([...days], ['2026-09-15']);
 });

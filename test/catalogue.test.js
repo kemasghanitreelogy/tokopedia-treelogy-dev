@@ -51,3 +51,14 @@ test('the cache is short enough to still be true', () => {
   // is already gone.
   assert.ok(TTL_MS >= 60_000 && TTL_MS <= 10 * 60_000);
 });
+
+test('a since that is not a calendar date is refused, not answered with nothing', async () => {
+  // The rows are filtered by comparing `since` against each invoice's own 'YYYY-MM-DD'.
+  // An epoch number makes every comparison NaN - which is false - so a cached scan of two
+  // thousand invoices came back as none, and mekari:redate reported "0 tanggalnya salah"
+  // over the list it had just discarded. Silence that looks like success.
+  const { invoiceCatalogue } = await import('../src/mekari/catalogue.js');
+  for (const bad of [1785000000, '17/08/2026', '2026-8-1', new Date()]) {
+    await assert.rejects(() => invoiceCatalogue({ since: bad }), TypeError, `harus menolak ${String(bad)}`);
+  }
+});

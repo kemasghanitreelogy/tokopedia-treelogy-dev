@@ -35,7 +35,12 @@ export async function planRedate({ from, until = Math.floor(Date.now() / 1000) }
     // Widened, because an order near midnight can belong to a day outside the epoch window
     // the range describes - which is the whole reason this correction is needed.
     ordersInRange({ since: since - 24 * 3600, until: until + 24 * 3600 }),
-    invoiceCatalogue({ since }),
+    // A calendar date, not the epoch: the catalogue filters its cached rows by comparing
+    // this against each invoice's own 'YYYY-MM-DD'. Handing it a number made every
+    // comparison NaN, which is false, so a cached scan of two thousand invoices came back
+    // as none - and the correction reported "0 tanggalnya salah" over a list it had just
+    // thrown away.
+    invoiceCatalogue({ since: from }),
   ]);
   const held = ours(catalogue.invoices);
 

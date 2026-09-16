@@ -137,6 +137,14 @@ async function scan(since, { deadlineAt = null, onProgress = () => {} } = {}) {
  * @returns {Promise<{invoices: Array, at: string, requests: number, cached: boolean}>}
  */
 export async function invoiceCatalogue({ since = null, force = false, deadlineAt = null, onProgress } = {}) {
+  // `since` is a calendar date, and the rows are filtered by comparing it against each
+  // invoice's own 'YYYY-MM-DD'. An epoch number makes every one of those comparisons NaN,
+  // which is false, so a cached scan of two thousand invoices comes back as none - and a
+  // caller reports "nothing to fix" over a list it silently discarded. Refusing here costs
+  // nothing and turns that into a stack trace with a name on it.
+  if (since !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(since))) {
+    throw new TypeError(`invoiceCatalogue: since harus tanggal YYYY-MM-DD, dapat ${JSON.stringify(since)}`);
+  }
   if (!force) {
     const held = await readDoc(CATALOGUE_PATHNAME).catch(() => null);
     const at = Date.parse(held?.at ?? '');

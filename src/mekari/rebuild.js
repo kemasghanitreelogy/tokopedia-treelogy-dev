@@ -1,3 +1,4 @@
+import { normaliseCustomId } from './invoice.js';
 import { mekari } from './client.js';
 import { loadSyncLedger, saveSyncLedger } from './sync.js';
 
@@ -48,7 +49,7 @@ export async function rebuildLedgerFromJurnal({ dryRun = true, since = null } = 
     for (const inv of rows) {
       const iso = jurnalDateToIso(inv.transaction_date);
       if (since && iso && iso < since) { reachedStart = true; continue; }
-      const customId = String(inv.custom_id ?? '');
+      const customId = normaliseCustomId(inv.custom_id);
       const m = /^TRL-([a-z_]+)-(.+)$/.exec(customId);
       if (!m) continue;
       found[customId] = {

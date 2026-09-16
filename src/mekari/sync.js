@@ -1,6 +1,6 @@
 import { readDoc, writeDoc, updateDoc } from '../store/index.js';
 import { mekari, isMekariConfigured, MekariError, QuotaExhaustedError } from './client.js';
-import { buildInvoice, verifyInvoice, customIdFor, customerFor, CUSTOMER_NAMES } from './invoice.js';
+import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomId, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
 import { accountMap } from './accounts.js';
@@ -65,7 +65,16 @@ export const POSTABLE_STAGES = new Set(['to_ship', 'shipping', 'delivered', 'com
 
 export async function loadSyncLedger() {
   try {
-    return (await readDoc(LEDGER_PATHNAME)) ?? { version: 1, orders: {} };
+    const stored = (await readDoc(LEDGER_PATHNAME)) ?? { version: 1, orders: {} };
+    // Shopify entries written before the '#' was dropped from custom_id are keyed the old
+    // way. Read under the key we would generate today, or every historical Shopify order
+    // reads as unposted and gets a second invoice - which is the exact failure dropping
+    // the hash was meant to end.
+    const orders = {};
+    for (const [key, value] of Object.entries(stored.orders ?? {})) {
+      orders[normaliseCustomId(key)] = value;
+    }
+    return { ...stored, orders };
   } catch {
     // A missing or unreadable ledger must not become a licence to re-post everything;
     // Jurnal's own 409 on a repeated custom_id is what actually protects the books.

@@ -753,3 +753,31 @@ test('Jurnal error bodies are read in every shape it sends them', async () => {
   assert.equal(describeFailure(null), '');
   assert.equal(describeFailure({ id: 123 }), '');
 });
+
+/* --------------------------- the '#' in a Shopify order name broke idempotency */
+
+test("a Shopify custom_id carries no '#', because Jurnal cannot handle one", async () => {
+  // The custom_id is the whole of this system's idempotency: the sweep asks by it before
+  // creating, and Jurnal refuses a repeat with 409. A '#' breaks both halves at once.
+  // Proved live: invoices #13230 and #13231 both carried "TRL-shopify-#10892" - the
+  // uniqueness constraint did not fire - while GET on that custom_id answered 404, so the
+  // lookup could not see either. Shopify was the one channel with no protection at all.
+  const { customIdFor: keyFor, normaliseCustomId } = await import('../src/mekari/invoice.js');
+
+  assert.equal(keyFor({ channel: 'shopify', id: '#10892' }), 'TRL-shopify-10892');
+  assert.ok(!keyFor({ channel: 'shopify', id: '#10892' }).includes('#'));
+  // Other channels are unaffected; their ids never had one.
+  assert.equal(keyFor({ channel: 'shopee', id: '260915X' }), 'TRL-shopee-260915X');
+  assert.equal(keyFor({ channel: 'tokopedia', id: '586087586143175832' }), 'TRL-tokopedia-586087586143175832');
+
+  // An invoice written before the hash was dropped must read as the same order, or every
+  // historical Shopify invoice looks missing and gets written a second time.
+  assert.equal(normaliseCustomId('TRL-shopify-#10892'), keyFor({ channel: 'shopify', id: '#10892' }));
+  assert.equal(normaliseCustomId('TRL-shopee-260915X'), 'TRL-shopee-260915X');
+  assert.equal(normaliseCustomId(null), '');
+
+  // And the reference the human reads keeps its own shape - that is a different field.
+  const invoice = buildInvoice({ order: order({ channel: 'shopify', id: '#10892', gateways: [] }) }).sales_invoice;
+  assert.equal(invoice.custom_id, 'TRL-shopify-10892');
+  assert.ok(!invoice.reference_no.includes('#'), 'reference_no juga tanpa # - prefiks sudah menyebut kanalnya');
+});

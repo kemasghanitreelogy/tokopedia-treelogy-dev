@@ -43,7 +43,31 @@ export const CUSTOMER_NAMES = {
  * that cannot change: the channel and the platform's own order id. The prefixed code is
  * what a human reads, and it lives in reference_no.
  */
-export const customIdFor = (order) => `TRL-${order.channel}-${order.id}`;
+export const customIdFor = (order) => `TRL-${order.channel}-${normaliseId(order.id)}`;
+
+/**
+ * The '#' in a Shopify order name has to go, and it is not cosmetic.
+ *
+ * Jurnal's custom_id is the whole of this system's idempotency: the sweep asks by it
+ * before creating, and Jurnal refuses a repeat with 409. A '#' breaks both halves at
+ * once. Proved against the live account: two invoices, #13230 and #13231, both carrying
+ * custom_id "TRL-shopify-#10892" - so the uniqueness constraint did not fire - while
+ * GET on that same custom_id answers 404 - so the lookup could not see either of them.
+ *
+ * Shopify orders were therefore the one channel with no duplicate protection at all, and
+ * a retried create made two invoices for one sale. The hash carries no information: the
+ * channel prefix already says where the order came from.
+ */
+const normaliseId = (id) => String(id ?? '').replace(/#/g, '');
+
+/**
+ * Read a custom_id back the way we would write it today.
+ *
+ * Invoices posted before the hash was dropped carry the old form, so anything matching
+ * Jurnal's records against ours has to put both through this or every historical Shopify
+ * invoice reads as missing and gets written a second time.
+ */
+export const normaliseCustomId = (customId) => String(customId ?? '').replace(/#/g, '');
 
 const rupiah = (n) => Math.round(Number(n) || 0);
 

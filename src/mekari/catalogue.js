@@ -1,6 +1,7 @@
 import { mekari } from './client.js';
 import { readDoc, writeDoc } from '../store/index.js';
 import { jurnalDateToIso } from './rebuild.js';
+import { normaliseCustomId } from './invoice.js';
 
 /**
  * One reading of Jurnal's invoice list, shared by everything that needs it.
@@ -75,7 +76,11 @@ async function scan(since, { deadlineAt = null, onProgress = () => {} } = {}) {
       invoices.push({
         id: invoice.id,
         no: invoice.transaction_no,
-        customId: String(invoice.custom_id ?? ''),
+        // Normalised, so an invoice written before the hash was dropped matches the key
+        // we would generate for the same order today. Without this every historical
+        // Shopify invoice reads as missing and gets written again.
+        customId: normaliseCustomId(invoice.custom_id),
+        rawCustomId: String(invoice.custom_id ?? ''),
         date,
         total: Math.round(Number(invoice.original_amount) || 0),
         remaining: Math.round(Number(invoice.remaining) || 0),

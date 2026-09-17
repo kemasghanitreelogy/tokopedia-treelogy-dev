@@ -77,6 +77,17 @@ test('a refused recipient surfaces the server reply and never hangs', async () =
   }
 });
 
+test('a host that swallows the connection fails fast with a message that names the likely cause', async () => {
+  // 10.255.255.1 is unroutable from anywhere sane: the SYN goes nowhere, exactly like a
+  // provider that filters outbound SMTP.
+  const t = Date.now();
+  await assert.rejects(
+    sendMail({ to: 'x@y.co', subject: 's', text: 't' }, { config: { host: '10.255.255.1', port: 465, user: '', pass: '', from: 'a@b.c', secure: 'none' }, connectTimeoutMs: 300 }),
+    /tidak tersambung dalam 0\.3 detik.*diblokir/,
+  );
+  assert.ok(Date.now() - t < 5000, 'menyerah dalam hitungan ratusan milidetik, bukan menit');
+});
+
 test('the wire format survives non-ASCII subjects and long bodies', () => {
   const link = `https://api.treelogy-services.my.id/api/activate?token=${'x'.repeat(200)}`;
   const raw = buildMessage({ from: 'a@b.c', to: 'd@e.f', subject: 'Undangan untuk Déwi', text: `buka ${link}`, html: `<a href="${link}">${link}</a>` });

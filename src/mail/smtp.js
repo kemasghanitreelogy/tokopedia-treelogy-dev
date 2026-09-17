@@ -149,12 +149,20 @@ function reader(initial) {
   };
 }
 
-const openSocket = (config) => new Promise((resolve, reject) => {
-  const onError = (error) => reject(error);
+/**
+ * Connecting has its own deadline. A host that blocks outbound SMTP drops the SYN on the
+ * floor and says nothing, and the kernel keeps retrying for two minutes - which is what a
+ * browser spinner over a "Kirim undangan" click looked like. Ten seconds is generous for
+ * a handshake and short enough that the operator reads an error instead of waiting.
+ */
+const openSocket = (config, timeoutMs) => new Promise((resolve, reject) => {
   const socket = config.secure === 'tls'
-    ? tls.connect({ host: config.host, port: config.port, servername: config.host }, () => resolve(socket))
-    : net.connect({ host: config.host, port: config.port }, () => resolve(socket));
-  socket.once('error', onError);
+    ? tls.connect({ host: config.host, port: config.port, servername: config.host }, () => { socket.setTimeout(0); resolve(socket); })
+    : net.connect({ host: config.host, port: config.port }, () => { socket.setTimeout(0); resolve(socket); });
+  socket.once('error', reject);
+  socket.setTimeout(timeoutMs, () => {
+    socket.destroy(new Error(`SMTP: ${config.host}:${config.port} tidak tersambung dalam ${timeoutMs / 1000} detik - port SMTP keluar mungkin diblokir penyedia server`));
+  });
 });
 
 const upgrade = (socket, config) => new Promise((resolve, reject) => {
@@ -168,11 +176,11 @@ const upgrade = (socket, config) => new Promise((resolve, reject) => {
  * @returns {Promise<{accepted: true, messageId?: string}>}
  * @throws on any refusal or network failure, with the server's reply in the message.
  */
-export async function sendMail(mail, { config = loadSmtpConfig(), timeoutMs = 20_000 } = {}) {
+export async function sendMail(mail, { config = loadSmtpConfig(), timeoutMs = 20_000, connectTimeoutMs = 10_000 } = {}) {
   if (!isSmtpConfigured(config)) throw new Error('SMTP belum dikonfigurasi (SMTP_HOST / SMTP_FROM)');
   if (!isEmail(mail.to)) throw new Error(`alamat tujuan tidak valid: ${mail.to}`);
 
-  let socket = await openSocket(config);
+  let socket = await openSocket(config, connectTimeoutMs);
   socket.setTimeout(timeoutMs, () => socket.destroy(new Error(`SMTP: ${config.host} tidak menjawab dalam ${timeoutMs / 1000} detik`)));
   const io = reader(socket);
 

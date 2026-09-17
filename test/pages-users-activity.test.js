@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
 import { renderActivate, renderActivateInvalid } from '../src/pages/activate.js';
-import { renderDashboard, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderProcess, VIEWS } from '../src/dashboard-page.js';
 import { summarize } from '../src/omni.js';
 
 const range = { preset: '7d', from: '2026-09-11', to: '2026-09-17', label: '7 hari', since: 1, until: 2, clamped: false };
@@ -45,14 +45,20 @@ test('without SMTP the page says so, and the owner row has no destructive contro
   assert.match(html, /diatur di environment/);
 });
 
-test('the users tab is hidden from operators and viewers but the activity tab is not', () => {
-  const html = renderDashboard({ orders: [], summary: summarize([]), user: { ...operator, name: 'Op' }, ...common });
-  assert.ok(!html.includes('?view=users'), 'operator tidak melihat tab Pengguna');
-  assert.match(html, /\?view=activity/);
-  assert.match(html, /class="who"/, 'identitas yang masuk tampil di header');
-  assert.match(html, /Operator/);
+test('the users tab is hidden from operators, and the activity log is a button inside each writing menu, not a tab', () => {
+  const orders = renderDashboard({ orders: [], summary: summarize([]), user: { ...operator, name: 'Op' }, ...common });
+  assert.ok(!orders.includes('?view=users'), 'operator tidak melihat tab Pengguna');
+  assert.ok(!/viewtab[^>]*>Aktivitas</.test(orders), 'tidak ada tab Aktivitas');
+  assert.ok(!orders.includes('class="viewlog"'), 'Pesanan tidak menulis apa pun, jadi tanpa tombol log');
+  assert.match(orders, /class="who" href="\?view=activity&amp;actor=u-op"/, 'chip identitas tetap membuka jejak sendiri');
+  assert.match(orders, /class="who"/, 'identitas yang masuk tampil di header');
+  assert.match(orders, /Operator/);
   assert.equal(VIEWS.users, 'Pengguna');
-  assert.equal(VIEWS.activity, 'Aktivitas');
+
+  const process = renderProcess({ orders: [], user: operator, ...common });
+  assert.match(process, /class="viewlog" href="\?view=activity&amp;menu=process&amp;preset=7d"/, 'menu Proses punya tombol log-nya sendiri');
+  const users = renderUsers({ users: [owner], me: owner, smtpReady: true, ...common });
+  assert.match(users, /class="viewlog" href="\?view=activity&amp;menu=users/);
 });
 
 test('the activity page groups by day, shows before/after tables and honours filters', () => {
@@ -66,6 +72,8 @@ test('the activity page groups by day, shows before/after tables and honours fil
     filter: { actor: 'u-op', menu: '', status: '', q: 'x' }, paging: { page: 1, perPage: 50 }, baseQuery: 'view=activity&actor=u-op', user: owner, ...common,
   });
   assert.equal((html.match(/class="ac__day-h"/g) ?? []).length, 2, 'dua hari, dua kepala');
+  assert.match(html, /Semua menu/, 'tanpa menu terkunci, chip menu tampil');
+  assert.ok(!html.includes('class="viewlog"'), 'halaman log tidak menawarkan tombol log lagi');
   assert.match(html, /<td class="ac__from">.*74.*<\/td>/);
   assert.match(html, /<td class="ac__to">.*70.*<\/td>/);
   assert.match(html, /Gagal/);
@@ -75,6 +83,15 @@ test('the activity page groups by day, shows before/after tables and honours fil
   assert.match(html, /value="x"/);
   assert.match(html, /2 tindakan|dari <b>2<\/b>/);
   validJs(html, 'activity');
+});
+
+test('opened from a menu, the log is locked to it: title, back link, lit tab, no menu chips', () => {
+  const html = renderActivity({ entries: [], actors: [], filter: { actor: '', menu: 'process', status: '', q: '' }, user: owner, ...common });
+  assert.match(html, /<title>Log aktivitas · Proses/);
+  assert.match(html, /class="ac__back" href="\?view=process&amp;preset=7d"/);
+  assert.match(html, /viewtab is-on" href="\?view=process/);
+  assert.ok(!html.includes('Semua menu'));
+  assert.match(html, /name="menu" value="process"/, 'filter orang mempertahankan menu');
 });
 
 test('an empty activity range explains itself', () => {

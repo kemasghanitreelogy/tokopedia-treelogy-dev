@@ -111,15 +111,27 @@ export const VIEWS = {
 
 /** Tabs that need a permission the person may not have are not shown, not merely refused. */
 const TAB_PERMISSION = { users: 'users' };
+/** Views that are reached from inside a menu, never from the tab row. */
+const HIDDEN_TABS = new Set(['activity']);
+/**
+ * Menus whose actions write something, and therefore have a log of their own. The log
+ * button sits in the tab row of exactly these; a read-only menu has nothing to show.
+ */
+export const LOGGED_MENUS = new Set(['process', 'labels', 'stock', 'products', 'jurnal', 'users']);
 
-function viewNav(current, rangeQuery, user = null) {
-  return `<nav class="views" aria-label="Halaman">${Object.entries(VIEWS)
+function viewNav(current, rangeQuery, user = null, { log = false } = {}) {
+  const tabs = Object.entries(VIEWS)
+    .filter(([id]) => !HIDDEN_TABS.has(id))
     .filter(([id]) => !TAB_PERMISSION[id] || can(user, TAB_PERMISSION[id]))
     .map(([id, label]) => {
       const query = id === 'products' || id === 'users' ? `?view=${id}` : `?view=${id}${rangeQuery}`;
       return `<a class="viewtab ${id === current ? 'is-on' : ''}" href="${escape(query)}">${escape(label)}</a>`;
     })
-    .join('')}</nav>`;
+    .join('');
+  const logButton = !log && LOGGED_MENUS.has(current)
+    ? `<a class="viewlog" href="${escape(`?view=activity&menu=${current}${rangeQuery}`)}" title="Siapa mengubah apa di ${escape(VIEWS[current])}">${svg('history')}<span>Log aktivitas</span></a>`
+    : '';
+  return `<nav class="views" aria-label="Halaman">${tabs}${logButton}</nav>`;
 }
 
 function stageBar(stages, total) {
@@ -248,10 +260,10 @@ function row(order) {
 export function shell({
   title, range, errors = {}, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
   view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null,
-  stale = false, staleSince = null, user = null, style = '',
+  stale = false, staleSince = null, user = null, style = '', log = false,
 }) {
   const who = user
-    ? `<a class="who" href="?view=activity&actor=${escape(user.id)}" title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
+    ? `<a class="who" href="?view=activity&amp;actor=${escape(user.id)}" title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
         <span class="who__av" aria-hidden="true">${escape(initials(user.name || user.email))}</span>
         <span class="who__t"><span class="who__n">${escape(user.name || user.email)}</span><span class="who__r">${escape(ROLES[user.role]?.label ?? user.role)}</span></span>
       </a>`
@@ -397,6 +409,13 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
   overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch}
 .views::-webkit-scrollbar{display:none}
 .viewtab{flex:none}
+.viewlog{margin-left:auto; flex:none; display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .8rem;
+  border-radius:9px; font-size:.82rem; font-weight:500; color:var(--muted); text-decoration:none;
+  border:1px solid var(--line); background:var(--panel); transition:color var(--t-fast), border-color var(--t-fast)}
+.viewlog:hover{color:var(--fg); border-color:var(--brand)}
+.viewlog:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.viewlog .ico{width:16px; height:16px}
+@media (max-width:640px){ .viewlog span{display:none} .viewlog{padding:.45rem .55rem} }
 .viewtab{padding:.45rem .9rem; border-radius:9px; font-size:.87rem; font-weight:500; text-decoration:none;
   color:var(--muted); transition:background var(--t-base) var(--ease-out),color var(--t-base) var(--ease-out)}
 .viewtab:hover{color:var(--fg); background:var(--panel-2)}
@@ -1118,7 +1137,7 @@ ${style}
 
   ${problems}
 
-  ${viewNav(view, rangeQuery(range), user)}
+  ${viewNav(view, rangeQuery(range), user, { log })}
 
   ${kpis}
 

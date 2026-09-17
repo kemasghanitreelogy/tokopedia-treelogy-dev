@@ -1,6 +1,7 @@
 import { shell, svg, escape, initials, pager } from '../dashboard-page.js';
 import { paginate, DEFAULT_PER_PAGE } from '../paging.js';
 import { MENUS, VERBS } from '../audit.js';
+import { VIEWS } from '../dashboard-page.js';
 
 /**
  * The Aktivitas tab: the journey of every change, newest first.
@@ -109,8 +110,20 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
     </form>
   </section>`;
 
-  const menuChips = ['', ...Object.keys(MENUS).filter((m) => m !== 'activity')].map((m) =>
+  // Opened from a menu's own "Log aktivitas" button, the page is that menu's log and
+  // says so; the menu chips only appear when the log was opened for everything at once.
+  const locked = filter.menu && Object.hasOwn(VIEWS, filter.menu) ? filter.menu : '';
+  const menuChips = locked ? '' : ['', ...Object.keys(MENUS).filter((m) => m !== 'activity')].map((m) =>
     `<a class="chip ${filter.menu === m ? 'is-on' : ''}" href="${escape(keep({ menu: m, page: '' }))}">${m ? escape(MENUS[m]) : 'Semua menu'}</a>`).join('');
+  const backHref = locked === 'products' || locked === 'users'
+    ? `?view=${locked}`
+    : `?view=${locked}${common.range?.preset ? `&preset=${common.range.preset}` : `&from=${common.range?.from ?? ''}&to=${common.range?.to ?? ''}`}`;
+  const heading = locked
+    ? `<div class="ac__head">
+        <a class="ac__back" href="${escape(backHref)}">${svg('chevL')}<span>Kembali ke ${escape(VIEWS[locked])}</span></a>
+        <p class="ac__lead">Siapa mengubah apa di menu <b>${escape(VIEWS[locked])}</b>, dengan nilai sebelum dan sesudahnya. Aksi yang ditolak ikut tercatat.</p>
+      </div>`
+    : '';
   const actorOptions = [['', 'Semua orang'], ...actors.map((a) => [a.id, a.name || a.email])].map(([v, label]) =>
     `<option value="${escape(v)}" ${filter.actor === v ? 'selected' : ''}>${escape(label)}</option>`).join('');
   const statusChips = [['', 'Semua'], ['ok', 'Berhasil'], ['failed', 'Gagal']].map(([v, label]) =>
@@ -128,8 +141,7 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
       <select id="ac-actor" name="actor" class="ac__sel" data-autosubmit>${actorOptions}</select>
       <noscript><button class="chip" type="submit">Terapkan</button></noscript>
     </form>
-    <span class="ac__sep" aria-hidden="true"></span>
-    ${menuChips}
+    ${menuChips ? `<span class="ac__sep" aria-hidden="true"></span>${menuChips}` : ''}
     <span class="ac__sep" aria-hidden="true"></span>
     ${statusChips}
   </div>`;
@@ -154,18 +166,28 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
     </section>`).join('');
   }
 
-  const body = `<section class="panel ac">
+  const body = `${heading}<section class="panel ac">
     ${filters}
     ${list}
     ${pager(paged, { baseQuery, noun: 'tindakan' })}
   </section>`;
 
   return shell({
-    ...common, csrf, flash, user, title: 'Aktivitas', view: 'activity', kpis, body, style: STYLE, script: SCRIPT,
+    ...common, csrf, flash, user, kpis, body, style: STYLE, script: SCRIPT, log: true,
+    title: locked ? `Log aktivitas · ${VIEWS[locked]}` : 'Log aktivitas',
+    // The tab row keeps the menu this log belongs to lit, so the page still feels like
+    // part of that menu rather than a place of its own.
+    view: locked || 'orders',
   });
 }
 
 const STYLE = `
+.ac__head{display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:.85rem}
+.ac__back{display:inline-flex; align-items:center; gap:.35rem; font-size:.84rem; font-weight:500; color:var(--muted); text-decoration:none;
+  padding:.4rem .75rem .4rem .5rem; border:1px solid var(--line); border-radius:9px; background:var(--panel); transition:color var(--t-fast), border-color var(--t-fast)}
+.ac__back:hover{color:var(--fg); border-color:var(--brand)}
+.ac__back .ico{width:16px; height:16px}
+.ac__lead{margin:0; font-size:.84rem; color:var(--muted)}
 .ac__strip{margin-bottom:1rem}
 .ac__search{display:flex; align-items:center; gap:.4rem; position:relative}
 .ac__search .search{padding-left:2rem; min-width:220px}

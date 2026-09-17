@@ -299,7 +299,16 @@ test('due date is the transaction date plus the term, in WIB', () => {
 
 /* ------------------------------------------------------- transaksi manual */
 
-const { buildManualOrder, suggestCode, SOURCE_OPTIONS, SELLABLE } = await import('../src/mekari/manual.js');
+const { buildManualOrder, suggestCode, SOURCE_OPTIONS, SELLABLE, withAuthor } = await import('../src/mekari/manual.js');
+
+test('the manual memo names who typed the sale in, so the Jurnal invoice carries its own provenance', () => {
+  assert.equal(withAuthor('titip di toko A', 'Dewi'), 'titip di toko A - ditambahkan oleh Dewi');
+  assert.equal(withAuthor('', 'Dewi'), 'ditambahkan oleh Dewi');
+  assert.equal(withAuthor('titip di toko A', ''), 'titip di toko A');
+  const order = buildManualOrder(manual({ note: 'tempo 7 hari', addedBy: 'Dewi Lestari' }));
+  assert.equal(order.note, 'tempo 7 hari - ditambahkan oleh Dewi Lestari');
+  assert.match(JSON.stringify(buildInvoice({ order })), /ditambahkan oleh Dewi Lestari/, 'memo faktur Jurnal membawa nama');
+});
 const { manualCodes } = await import('../src/mekari/sync.js');
 
 const manual = (over = {}) => ({

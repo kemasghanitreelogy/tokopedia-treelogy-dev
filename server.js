@@ -18,6 +18,7 @@ const PUBLIC_DIR = path.join(process.cwd(), 'public');
 /** Route → module, resolved lazily so a broken handler does not stop the others booting. */
 const ROUTES = {
   '/api/dashboard': './api/dashboard.js',
+  '/api/activate': './api/activate.js',
   '/api/labels': './api/labels.js',
   '/api/status': './api/status.js',
   '/api/callback': './api/callback.js',

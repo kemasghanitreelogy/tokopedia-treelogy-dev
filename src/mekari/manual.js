@@ -121,9 +121,19 @@ const money = (value, field) => {
 /**
  * Turn submitted form fields into the order shape the rest of the system already speaks.
  *
- * @param {{source, code, date, customer, note, shipping, paid, depositTo, lines}} input
+ * @param {{source, code, date, customer, note, shipping, paid, depositTo, lines, addedBy?: string}} input
+ *   `addedBy` is the name of the person who typed the sale in. It is stamped on the end of
+ *   the note - which is what Jurnal shows as the memo - so the invoice itself says who
+ *   entered it, not just the activity log here.
  * @returns {object} an order, ready for buildInvoice
  */
+/** "titip di toko A" + Kemas → "titip di toko A - ditambahkan oleh Kemas"; no name, no suffix. */
+export const withAuthor = (note, addedBy) => {
+  const name = String(addedBy ?? '').trim();
+  if (!name) return note;
+  return note ? `${note} - ditambahkan oleh ${name}` : `ditambahkan oleh ${name}`;
+};
+
 export function buildManualOrder(input) {
   const source = String(input.source ?? '').trim().toUpperCase();
   if (!isManualSource(source)) throw new InvoiceError(`sumber "${source}" bukan sumber manual`);
@@ -186,7 +196,7 @@ export function buildManualOrder(input) {
     total: lines.reduce((n, l) => n + (l.unitPrice - l.unitDiscount) * l.qty, 0) + shipping,
     currency: 'IDR',
     items: lines.length,
-    note: String(input.note ?? '').trim().slice(0, 200),
+    note: withAuthor(String(input.note ?? '').trim().slice(0, 200), input.addedBy),
     lines: lines.map((l) => ({ sku: l.sku, name: l.name, variant: l.variant, qty: l.qty })),
     finance: { lines, shipping, shippingPassThrough: false },
   };

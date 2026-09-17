@@ -2,8 +2,9 @@ import { fetchOrdersByIds } from '../src/omni.js';
 import { buildLabelSheet, LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { dashboardError, renderLabelReport } from '../src/dashboard-page.js';
 import {
-  COOKIE_NAME, isConfigured, parseCookies, sessionValid, csrfValid, readFormBody,
+  COOKIE_NAME, isConfigured, parseCookies, authenticate, csrfValid, readFormBody, callerIp,
 } from '../src/dashboard-auth.js';
+import { recordActivity } from '../src/audit.js';
 
 /**
  * Streams a merged, print-ready PDF of official carrier waybills.
@@ -35,7 +36,8 @@ export default async function handler(req, res) {
   }
 
   const session = parseCookies(req.headers.cookie)[COOKIE_NAME];
-  if (!sessionValid(session)) {
+  const user = await authenticate(session);
+  if (!user) {
     fail(401, 'Sesi berakhir', 'Masuk kembali lewat dashboard, lalu ulangi pencetakan.');
     return;
   }
@@ -98,6 +100,17 @@ export default async function handler(req, res) {
     }
 
     console.log(`labels: ${sheet.pageCount} pages for ${chosen.length} orders at ${size}, ${sheet.failures.length} failed`);
+    // Printing is not a write to any marketplace, but "who printed the labels for these
+    // parcels, and when" is exactly the question asked when a parcel goes missing.
+    await recordActivity({
+      actor: user, ip: callerIp(req), menu: 'labels', action: 'print_labels', verb: 'print',
+      target: `${chosen.length} pesanan`,
+      summary: `Mencetak ${sheet.pageCount} label (${size}) untuk ${chosen.length} pesanan${sheet.failures.length ? `, ${sheet.failures.length} gagal` : ''}`,
+      changes: [
+        ...chosen.map((o) => ({ field: `${o.channel} ${o.id}`, to: 'dicetak' })).filter((c) => !sheet.failures.some((f) => c.field.endsWith(f.id))),
+        ...sheet.failures.map((f) => ({ field: `${f.channel} ${f.id}`, to: 'gagal', note: f.reason })),
+      ],
+    });
 
     // A partial run must never look complete. Streaming the PDF alone would leave the
     // operator counting labels at the printer to discover what is missing, so anything

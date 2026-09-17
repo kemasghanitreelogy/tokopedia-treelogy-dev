@@ -150,6 +150,33 @@ Locally, `BLOB_READ_WRITE_TOKEN` lives in `.env.local` (written by
 vercel env pull .env.local --yes
 ```
 
+## Dashboard users and the activity log
+
+The dashboard login is no longer one shared password. `DASHBOARD_EMAIL` /
+`DASHBOARD_PASSWORD` remain the **owner** account (never stored, cannot be locked out);
+everyone else is invited from the **Pengguna** tab and lives in the state store under
+`auth/users.json`.
+
+- **Invite**: admin enters name, email and role → an email with a one-time link
+  (`/api/activate?token=…`, valid 72 h) goes out over SMTP. The invitee chooses and
+  confirms their own password on that page and is signed straight in.
+- **Roles**: `admin` (everything, including users), `operator` (every write except
+  users), `viewer` (read-only; every save is refused). The owner is above all three.
+- **Sessions** are signed per user with `DASHBOARD_TOKEN` mixed with that user's
+  password hash: disabling, deleting or re-passwording a user ends their sessions at once.
+- **Aktivitas** tab: every write on every menu - stock, price, shipping, labels,
+  Jurnal sync, manual invoices, user changes, login/logout - is recorded with who, when,
+  from which address, and the before/after of each value. Failed attempts are recorded
+  too. One document per WIB day under `audit/`; filter by person, menu, status, text.
+- A manual Jurnal transaction's memo ends with `- ditambahkan oleh <nama>`, so the
+  invoice in Jurnal itself says who entered it.
+
+SMTP is the standard library only (`src/mail/smtp.js`): implicit TLS on 465 or STARTTLS
+otherwise, `AUTH PLAIN`. Variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+`SMTP_FROM` (`Nama <alamat>`), optional `SMTP_SECURE=tls|starttls`. `DASHBOARD_NAME` is
+the owner's display name in the log and in Jurnal memos. Without SMTP the invitation is
+still created and can be re-sent later with **Kirim ulang**.
+
 ## Authorization entry point (important)
 
 Two links can authorize this service, and they are **not** interchangeable:

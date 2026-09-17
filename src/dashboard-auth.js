@@ -1,13 +1,15 @@
 import crypto from 'node:crypto';
-import { createState, verifyState } from './state.js';
+import { findUser, verifyLogin, ownerUser, OWNER_ID } from './users.js';
 
 /**
- * Cookie-backed sessions for the dashboard.
+ * Cookie-backed sessions for the dashboard, one per person.
  *
- * The session itself is stateless: a random nonce plus an expiry, HMAC-signed with the
- * dashboard password. Nothing is stored server-side, and rotating DASHBOARD_TOKEN
- * invalidates every outstanding session for free - which is what you want from a
- * password change.
+ * A session is a signed statement: "user X, nonce, expires at". It is signed with the
+ * random DASHBOARD_TOKEN mixed with that user's own credential hash, so nothing is stored
+ * server-side, a forged cookie needs the signing key, and a password change - or the
+ * owner rotating DASHBOARD_TOKEN - invalidates every outstanding session for free.
+ *
+ * The owner is the account in the environment. Everyone else is in src/users.js.
  */
 
 export const COOKIE_NAME = 'omni_session';
@@ -30,16 +32,16 @@ const digest = (value) => crypto.createHash('sha256').update(String(value ?? '')
 const constantTimeEqual = (a, b) => crypto.timingSafeEqual(digest(a), digest(b));
 
 /**
- * Sessions are signed with the random DASHBOARD_TOKEN, never with the password.
+ * The per-user signing secret.
  *
- * Signing with the password would mean anyone could mint a valid cookie by computing an
- * HMAC keyed with a guess - with a short password that is not an attack, it is
- * arithmetic. Mixing the credential hash in keeps the key strong while still making a
- * password change invalidate every session that is already out there.
+ * Keyed by the random DASHBOARD_TOKEN, never by a password: with a short password an
+ * HMAC keyed by it is not an attack, it is arithmetic. The credential hash is mixed in so
+ * that changing it still invalidates every session already out there.
  */
-function sessionSecret() {
+function sessionSecret(user) {
   const { email, password, signingKey } = credentials();
-  return crypto.createHmac('sha256', signingKey).update(`${email}:${password}`).digest('hex');
+  const credential = user.id === OWNER_ID ? `${email}:${password}` : `${user.passwordHash ?? ''}`;
+  return crypto.createHmac('sha256', signingKey).update(`${user.id}:${credential}`).digest('hex');
 }
 
 /** Both fields are always compared, so a wrong email costs the same time as a wrong password. */
@@ -51,7 +53,17 @@ export function credentialsMatch(email, password) {
   return emailOk && passwordOk;
 }
 
-/** The bookmark key: the long random token still opens the dashboard on its own. */
+/**
+ * Whoever these credentials belong to: the owner from the environment, or an active
+ * invited user from the store. Null means nobody, and the caller counts a failure.
+ */
+export async function login(email, password) {
+  if (credentialsMatch(email, password)) return ownerUser();
+  if (!isConfigured()) return null;
+  return verifyLogin(email, password);
+}
+
+/** The bookmark key: the long random token still opens the dashboard as the owner. */
 export function tokenMatches(provided) {
   const { signingKey } = credentials();
   if (!signingKey) return false;
@@ -75,15 +87,51 @@ export function parseCookies(header) {
   return jar;
 }
 
-export function issueSession() {
-  const { state } = createState(sessionSecret(), SESSION_TTL_SECONDS);
-  return state;
+const b64 = (text) => Buffer.from(text, 'utf8').toString('base64url');
+const unb64 = (text) => Buffer.from(text, 'base64url').toString('utf8');
+const sign = (secret, payload) => crypto.createHmac('sha256', secret).update(payload, 'utf8').digest('base64url');
+
+/** @param {{id: string}} [user] defaults to the owner, which is what the bookmark key logs in as. */
+export function issueSession(user = ownerUser()) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  const payload = `${user.id}|${nonce}|${expiresAt}`;
+  return `${b64(payload)}.${sign(sessionSecret(user), payload)}`;
 }
 
-export function sessionValid(token) {
-  if (!isConfigured() || !token) return false;
-  return verifyState(sessionSecret(), token).valid;
+/**
+ * The person behind a cookie, or null.
+ *
+ * The user is looked up first because the signature depends on their credential hash;
+ * the lookup is by id from the unverified payload, which is harmless - an attacker who
+ * names a user still has to produce that user's signature. Disabled or deleted users
+ * fail here even with a cookie that was valid an hour ago.
+ */
+export async function authenticate(token) {
+  if (!isConfigured() || typeof token !== 'string') return null;
+  const dot = token.lastIndexOf('.');
+  if (dot === -1) return null;
+  let payload;
+  try {
+    payload = unb64(token.slice(0, dot));
+  } catch {
+    return null;
+  }
+  const [id, nonce, expiresRaw] = payload.split('|');
+  const expiresAt = Number(expiresRaw);
+  if (!id || !nonce || !Number.isFinite(expiresAt)) return null;
+  if (Math.floor(Date.now() / 1000) > expiresAt) return null;
+
+  const user = await findUser(id).catch(() => null);
+  if (!user || user.status !== 'active') return null;
+
+  const expected = Buffer.from(sign(sessionSecret(user), payload));
+  const provided = Buffer.from(token.slice(dot + 1));
+  if (expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) return null;
+  return user;
 }
+
+export const sessionValid = async (token) => Boolean(await authenticate(token));
 
 const attributes = (maxAge) =>
   [
@@ -125,10 +173,11 @@ export function safeRedirect(basePath, params) {
  *
  * SameSite=Lax already blocks a cross-site POST from carrying the cookie, but the write
  * actions here change real stock and prices, so the form also has to prove it came from
- * a page we rendered. The token is derived from the session, so it needs no storage.
+ * a page we rendered. The token is derived from the session, which is itself random and
+ * unforgeable, so it needs no storage and no per-user secret.
  */
 export function csrfToken(session) {
-  return crypto.createHmac('sha256', sessionSecret()).update(`csrf:${session ?? ''}`).digest('base64url');
+  return crypto.createHmac('sha256', credentials().signingKey).update(`csrf:${session ?? ''}`).digest('base64url');
 }
 
 export function csrfValid(session, provided) {

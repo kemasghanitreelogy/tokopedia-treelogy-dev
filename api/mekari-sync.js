@@ -46,7 +46,7 @@ const TOTAL_BUDGET_MS = 85_000;
 const RECOVERY_NEEDS_MS = 12_000;
 
 /** Cron calls carry CRON_SECRET; a person calls it with their dashboard session. */
-function authorized(req) {
+async function authorized(req) {
   const bearer = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
   if (process.env.CRON_SECRET && bearer && bearer === process.env.CRON_SECRET) return 'cron';
 
@@ -55,7 +55,7 @@ function authorized(req) {
   if (provided && tokenMatches(provided)) return 'token';
 
   const cookies = parseCookies(req.headers.cookie);
-  if (sessionValid(cookies[COOKIE_NAME])) return 'session';
+  if (await sessionValid(cookies[COOKIE_NAME])) return 'session';
 
   return null;
 }
@@ -68,7 +68,7 @@ const json = (res, status, body) => {
 };
 
 export default async function handler(req, res) {
-  const caller = authorized(req);
+  const caller = await authorized(req);
   if (!caller) return json(res, 401, { ok: false, error: 'tidak berwenang' });
 
   if (!isMekariConfigured()) {

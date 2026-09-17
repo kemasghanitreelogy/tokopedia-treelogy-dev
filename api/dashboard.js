@@ -2,6 +2,13 @@ import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { renderUsers } from '../src/pages/users.js';
+import { renderActivity } from '../src/pages/activity.js';
+import { can, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
+import { recordActivity, readActivity, actorsIn, MENUS } from '../src/audit.js';
+import { sendMail, isSmtpConfigured } from '../src/mail/smtp.js';
+import { invitationMail } from '../src/mail/invitation.js';
+import { publicBaseUrl } from '../src/config.js';
 import { selectReviews, reviewStats } from '../src/tokopedia/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
@@ -12,7 +19,7 @@ import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
-import { planSync, applySync, applyPrice, writeAudit } from '../src/stock-sync.js';
+import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
@@ -39,8 +46,8 @@ import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
 import {
-  COOKIE_NAME, isConfigured, credentialsMatch, tokenMatches, parseCookies,
-  issueSession, sessionValid, sessionCookie, clearedCookie, safeRedirect, readFormBody,
+  COOKIE_NAME, isConfigured, login, tokenMatches, parseCookies,
+  issueSession, authenticate, sessionCookie, clearedCookie, safeRedirect, readFormBody,
   callerIp, attemptState, isLockedOut, recordFailure, clearFailures, csrfValid, csrfToken,
 } from '../src/dashboard-auth.js';
 
@@ -80,16 +87,55 @@ const catalogComplete = (catalog) => Object.keys(catalog.errors ?? {}).length ==
 const readCatalogSafely = () =>
   withFallback('catalog', readCatalog, { isComplete: catalogComplete });
 
+/** Which menu each action belongs to, for the activity log and the redirect after a failure. */
+const ACTION_MENU = {
+  ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
+  mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
+  user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
+};
+const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_status', 'user_delete']);
+
+/** The activation link that goes in the email. */
+const activationLink = (token) => `${publicBaseUrl()}/api/activate?token=${encodeURIComponent(token)}`;
+
 /**
- * The three write actions.
+ * Send the invitation. A failure here does not undo the record: the person exists as
+ * "diundang" and the operator gets a "kirim ulang" button next to the error, which is
+ * more useful than a form that has to be typed again.
+ */
+async function deliverInvitation({ user, token, by }) {
+  const link = activationLink(token);
+  if (!isSmtpConfigured()) {
+    // Local development without a mail server: the link goes to the console instead of
+    // nowhere. In production SMTP is configured, so no invitation link is ever logged.
+    if (process.env.NODE_ENV !== 'production') console.log(`invite: SMTP belum disetel; tautan untuk ${user.email}: ${link}`);
+    throw new Error('SMTP belum dikonfigurasi, email undangan tidak terkirim');
+  }
+  const mail = invitationMail({ name: user.name, role: user.role, link, expiresAt: user.inviteExpiresAt, inviter: by });
+  await sendMail({ to: user.email, ...mail });
+}
+
+/**
+ * The write actions, each returning where to go, what to say - and what to record.
+ *
+ * `audit` is the activity-log entry: menu, verb, target, a one-line summary and, for
+ * anything that had a previous value, the list of before/after pairs. The actor and the
+ * address are added by the caller from the session, never from the form.
  *
  * `ledger` only touches our own master record - it never reaches a marketplace, so an
  * operator can correct a number and see the resulting plan before anything is pushed.
  * `apply` and `price` do write to the shops, and both go through the same guarded paths
  * the CLI uses, including the audit trail.
  */
-async function handleWrite(form, ip) {
+async function handleWrite(form, ip, user) {
   const action = form.get('action');
+
+  // Permission first, before any field is read: a viewer's POST is refused whatever it says.
+  if (USER_ACTIONS.has(action)) {
+    if (!can(user, 'users')) throw new Error('hanya admin yang bisa mengelola pengguna');
+  } else if (!can(user, 'write')) {
+    throw new Error(`peran ${ROLES[user.role]?.label ?? user.role} hanya bisa melihat, tidak mengubah`);
+  }
 
   if (action === 'ledger') {
     const sku = String(form.get('sku') ?? '').trim();
@@ -98,13 +144,17 @@ async function handleWrite(form, ip) {
     if (!Number.isInteger(qty) || qty < 0) throw new Error('jumlah harus bilangan bulat >= 0');
 
     const ledger = (await loadLedger().catch(() => null)) ?? emptyLedger();
-    const updated = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${ip}` });
+    const before = ledger.skus[sku]?.qty ?? null;
+    const updated = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
     await saveLedger(updated);
     // The stock view must show the number that was just saved, not a cached one.
     invalidate('catalog');
     invalidate('ledger');
     console.log(`dashboard: ledger ${sku} -> ${qty}`);
-    return { view: 'products', message: `Ledger ${sku} disetel ke ${qty}` };
+    return {
+      view: 'products', message: `Ledger ${sku} disetel ke ${qty}`,
+      audit: { menu: 'products', verb: 'edit', target: sku, summary: `Mengubah stok ledger ${sku} dari ${before ?? '—'} menjadi ${qty}`, changes: [{ field: `stok ${sku}`, from: before, to: qty }] },
+    };
   }
 
   if (action === 'apply') {
@@ -123,6 +173,11 @@ async function handleWrite(form, ip) {
     return {
       view: 'products',
       message: `${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted} penulisan stok`,
+      audit: {
+        menu: 'products', verb: 'sync', target: `${result.attempted} listing`,
+        summary: `Menulis stok ledger ke marketplace: ${result.succeeded} berhasil, ${result.failed} gagal`,
+        changes: result.results.map((r) => ({ field: `${r.sku} @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status === 'failed' ? r.error : '' })),
+      },
     };
   }
 
@@ -151,11 +206,14 @@ async function handleWrite(form, ip) {
 
     let ledger = (await loadLedger().catch(() => null)) ?? emptyLedger();
     let written = 0;
+    const changes = [];
     for (const { sku, qty } of edits) {
       // Only write what actually moved - unless the operator vouched for it, which is
       // itself the change: the row stops being a seed and becomes a deliberate number.
-      if (ledger.skus[sku]?.qty === qty && !vouched.has(sku)) continue;
-      ledger = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${ip}` });
+      const before = ledger.skus[sku]?.qty ?? null;
+      if (before === qty && !vouched.has(sku)) continue;
+      ledger = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
+      changes.push({ field: sku, from: before, to: qty, note: before === qty ? 'dikonfirmasi manual' : '' });
       written += 1;
     }
     if (written === 0) return { view: 'stock', message: 'Tidak ada nilai yang berubah' };
@@ -164,7 +222,10 @@ async function handleWrite(form, ip) {
     invalidate('ledger');
     invalidate('catalog');
     console.log(`dashboard: ledger_batch ${written} skus`);
-    return { view: 'stock', message: `${written} stok disimpan ke ledger` };
+    return {
+      view: 'stock', message: `${written} stok disimpan ke ledger`,
+      audit: { menu: 'stock', verb: 'edit', target: `${written} SKU`, summary: `Mengubah stok ledger ${written} SKU: ${changes.slice(0, 3).map((c) => `${c.field} ${c.from ?? '—'}→${c.to}`).join(', ')}${changes.length > 3 ? ', …' : ''}`, changes },
+    };
   }
 
   if (action === 'mass_arrange') {
@@ -193,6 +254,11 @@ async function handleWrite(form, ip) {
       message: failed.length === 0
         ? `${result.succeeded} pesanan berhasil diatur pengirimannya`
         : `${result.succeeded} berhasil, ${failed.length} gagal - ${failed[0].id}: ${failed[0].error}`,
+      audit: {
+        menu: 'process', verb: 'send', target: `${eligible.length} pesanan`,
+        summary: `Mengatur pengiriman ${eligible.length} pesanan: ${result.succeeded} berhasil${failed.length ? `, ${failed.length} gagal` : ''}`,
+        changes: result.results.map((r) => ({ field: `${r.channel} ${r.id}`, to: r.status === 'ok' ? 'diatur pengirimannya' : 'gagal', note: r.error ?? '' })),
+      },
     };
   }
 
@@ -218,7 +284,19 @@ async function handleWrite(form, ip) {
 
     if (result.status === 'failed') throw new Error(`${id}: ${result.error}`);
     console.log(`dashboard: ${op} ${channel}/${id} ok`);
-    return { view: 'process', message: `${id} berhasil diproses` };
+    const tracking = String(form.get('tracking') ?? '').trim();
+    return {
+      view: 'process', message: `${id} berhasil diproses`,
+      audit: {
+        menu: 'process', verb: 'send', target: `${channel} ${id}`,
+        summary: `Memproses pesanan ${id} (${op})${tracking ? ` dengan resi ${tracking}` : ''}`,
+        changes: [
+          { field: 'tindakan', to: op },
+          ...(tracking ? [{ field: 'resi', from: order.tracking || null, to: tracking }] : []),
+          ...(form.get('company') ? [{ field: 'kurir', from: order.carrier || null, to: String(form.get('company')).trim() }] : []),
+        ],
+      },
+    };
   }
 
   if (action === 'price') {
@@ -239,6 +317,11 @@ async function handleWrite(form, ip) {
       message: failed.length
         ? `Harga ${sku}: ${ok} berhasil, ${failed.length} gagal - ${failed[0].error}`
         : `Harga ${sku} disetel ke ${price} di ${ok} listing`,
+      audit: {
+        menu: 'products', verb: 'edit', target: sku,
+        summary: `Mengubah harga ${sku} menjadi Rp${price.toLocaleString('id-ID')} di ${ok} listing${failed.length ? `, ${failed.length} gagal` : ''}`,
+        changes: results.map((r) => ({ field: `harga @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status === 'failed' ? r.error : '' })),
+      },
     };
   }
 
@@ -282,6 +365,11 @@ async function handleWrite(form, ip) {
           (result.voided ? `, ${result.voided} dibatalkan dihapus` : '') +
           (later > 0 ? `, ${later} sisanya dikirim sapuan otomatis berikutnya` : '')
         : `${result.created} berhasil, ${failed.length} bermasalah - ${failed[0].customId}: ${failed[0].error}`,
+      audit: {
+        menu: 'jurnal', verb: 'sync', target: `${result.created} faktur`,
+        summary: `Mengirim penjualan ke Jurnal: ${result.created} faktur dibuat, ${result.exists ?? 0} sudah ada, ${failed.length} bermasalah${later > 0 ? `, ${later} menunggu sapuan` : ''}`,
+        changes: result.results.filter((r) => r.status !== 'exists').map((r) => ({ field: r.customId ?? r.id ?? '?', to: r.status, note: r.error ?? '' })),
+      },
     };
   }
 
@@ -297,12 +385,15 @@ async function handleWrite(form, ip) {
       unitDiscount: Number(form.getAll('unitDiscount')[index]),
     }));
 
+    // The memo Jurnal shows ends with who typed the sale in: the invoice then carries its
+    // own provenance, and finance does not have to come back here to ask.
     const order = buildManualOrder({
       source: form.get('source'),
       code: form.get('code'),
       date: form.get('date'),
       customer: form.get('customer'),
       note: form.get('note'),
+      addedBy: user.name || user.email,
       shipping: form.get('shipping'),
       lines,
     });
@@ -345,11 +436,95 @@ async function handleWrite(form, ip) {
       message: result.status === 'exists'
         ? `${order.id} sudah ada di Jurnal, tidak dibuat dua kali`
         : `${order.id} tersimpan di Jurnal senilai ${built.expectedTotal.toLocaleString('id-ID')}`,
+      audit: {
+        menu: 'jurnal', verb: 'add', target: order.id,
+        summary: `Menambah transaksi manual ${order.id} (${order.source}) untuk ${order.customer} senilai Rp${built.expectedTotal.toLocaleString('id-ID')}${result.status === 'exists' ? ' (sudah ada di Jurnal)' : ''}`,
+        changes: [
+          { field: 'pelanggan', to: order.customer },
+          { field: 'tanggal', to: form.get('date') },
+          { field: 'keterangan', to: order.note },
+          { field: 'ongkir', to: order.finance.shipping },
+          ...order.finance.lines.map((l) => ({ field: l.sku, to: `${l.qty} × Rp${Number(l.unitPrice).toLocaleString('id-ID')}${l.unitDiscount ? ` − Rp${Number(l.unitDiscount).toLocaleString('id-ID')}` : ''}` })),
+          { field: 'total', to: built.expectedTotal },
+        ],
+      },
+    };
+  }
+
+  /* ------------------------------------------------------------- users */
+
+  if (action === 'user_invite') {
+    const by = { id: user.id, email: user.email, name: user.name };
+    const { user: invited, token } = await inviteUser({ email: form.get('email'), name: form.get('name'), role: form.get('role'), by });
+    const audit = {
+      menu: 'users', verb: 'invite', target: invited.email,
+      summary: `Mengundang ${invited.name} (${invited.email}) sebagai ${ROLES[invited.role].label}`,
+      changes: [{ field: 'nama', to: invited.name }, { field: 'email', to: invited.email }, { field: 'peran', to: ROLES[invited.role].label }, { field: 'status', to: STATUS.invited }],
+    };
+    try {
+      await deliverInvitation({ user: invited, token, by });
+    } catch (error) {
+      console.error(`dashboard: undangan ${invited.email} dibuat tapi email gagal: ${error.message}`);
+      return {
+        view: 'users', kind: 'error',
+        message: `${invited.name} tercatat, tapi email gagal dikirim (${error.message}). Perbaiki SMTP lalu tekan "Kirim ulang".`,
+        audit: { ...audit, summary: `${audit.summary} - email gagal dikirim`, changes: [...audit.changes, { field: 'email undangan', to: 'gagal', note: error.message }] },
+      };
+    }
+    console.log(`dashboard: invited ${invited.email} as ${invited.role}`);
+    return { view: 'users', message: `Undangan terkirim ke ${invited.email}`, audit };
+  }
+
+  if (action === 'user_resend') {
+    const by = { id: user.id, email: user.email, name: user.name };
+    const { user: invited, token } = await renewInvite(String(form.get('id') ?? ''), by);
+    await deliverInvitation({ user: invited, token, by });
+    console.log(`dashboard: re-invited ${invited.email}`);
+    return {
+      view: 'users', message: `Undangan baru terkirim ke ${invited.email}`,
+      audit: { menu: 'users', verb: 'send', target: invited.email, summary: `Mengirim ulang undangan ke ${invited.name} (${invited.email})`, changes: [{ field: 'tautan undangan', to: 'diperbarui, berlaku 72 jam' }] },
+    };
+  }
+
+  if (action === 'user_role') {
+    const id = String(form.get('id') ?? '');
+    if (id === user.id) throw new Error('peran sendiri tidak bisa diubah');
+    const { before, after } = await updateUser(id, { role: String(form.get('role') ?? '') });
+    if (before.role === after.role) return { view: 'users', message: `Peran ${after.name} tidak berubah` };
+    return {
+      view: 'users', message: `${after.name} sekarang ${ROLES[after.role].label}`,
+      audit: { menu: 'users', verb: 'edit', target: after.email, summary: `Mengubah peran ${after.name} dari ${ROLES[before.role].label} menjadi ${ROLES[after.role].label}`, changes: [{ field: 'peran', from: ROLES[before.role].label, to: ROLES[after.role].label }] },
+    };
+  }
+
+  if (action === 'user_status') {
+    const id = String(form.get('id') ?? '');
+    if (id === user.id) throw new Error('status sendiri tidak bisa diubah');
+    const status = String(form.get('status') ?? '');
+    const { before, after } = await updateUser(id, { status });
+    const verb = after.status === 'disabled' ? 'delete' : 'edit';
+    return {
+      view: 'users', message: after.status === 'disabled' ? `${after.name} dinonaktifkan; sesinya berakhir` : `${after.name} aktif kembali`,
+      audit: { menu: 'users', verb, target: after.email, summary: `${after.status === 'disabled' ? 'Menonaktifkan' : 'Mengaktifkan kembali'} ${after.name} (${after.email})`, changes: [{ field: 'status', from: STATUS[before.status], to: STATUS[after.status] }] },
+    };
+  }
+
+  if (action === 'user_delete') {
+    const id = String(form.get('id') ?? '');
+    if (id === user.id) throw new Error('tidak bisa menghapus diri sendiri');
+    const removed = await removeUser(id);
+    return {
+      view: 'users', message: `${removed.name} dihapus`,
+      audit: { menu: 'users', verb: 'delete', target: removed.email, summary: `Menghapus pengguna ${removed.name} (${removed.email}, ${ROLES[removed.role]?.label ?? removed.role})`, changes: [{ field: 'status', from: STATUS[removed.status] ?? removed.status, to: 'dihapus' }] },
     };
   }
 
   throw new Error(`aksi tidak dikenal: ${action}`);
 }
+
+/** A failed action still tells the story: who tried what, and why it was refused. */
+const failureTarget = (form) =>
+  ['sku', 'order', 'code', 'email', 'id'].map((k) => form.get(k)).find((v) => v && String(v).trim()) ?? '';
 
 export default async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);
@@ -383,17 +558,23 @@ export default async function handler(req, res) {
   });
   const here = safeRedirect(PATH, range);
 
-  if (url.searchParams.has('logout')) {
-    redirect(PATH, { 'Set-Cookie': clearedCookie() });
-    return;
-  }
-
   const ip = callerIp(req);
   const cookies = parseCookies(req.headers.cookie);
   const session = cookies[COOKIE_NAME];
 
+  if (url.searchParams.has('logout')) {
+    const leaving = await authenticate(session);
+    if (leaving) await recordActivity({ actor: leaving, ip, menu: 'auth', action: 'logout', verb: 'logout', summary: `${leaving.name} keluar` });
+    redirect(PATH, { 'Set-Cookie': clearedCookie() });
+    return;
+  }
+
+  // Who is asking. Null on every path that is not signed in, including a cookie whose
+  // user has since been disabled or deleted.
+  const user = await authenticate(session);
+
   // An authenticated POST is a write action, not a login attempt.
-  if (req.method === 'POST' && sessionValid(session)) {
+  if (req.method === 'POST' && user) {
     let form;
     try {
       form = await readFormBody(req);
@@ -408,12 +589,19 @@ export default async function handler(req, res) {
       return;
     }
 
+    const action = String(form.get('action') ?? '');
     try {
-      const outcome = await handleWrite(form, ip);
-      redirect(`${PATH}?view=${outcome.view}&done=${encodeURIComponent(outcome.message)}`);
+      const outcome = await handleWrite(form, ip, user);
+      if (outcome.audit) await recordActivity({ actor: user, ip, action, status: 'ok', ...outcome.audit });
+      redirect(`${PATH}?view=${outcome.view}&${outcome.kind === 'error' ? 'error' : 'done'}=${encodeURIComponent(outcome.message)}`);
     } catch (error) {
       console.error(`dashboard: write failed - ${error.message}`);
-      redirect(`${PATH}?view=${form.get('view') || 'products'}&error=${encodeURIComponent(error.message)}`);
+      await recordActivity({
+        actor: user, ip, action, status: 'failed', error: error.message,
+        menu: ACTION_MENU[action] ?? (form.get('view') || 'products'), verb: 'edit', target: failureTarget(form),
+        summary: `Aksi ${action || '?'} ditolak`,
+      });
+      redirect(`${PATH}?view=${form.get('view') || ACTION_MENU[action] || 'products'}&error=${encodeURIComponent(error.message)}`);
     }
     return;
   }
@@ -438,7 +626,8 @@ export default async function handler(req, res) {
     }
 
     const email = form.get('email') ?? '';
-    if (!credentialsMatch(email, form.get('password'))) {
+    const account = await login(email, form.get('password'));
+    if (!account) {
       const next = await recordFailure(ip);
       const remaining = Math.max(0, 5 - next.count);
       console.warn(`dashboard: failed login (${remaining} attempts left before lockout)`);
@@ -452,7 +641,9 @@ export default async function handler(req, res) {
     }
 
     await clearFailures(ip);
-    redirect(here, { 'Set-Cookie': sessionCookie(issueSession()) });
+    await touchLogin(account.id);
+    await recordActivity({ actor: account, ip, menu: 'auth', action: 'login', verb: 'login', summary: `${account.name} masuk` });
+    redirect(here, { 'Set-Cookie': sessionCookie(issueSession(account)) });
     return;
   }
 
@@ -468,7 +659,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!sessionValid(session)) {
+  if (!user) {
     send(401, renderLogin({ redirectTo: here }));
     return;
   }
@@ -493,6 +684,38 @@ export default async function handler(req, res) {
   const csrf = csrfToken(session);
 
   try {
+    if (view === 'users') {
+      if (!can(user, 'users')) {
+        send(403, dashboardError('Tidak berwenang', 'Hanya admin dan pemilik yang bisa membuka halaman pengguna.'));
+        return;
+      }
+      const users = await listUsers();
+      console.log(`dashboard/users: ${users.length} pengguna`);
+      send(200, renderUsers({
+        users, me: user, smtpReady: isSmtpConfigured(), range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
+      }));
+      return;
+    }
+
+    if (view === 'activity') {
+      const filter = {
+        actor: url.searchParams.get('actor') ?? '',
+        menu: Object.hasOwn(MENUS, url.searchParams.get('menu') ?? '') ? url.searchParams.get('menu') : '',
+        status: ['ok', 'failed'].includes(url.searchParams.get('status')) ? url.searchParams.get('status') : '',
+        q: url.searchParams.get('q') ?? '',
+      };
+      // The people list comes from the unfiltered range, so picking one person does not
+      // make everyone else vanish from the dropdown.
+      const all = await readActivity({ from: range.from, to: range.to });
+      const entries = filter.actor || filter.menu || filter.status || filter.q ? await readActivity({ from: range.from, to: range.to, ...filter }) : all;
+      console.log(`dashboard/activity: ${entries.length} of ${all.length} entries for ${range.label}`);
+      send(200, renderActivity({
+        entries, actors: actorsIn(all), filter, paging, baseQuery, user,
+        range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
+      }));
+      return;
+    }
+
     if (view === 'stock') {
       const [catalog, ledger] = await Promise.all([
         cached('catalog', CATALOG_TTL_MS, readCatalogSafely),
@@ -502,7 +725,7 @@ export default async function handler(req, res) {
         ? planSync({ ledger, catalog })
         : null;
       console.log(`dashboard/stock: ${catalog.skus.length} skus`);
-      send(200, renderStock({
+      send(200, renderStock({ user,
         catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
         generatedAt: Date.now(), csrf, flash,
         filter: url.searchParams.get('filter') ?? 'all',
@@ -521,7 +744,7 @@ export default async function handler(req, res) {
         ? planSync({ ledger, catalog })
         : null;
       console.log(`dashboard/products: ${catalog.skus.length} skus${catalog.stale ? ' (stale)' : ''}`);
-      send(200, renderProducts({
+      send(200, renderProducts({ user,
         catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
         generatedAt: Date.now(), csrf, flash,
         selected: url.searchParams.get('sku') ?? null,
@@ -542,7 +765,7 @@ export default async function handler(req, res) {
       const sequence = await reserveManualSequence();
       const today = wibDate(Math.floor(Date.now() / 1000));
 
-      send(200, renderManual({
+      send(200, renderManual({ user,
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
         source, code: formatManualCode(source, today, sequence), seqTail: encodeSequence(sequence), today,
         contacts, existingCodes: used, images: await imagesByKey(),
@@ -557,7 +780,7 @@ export default async function handler(req, res) {
     if (view === 'forecast') {
       const forecast = await cached('forecast', 60_000, () => loadForecast().catch(() => null));
       console.log(`dashboard/forecast: ${forecast?.rows?.length ?? 0} sku`);
-      send(200, renderForecast({
+      send(200, renderForecast({ user,
         forecast, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
       return;
@@ -584,7 +807,7 @@ export default async function handler(req, res) {
         withText: filter.text,
       }) : [];
       console.log(`dashboard/reviews: ${reviews.length} of ${Object.keys(doc?.reviews ?? {}).length}, page ${paging.page}`);
-      send(200, renderReviews({
+      send(200, renderReviews({ user,
         doc, stats: doc ? reviewStats(doc) : null, reviews, filter, paging, baseQuery,
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
@@ -604,7 +827,7 @@ export default async function handler(req, res) {
 
     if (view === 'labels') {
       console.log(`dashboard/labels: ${data.orders.length} orders in range`);
-      send(200, renderLabels({
+      send(200, renderLabels({ user,
         ...data, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE,
         showReprints: url.searchParams.get('reprint') === '1',
       }));
@@ -613,7 +836,7 @@ export default async function handler(req, res) {
 
     if (view === 'process') {
       console.log(`dashboard/process: ${data.orders.length} orders in range`);
-      send(200, renderProcess({ ...data, csrf, flash }));
+      send(200, renderProcess({ user, ...data, csrf, flash }));
       return;
     }
 
@@ -625,7 +848,7 @@ export default async function handler(req, res) {
       ]);
       const overview = syncOverview({ orders: data.orders, ledger, accounts: await postingAccounts().catch(() => null) });
       console.log(`dashboard/jurnal: ${overview.synced} synced, ${overview.queued} queued, ${overview.broken} broken`);
-      send(200, renderJurnal({
+      send(200, renderJurnal({ user,
         ...data, overview, csrf, flash, depositTo: POOLED_LABEL, heartbeat, paging, baseQuery,
         live: process.env.MEKARI_SYNC_LIVE === '1',
         configured: isMekariConfigured(),
@@ -636,7 +859,7 @@ export default async function handler(req, res) {
     if (view === 'picklist') {
       const picklist = buildPicklist(data.orders);
       console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus`);
-      send(200, renderPicklist({ ...data, picklist }));
+      send(200, renderPicklist({ user, ...data, picklist }));
       return;
     }
 
@@ -648,7 +871,7 @@ export default async function handler(req, res) {
     };
     const orders = filterOrders(data.orders, filter);
     console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'}`);
-    send(200, renderDashboard({ ...data, orders, summary, filter, paging, baseQuery }));
+    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery }));
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);
     send(502, dashboardError('Could not load orders', error.message));

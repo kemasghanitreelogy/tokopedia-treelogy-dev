@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
   const session = parseCookies(req.headers.cookie)[COOKIE_NAME];
   const key = url.searchParams.get('key');
-  if (!sessionValid(session) && !(key !== null && tokenMatches(key))) return send(401, { ok: false, error: 'butuh sesi dashboard' });
+  if (!(await sessionValid(session)) && !(key !== null && tokenMatches(key))) return send(401, { ok: false, error: 'butuh sesi dashboard' });
 
   const doc = await loadAllReviews();
   const days = Number(url.searchParams.get('days')) || 0;

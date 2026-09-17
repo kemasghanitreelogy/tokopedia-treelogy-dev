@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseCookies, credentialsMatch, tokenMatches, isConfigured, issueSession, sessionValid,
+  parseCookies, credentialsMatch, tokenMatches, isConfigured, issueSession, sessionValid, authenticate,
   sessionCookie, clearedCookie, safeRedirect, isLockedOut, csrfToken, csrfValid,
   COOKIE_NAME, MAX_ATTEMPTS,
 } from '../src/dashboard-auth.js';
@@ -13,14 +13,23 @@ const withCreds = (email, password, signingKey, fn) => {
   process.env.DASHBOARD_EMAIL = email;
   process.env.DASHBOARD_PASSWORD = password;
   process.env.DASHBOARD_TOKEN = signingKey;
-  try {
-    return fn();
-  } finally {
+  const restore = () => {
     for (const [key, value] of [['DASHBOARD_EMAIL', before.e], ['DASHBOARD_PASSWORD', before.p], ['DASHBOARD_TOKEN', before.t]]) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  };
+  let result;
+  try {
+    result = fn();
+  } catch (error) {
+    restore();
+    throw error;
   }
+  // An async body keeps the credentials until it settles; a sync one gives them back now.
+  if (result && typeof result.then === 'function') return result.finally(restore);
+  restore();
+  return result;
 };
 
 const SIGNING = 'a-long-random-signing-key-not-typed-by-anyone';
@@ -47,12 +56,12 @@ test('the email is matched case- and whitespace-insensitively, the password is n
   });
 });
 
-test('an unconfigured dashboard authenticates nobody', () => {
-  withCreds('', '', '', () => {
+test('an unconfigured dashboard authenticates nobody', async () => {
+  await withCreds('', '', '', async () => {
     assert.equal(isConfigured(), false);
     assert.equal(credentialsMatch('', ''), false);
     assert.equal(tokenMatches(''), false);
-    assert.equal(sessionValid('anything'), false);
+    assert.equal(await sessionValid('anything'), false);
   });
 });
 
@@ -71,27 +80,40 @@ test('a session cannot be forged by signing with the password', async () => {
     const mac = crypto.createHmac('sha256', '123').update(payload).digest('base64url');
     return `${Buffer.from(payload).toString('base64url')}.${mac}`;
   });
-  withCreds('kemas@treelogy.com', '123', SIGNING, () => {
-    assert.equal(sessionValid(forged), false);
+  await withCreds('kemas@treelogy.com', '123', SIGNING, async () => {
+    assert.equal(await sessionValid(forged), false);
   });
 });
 
-test('an issued session verifies, and a tampered one does not', () => {
-  withCreds('kemas@treelogy.com', '123', SIGNING, () => {
+test('an issued session verifies, and a tampered one does not', async () => {
+  await withCreds('kemas@treelogy.com', '123', SIGNING, async () => {
     const token = issueSession();
-    assert.equal(sessionValid(token), true);
-    assert.equal(sessionValid(token.slice(0, -2) + 'xx'), false);
+    assert.equal(await sessionValid(token), true);
+    assert.equal(await sessionValid(token.slice(0, -2) + 'xx'), false);
+    // The payload names the user; renaming it to somebody else breaks the signature.
+    const [payload, sig] = token.split('.');
+    const swapped = Buffer.from(Buffer.from(payload, 'base64url').toString().replace('owner|', 'other|')).toString('base64url');
+    assert.equal(await sessionValid(`${swapped}.${sig}`), false);
   });
 });
 
-test('changing the password invalidates outstanding sessions', () => {
-  const token = withCreds('kemas@treelogy.com', 'old', SIGNING, () => issueSession());
-  withCreds('kemas@treelogy.com', 'new', SIGNING, () => assert.equal(sessionValid(token), false));
+test('a session names its user, and the owner session resolves to the owner', async () => {
+  await withCreds('kemas@treelogy.com', '123', SIGNING, async () => {
+    const who = await authenticate(issueSession());
+    assert.equal(who.id, 'owner');
+    assert.equal(who.email, 'kemas@treelogy.com');
+    assert.equal(who.role, 'owner');
+  });
 });
 
-test('changing the email also invalidates outstanding sessions', () => {
+test('changing the password invalidates outstanding sessions', async () => {
+  const token = withCreds('kemas@treelogy.com', 'old', SIGNING, () => issueSession());
+  await withCreds('kemas@treelogy.com', 'new', SIGNING, async () => assert.equal(await sessionValid(token), false));
+});
+
+test('changing the email also invalidates outstanding sessions', async () => {
   const token = withCreds('a@treelogy.com', 'same', SIGNING, () => issueSession());
-  withCreds('b@treelogy.com', 'same', SIGNING, () => assert.equal(sessionValid(token), false));
+  await withCreds('b@treelogy.com', 'same', SIGNING, async () => assert.equal(await sessionValid(token), false));
 });
 
 test('the session cookie is HttpOnly, Secure and SameSite', () => {

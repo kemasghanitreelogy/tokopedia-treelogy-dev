@@ -21,7 +21,7 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return fail(405, 'GET saja');
   const session = parseCookies(req.headers.cookie)[COOKIE_NAME];
   const key = url.searchParams.get('key');
-  if (!sessionValid(session) && !(key !== null && tokenMatches(key))) return fail(401, 'butuh sesi dashboard');
+  if (!(await sessionValid(session)) && !(key !== null && tokenMatches(key))) return fail(401, 'butuh sesi dashboard');
 
   const id = safeId(url.searchParams.get('id'));
   const size = safeSize(url.searchParams.get('s') ?? 'thumb');

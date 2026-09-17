@@ -10,10 +10,11 @@ import { SOURCE_OPTIONS, SELLABLE } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
 import { paginate, pageHref, pageWindow, PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from './paging.js';
+import { can, ROLES } from './users.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
-const escape = (value) =>
+export const escape = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,
     (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
@@ -82,20 +83,40 @@ icon.plus = '<path d="M12 4.5v15m7.5-7.5h-15"/>';
 icon.chevL = '<path d="m15 5-7 7 7 7"/>';
 icon.chevR = '<path d="m9 5 7 7-7 7"/>';
 icon.search = '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/>';
+icon.users = '<path d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"/>';
+icon.clock = '<path d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>';
+icon.mail = '<path d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/>';
+icon.send = '<path d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"/>';
+icon.shield = '<path d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/>';
+icon.trash = '<path d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"/>';
+icon.ban = '<path d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/>';
+icon.key = '<path d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"/>';
+icon.eye = '<path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>';
+icon.eyeOff = '<path d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88"/>';
+icon.history = '<path d="M12 6v6h4.5M3.75 12a8.25 8.25 0 1 0 2.4-5.82M3 4.5v3.75h3.75"/>';
+icon.pencil = '<path d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125"/>';
+icon.userPlus = '<path d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM4 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 10.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/>';
+icon.check2 = '<path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>';
+icon.x = '<path d="M6 18 18 6M6 6l12 12"/>';
 
-const svg = (name, cls = '') =>
+export const svg = (name, cls = '') =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon[name]}</svg>`;
 
 
 export const VIEWS = {
   orders: 'Pesanan', process: 'Proses', picklist: 'Picklist', labels: 'Label',
   stock: 'Stok', products: 'Produk', jurnal: 'Jurnal', forecast: 'Prakiraan', reviews: 'Ulasan',
+  activity: 'Aktivitas', users: 'Pengguna',
 };
 
-function viewNav(current, rangeQuery) {
+/** Tabs that need a permission the person may not have are not shown, not merely refused. */
+const TAB_PERMISSION = { users: 'users' };
+
+function viewNav(current, rangeQuery, user = null) {
   return `<nav class="views" aria-label="Halaman">${Object.entries(VIEWS)
+    .filter(([id]) => !TAB_PERMISSION[id] || can(user, TAB_PERMISSION[id]))
     .map(([id, label]) => {
-      const query = id === 'products' ? `?view=${id}` : `?view=${id}${rangeQuery}`;
+      const query = id === 'products' || id === 'users' ? `?view=${id}` : `?view=${id}${rangeQuery}`;
       return `<a class="viewtab ${id === current ? 'is-on' : ''}" href="${escape(query)}">${escape(label)}</a>`;
     })
     .join('')}</nav>`;
@@ -165,7 +186,14 @@ const idNumber = (n) => Number(n).toLocaleString('id-ID');
  * @param {ReturnType<typeof paginate>} paged
  * @param {{baseQuery: string, noun: string}} options
  */
-function pager(paged, { baseQuery, noun }) {
+/** "Kemas Ghani" → "KG"; an email → its first letter. */
+export const initials = (name) => {
+  const words = String(name ?? '').trim().split(/[\s@._-]+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  return (words.length === 1 ? words[0].slice(0, 2) : words[0][0] + words[words.length - 1][0]).toUpperCase();
+};
+
+export function pager(paged, { baseQuery, noun }) {
   const { page, pages, total, from, to, perPage } = paged;
   const href = (p, per = perPage) => escape(pageHref(baseQuery, p, per));
   const summary = total
@@ -217,11 +245,17 @@ function row(order) {
   </tr>`;
 }
 
-function shell({
+export function shell({
   title, range, errors = {}, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
   view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null,
-  stale = false, staleSince = null,
+  stale = false, staleSince = null, user = null, style = '',
 }) {
+  const who = user
+    ? `<a class="who" href="?view=activity&actor=${escape(user.id)}" title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
+        <span class="who__av" aria-hidden="true">${escape(initials(user.name || user.email))}</span>
+        <span class="who__t"><span class="who__n">${escape(user.name || user.email)}</span><span class="who__r">${escape(ROLES[user.role]?.label ?? user.role)}</span></span>
+      </a>`
+    : '';
   const presetLink = (id) => `?view=${view}&preset=${id}`;
   const self = range.preset ? presetLink(range.preset) : `?view=${view}&from=${range.from}&to=${range.to}`;
 
@@ -332,7 +366,7 @@ body{
   box-shadow:0 2px 10px -4px color-mix(in srgb,var(--brand) 60%,transparent)}
 h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .sub{margin:.1rem 0 0; font-size:.8rem; color:var(--muted)}
-.tools{display:flex; gap:.5rem; align-items:center}
+.tools{display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; justify-content:flex-end}
 .wins{display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:3px}
 .win{padding:.35rem .7rem; border-radius:7px; font-size:.82rem; color:var(--muted); text-decoration:none;
   min-height:32px; display:flex; align-items:center; transition:background .2s,color .2s; cursor:pointer}
@@ -358,7 +392,11 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .alert__btn:hover{border-color:var(--brand)}
 .alert__btn .ico{width:16px; height:16px; color:inherit}
 
-.views{display:flex; gap:.3rem; margin-bottom:1rem; border-bottom:1px solid var(--line); padding-bottom:.6rem}
+/* Eleven tabs no longer fit a phone; the row scrolls sideways instead of widening the page. */
+.views{display:flex; gap:.3rem; margin-bottom:1rem; border-bottom:1px solid var(--line); padding-bottom:.6rem;
+  overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch}
+.views::-webkit-scrollbar{display:none}
+.viewtab{flex:none}
 .viewtab{padding:.45rem .9rem; border-radius:9px; font-size:.87rem; font-weight:500; text-decoration:none;
   color:var(--muted); transition:background var(--t-base) var(--ease-out),color var(--t-base) var(--ease-out)}
 .viewtab:hover{color:var(--fg); background:var(--panel-2)}
@@ -1031,6 +1069,19 @@ a.rv__product:hover{color:var(--accent)}
   margin:1.25rem 0 .85rem; font-size:.86rem; color:var(--muted); animation:breathe 2.2s var(--ease-soft) infinite}
 .loader__dot{width:7px; height:7px; border-radius:50%; background:var(--brand); flex:none}
 
+/* --- who is signed in: a small identity chip that doubles as a link to their own trail --- */
+.who{display:inline-flex; align-items:center; gap:.5rem; padding:.3rem .65rem .3rem .3rem; min-height:38px;
+  border:1px solid var(--line); border-radius:10px; background:var(--panel); text-decoration:none; color:inherit;
+  transition:border-color var(--t-fast)}
+.who:hover{border-color:var(--brand)}
+.who__av{width:28px; height:28px; border-radius:8px; display:grid; place-items:center; flex:none;
+  font-size:.7rem; font-weight:700; letter-spacing:.02em; color:#fff;
+  background:linear-gradient(155deg,var(--fill-a),var(--fill-b))}
+.who__t{display:flex; flex-direction:column; line-height:1.15; min-width:0}
+.who__n{font-size:.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11rem}
+.who__r{font-size:.66rem; color:var(--muted); letter-spacing:.04em; text-transform:uppercase}
+@media (max-width:640px){ .who__t{display:none} .who{padding:.3rem} }
+${style}
 @media (prefers-reduced-motion:reduce){
   *{transition:none !important; animation:none !important}
   #nav-progress.on{opacity:1; transform:translateX(-15%)}
@@ -1058,6 +1109,7 @@ a.rv__product:hover{color:var(--accent)}
     </div>
     <div class="tools">
       ${rangeControls}
+      ${who}
       <button class="iconbtn" id="theme" type="button" aria-label="Ganti tema terang/gelap">${svg('sun')}</button>
       <a class="iconbtn" href="${escape(self)}" aria-label="Muat ulang data">${svg('refresh')}</a>
       <a class="iconbtn" href="?logout=1" aria-label="Keluar">${svg('logout')}</a>
@@ -1066,7 +1118,7 @@ a.rv__product:hover{color:var(--accent)}
 
   ${problems}
 
-  ${viewNav(view, rangeQuery(range))}
+  ${viewNav(view, rangeQuery(range), user)}
 
   ${kpis}
 
@@ -1168,7 +1220,7 @@ ${script}
  */
 export function renderDashboard({
   orders, summary, errors, range, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
-  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '',
+  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null,
 }) {
   const { all, byChannel } = summary;
   const inTransit = all.stages.shipping;
@@ -1213,7 +1265,7 @@ export function renderDashboard({
   const paged = paginate(orders, paging);
   const noun = q || channel !== 'all' || stage !== 'all' ? 'pesanan cocok' : 'pesanan';
 
-  return shell({
+  return shell({ user,
     title: 'Omnichannel Orders',
     range, errors, truncated, maxPerPlatform, shopeeShop, generatedAt,
     view: 'orders',
@@ -1282,7 +1334,7 @@ const rangeQuery = (range) =>
  * channel is what makes the page a worklist instead of a report. Actions run one at a
  * time on purpose - shipping cannot be undone from here.
  */
-export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash }) {
+export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, user = null }) {
   const rows = pending(orders);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
 
@@ -1363,7 +1415,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     .map(([action, list]) => section(action, list))
     .join('');
 
-  return shell({
+  return shell({ user,
     title: 'Proses Pesanan',
     range, errors, shopeeShop, generatedAt,
     view: 'process',
@@ -1437,7 +1489,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
 }
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt }) {
+export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
   const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee' })
@@ -1457,7 +1509,7 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
     </tr>`)
     .join('');
 
-  return shell({
+  return shell({ user,
     title: 'Picklist',
     range,
     errors,
@@ -1539,7 +1591,7 @@ function syncHealth(heartbeat, now = Date.now()) {
 
 export function renderJurnal({
   overview, range, errors, shopeeShop, generatedAt, csrf, flash, live, depositTo, configured, heartbeat = null,
-  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '',
+  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null,
 }) {
   const order = { synced: 0, queued: 1, broken: 2, skipped: 3 };
   const sorted = [...overview.rows]
@@ -1564,7 +1616,7 @@ export function renderJurnal({
   // while MEKARI_SYNC_LIVE is off, and a control that always errors is worse than none.
   const canPost = configured && live && overview.queued > 0;
 
-  return shell({
+  return shell({ user,
     title: 'Mekari Jurnal',
     range,
     errors,
@@ -1627,7 +1679,7 @@ export function renderJurnal({
  */
 export function renderManual({
   range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
-  live, depositTo, existingCodes = [], images = {}, seqTail = '',
+  live, depositTo, existingCodes = [], images = {}, seqTail = '', user = null,
 }) {
   const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
 
@@ -1670,7 +1722,7 @@ export function renderManual({
       <button class="ln__x" type="button" data-remove aria-label="Hapus baris ${index + 1}">&times;</button>
     </div>`;
 
-  return shell({
+  return shell({ user,
     title: 'Transaksi manual',
     range,
     errors,
@@ -1944,9 +1996,9 @@ function sparkline(weekly = []) {
  * "same as last week" says so, because the honest reading of that is "this SKU is not
  * predictable, use judgement" - not a figure to order against.
  */
-export function renderForecast({ forecast, range, errors, shopeeShop, generatedAt, csrf, flash }) {
+export function renderForecast({ forecast, range, errors, shopeeShop, generatedAt, csrf, flash, user = null }) {
   if (!forecast) {
-    return shell({
+    return shell({ user,
       title: 'Prakiraan stok', range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
       hideRangeControls: true,
       body: `<p class="empty">Belum ada prakiraan. Jalankan <span class="mono">npm run forecast</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
@@ -1990,7 +2042,7 @@ export function renderForecast({ forecast, range, errors, shopeeShop, generatedA
     </tr>`;
   }).join('');
 
-  return shell({
+  return shell({ user,
     title: 'Prakiraan stok',
     range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
     hideRangeControls: true,
@@ -2162,10 +2214,10 @@ const REVIEW_LIGHTBOX_SCRIPT = `
  */
 export function renderReviews({
   doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash, mediaUrl = defaultMediaUrl,
-  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '',
+  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null,
 }) {
   if (!doc?.syncedAt) {
-    return shell({
+    return shell({ user,
       title: 'Ulasan', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
       hideRangeControls: true,
       body: `<p class="empty">Belum ada ulasan tersimpan. Jalankan <span class="mono">npm run tokopedia:reviews</span> dan <span class="mono">npm run shopee:reviews</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
@@ -2236,7 +2288,7 @@ export function renderReviews({
     ? `Shopee lewat Open API resmi, <b>termasuk penilaian tanpa teks</b>.`
     : 'Shopee belum disinkronkan.';
 
-  return shell({
+  return shell({ user,
     title: 'Ulasan',
     range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
     hideRangeControls: true,
@@ -2293,7 +2345,7 @@ const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURICompon
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, user = null }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
@@ -2344,7 +2396,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     .map(([id, meta]) => `<option value="${escape(id)}" ${id === defaultSize ? 'selected' : ''}>${escape(meta.label)}</option>`)
     .join('');
 
-  return shell({
+  return shell({ user,
     title: 'Cetak Label',
     range, errors, shopeeShop, generatedAt,
     view: 'labels',
@@ -2468,7 +2520,7 @@ function channelChip(key, qty, { failed = false, off = false } = {}) {
  * says plainly what saving will do. Editing is local to the ledger; pushing to the
  * marketplaces stays a separate, deliberate click.
  */
-export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, filter = 'all' }) {
+export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, filter = 'all', user = null }) {
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const listed = catalog.skus.filter((e) => e.tiktok || e.shopee || e.shopify);
   const blind = Object.keys(errors ?? {}).length > 0;
@@ -2624,7 +2676,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
     type="button" data-filter="${f.id}">${escape(f.label)}
     <b class="${f.tone ?? ''}">${f.n}</b></button>`).join('');
 
-  return shell({
+  return shell({ user,
     title: 'Atur Stok',
     range, errors, shopeeShop, generatedAt,
     view: 'stock',
@@ -2795,7 +2847,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
  * makes "Moringa Powder, three sizes" visible again, and what lets a bundle be shown
  * against the components it is actually assembled from.
  */
-export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {} }) {
+export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null }) {
   const live = new Map(catalog.skus.map((e) => [e.sku, e]));
   const stockOf = (sku) => {
     const entry = live.get(sku);
@@ -2841,7 +2893,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 
   const detail = selected ? findProduct(selected) : null;
   if (detail) {
-    return shell({
+    return shell({ user,
       title: detail.name,
       range, errors, shopeeShop, generatedAt,
       view: 'products',
@@ -2977,7 +3029,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
        </table></div>`
     : '';
 
-  return shell({
+  return shell({ user,
     title: 'Produk',
     range, errors, shopeeShop, generatedAt,
     view: 'products',

@@ -151,7 +151,7 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
     list = `<div class="ac__empty">
       <span class="ac__empty-ico" aria-hidden="true">${svg('history')}</span>
       <p><b>Belum ada aktivitas</b> untuk rentang dan filter ini.</p>
-      <p class="dim">Setiap simpan, kirim, cetak dan perubahan pengguna tercatat di sini begitu terjadi.</p>
+      <p class="dim">Setiap simpan, kirim, cetak dan perubahan pengguna di menu ini tercatat begitu terjadi.</p>
     </div>`;
   } else {
     const groups = [];

@@ -144,7 +144,7 @@ export function renderUsers({ users, me, smtpReady, csrf, flash, ...common }) {
       <thead><tr><th>Pengguna</th><th>Peran</th><th>Status</th><th>Sejak</th><th class="num">Tindakan</th></tr></thead>
       <tbody>${users.map((u) => userRow({ u, me, csrf, now })).join('')}</tbody>
     </table></div>
-    <p class="um__foot">Aktivitas setiap orang tercatat di tab <a href="?view=activity">Aktivitas</a>. Menghapus pengguna tidak menghapus riwayatnya.</p>
+    <p class="um__foot">Setiap perubahan di sini tercatat di <a href="?view=activity&amp;menu=users">Log aktivitas</a>. Menghapus pengguna tidak menghapus riwayatnya.</p>
   </section>`;
 
   const body = `<div class="um">${invite}${table}</div>`;

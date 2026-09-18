@@ -1371,3 +1371,27 @@ test('a manual sale can carry who the parcel goes to, and how', () => {
   assert.ok(MANUAL_CARRIERS.includes('Grab Express Instant'));
   assert.ok(MANUAL_CARRIERS.includes('DHL Express'));
 });
+
+test('a discount can be given as a percentage, and the server is what turns it into money', () => {
+  const line = (over) => ({ sku: 'OMP-45-001', qty: 2, unitPrice: 370000, ...over });
+
+  const pct = buildManualOrder(manual({ lines: [line({ unitDiscount: 20, discountMode: 'pct' })] }));
+  assert.equal(pct.finance.lines[0].unitDiscount, 74000, '20% dari 370.000');
+  assert.equal(pct.finance.lines[0].discountPercent, 20, 'apa yang diperintahkan ikut tercatat');
+  assert.equal(pct.total, (370000 - 74000) * 2);
+
+  // The same money said the other way keeps working exactly as before.
+  const rp = buildManualOrder(manual({ lines: [line({ unitDiscount: 74000 })] }));
+  assert.equal(rp.finance.lines[0].unitDiscount, 74000);
+  assert.equal(rp.finance.lines[0].discountPercent, undefined);
+  assert.equal(rp.total, pct.total);
+
+  // Rounding lands on whole rupiah, because an invoice cannot carry a fraction of one.
+  const odd = buildManualOrder(manual({ lines: [line({ unitPrice: 625000, unitDiscount: 7.5, discountMode: 'pct' })] }));
+  assert.equal(odd.finance.lines[0].unitDiscount, 46875);
+
+  assert.throws(() => buildManualOrder(manual({ lines: [line({ unitDiscount: 101, discountMode: 'pct' })] })), /0 dan 100 persen/);
+  assert.throws(() => buildManualOrder(manual({ lines: [line({ unitDiscount: -5, discountMode: 'pct' })] })), /0 dan 100 persen/);
+  // 100% is a giveaway, not an error: the line is free and the invoice still balances.
+  assert.equal(buildManualOrder(manual({ lines: [line({ unitDiscount: 100, discountMode: 'pct' })] })).total, 0);
+});

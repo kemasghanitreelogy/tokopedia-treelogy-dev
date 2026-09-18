@@ -408,6 +408,8 @@ async function handleWrite(form, ip, user) {
       qty: Number(form.getAll('qty')[index]),
       unitPrice: Number(form.getAll('unitPrice')[index]),
       unitDiscount: Number(form.getAll('unitDiscount')[index]),
+      // Whether that number meant rupiah or percent. The server does the arithmetic.
+      discountMode: form.getAll('discountMode')[index],
     }));
 
     // The memo Jurnal shows ends with who typed the sale in: the invoice then carries its
@@ -478,7 +480,12 @@ async function handleWrite(form, ip, user) {
           { field: 'tanggal', to: form.get('date') },
           { field: 'keterangan', to: order.note },
           { field: 'ongkir', to: order.finance.shipping },
-          ...order.finance.lines.map((l) => ({ field: l.sku, to: `${l.qty} × Rp${Number(l.unitPrice).toLocaleString('id-ID')}${l.unitDiscount ? ` − Rp${Number(l.unitDiscount).toLocaleString('id-ID')}` : ''}` })),
+          ...order.finance.lines.map((l) => ({
+            field: l.sku,
+            to: `${l.qty} × Rp${Number(l.unitPrice).toLocaleString('id-ID')}${l.unitDiscount
+              ? ` − ${l.discountPercent !== undefined ? `${l.discountPercent}% (Rp${Number(l.unitDiscount).toLocaleString('id-ID')})` : `Rp${Number(l.unitDiscount).toLocaleString('id-ID')}`}`
+              : ''}`,
+          })),
           { field: 'total', to: built.expectedTotal },
         ],
       },

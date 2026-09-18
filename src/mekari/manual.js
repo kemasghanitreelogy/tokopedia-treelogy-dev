@@ -180,7 +180,17 @@ export function buildManualOrder(input) {
     if (!Number.isInteger(qty) || qty <= 0) throw new InvoiceError(`kuantitas baris ${index + 1} tidak valid`);
 
     const unitPrice = money(line.unitPrice, `harga baris ${index + 1}`);
-    const unitDiscount = money(line.unitDiscount ?? 0, `diskon baris ${index + 1}`);
+    // A discount can be typed either way round. A percentage is only ever a way of saying
+    // an amount, so it becomes one here - on the side that decides - and everything
+    // downstream keeps dealing in rupiah exactly as before.
+    const percent = String(line.discountMode ?? 'rp') === 'pct';
+    const typed = Number(line.unitDiscount ?? 0);
+    if (percent && (!Number.isFinite(typed) || typed < 0 || typed > 100)) {
+      throw new InvoiceError(`diskon baris ${index + 1} harus antara 0 dan 100 persen`);
+    }
+    const unitDiscount = percent
+      ? Math.round((unitPrice * typed) / 100)
+      : money(line.unitDiscount ?? 0, `diskon baris ${index + 1}`);
     if (unitDiscount > unitPrice) throw new InvoiceError(`diskon baris ${index + 1} melebihi harganya`);
 
     return {
@@ -190,6 +200,9 @@ export function buildManualOrder(input) {
       qty,
       unitPrice,
       unitDiscount,
+      // Kept for the record: "20%" and "Rp229.000" are the same money but not the same
+      // instruction, and the activity log should show which one somebody actually gave.
+      ...(percent ? { discountPercent: typed } : {}),
     };
   });
 

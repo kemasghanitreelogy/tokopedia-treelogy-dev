@@ -777,3 +777,17 @@ test('the manual form asks who the parcel goes to, and fills a price when one is
   assert.match(html, /function fillPrice/);
   assert.match(html, /if \(price > 0 && !field\.value\)/, 'harga yang sudah diketik tidak ditimpa');
 });
+
+test('each discount cell can be switched between rupiah and percent', () => {
+  const html = renderManual({
+    source: 'CS', code: 'CS-260918-001', today: '2026-09-18', contacts: [], existingCodes: [],
+    live: true, seqTail: '0000001', prices: {}, ...common,
+  });
+  assert.match(html, /<span class="seg" role="group"/);
+  assert.match(html, /data-mode="rp" aria-pressed="true">Rp</);
+  assert.match(html, /data-mode="pct" aria-pressed="false">%</);
+  assert.match(html, /<input type="hidden" name="discountMode" value="rp">/, 'rupiah tetap bawaan');
+  // The browser's arithmetic is a courtesy; it still has to agree with the server's.
+  assert.match(html, /function discountOf/);
+  assert.match(html, /Math\.round\(price \* Math\.min\(value, 100\) \/ 100\)/);
+});

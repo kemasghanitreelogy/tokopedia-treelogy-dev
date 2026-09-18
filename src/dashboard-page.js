@@ -1078,12 +1078,23 @@ a.rv__product:hover{color:var(--accent)}
 
 /* Line rows: product wide, money narrow and monospaced, remove last so tabbing through
    a row never lands on the destructive control on the way to the next field. */
-.ln{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 116px 92px 36px; gap:.4rem; align-items:center;
+.ln{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 138px 92px 36px; gap:.4rem; align-items:center;
   padding:.4rem 0; animation:rise 260ms var(--ease-out) both}
 .ln + .ln{border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
 .ln select,.ln input{width:100%; font:inherit; font-size:.82rem; padding:.42rem .5rem; min-height:38px;
   border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--fg)}
 .ln input[type="number"]{font-family:"Fira Code",ui-monospace,monospace; text-align:right}
+
+/* The discount cell holds two controls: how much, and of what. They read as one field. */
+.ln__disc{display:flex; align-items:stretch; gap:.25rem; min-width:0}
+.ln__disc input[type="number"]{flex:1; min-width:0}
+.seg{display:flex; flex:none; padding:2px; gap:2px; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel-2)}
+.seg__b{font:inherit; font-size:.72rem; font-weight:600; line-height:1; width:24px; padding:0; cursor:pointer;
+  border:0; border-radius:6px; background:transparent; color:var(--dim); transition:color var(--t-fast), background var(--t-fast)}
+.seg__b:hover{color:var(--fg)}
+.seg__b.is-on{color:#fff; background:linear-gradient(155deg,var(--fill-a),var(--fill-b))}
+.seg__b:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
 .ln select:focus-visible,.ln input:focus-visible{outline:2px solid var(--brand); outline-offset:1px; border-color:transparent}
 .ln__t{font-family:"Fira Code",ui-monospace,monospace; font-size:.82rem; text-align:right; color:var(--muted)}
 .ln__x{display:grid; place-items:center; width:32px; height:32px; border-radius:8px; cursor:pointer;
@@ -1868,7 +1879,15 @@ export function renderManual({
       </span>
       <input type="number" name="qty" value="1" min="1" step="1" inputmode="numeric" aria-label="Kuantitas">
       <input type="number" name="unitPrice" value="" min="0" step="1" inputmode="numeric" placeholder="Harga" aria-label="Harga satuan">
-      <input type="number" name="unitDiscount" value="0" min="0" step="1" inputmode="numeric" aria-label="Diskon satuan">
+      <span class="ln__disc">
+        <input type="number" name="unitDiscount" value="0" min="0" step="1" inputmode="numeric"
+               aria-label="Diskon baris ${index + 1}">
+        <span class="seg" role="group" aria-label="Satuan diskon baris ${index + 1}">
+          <button class="seg__b is-on" type="button" data-mode="rp" aria-pressed="true">Rp</button>
+          <button class="seg__b" type="button" data-mode="pct" aria-pressed="false">%</button>
+        </span>
+        <input type="hidden" name="discountMode" value="rp">
+      </span>
       <span class="ln__t" data-line-total>&mdash;</span>
       <button class="ln__x" type="button" data-remove aria-label="Hapus baris ${index + 1}">&times;</button>
     </div>`;
@@ -2008,6 +2027,22 @@ export function renderManual({
   var codeIsOurs = true;
 
   var rupiah = function (n) { return 'Rp' + Math.round(n).toLocaleString('id-ID'); };
+
+  /**
+   * What the discount on this row is worth per unit, in rupiah.
+   *
+   * A percentage is only ever a way of saying an amount, so it is turned into one here
+   * and again on the server - which is the side that decides. Over 100% is clamped
+   * rather than allowed to make the line negative.
+   */
+  function discountOf(row, price) {
+    var field = row.querySelector('[name="unitDiscount"]');
+    var mode = row.querySelector('[name="discountMode"]').value;
+    var value = Number(field && field.value);
+    if (!isFinite(value) || value <= 0) return 0;
+    if (mode !== 'pct') return value;
+    return Math.round(price * Math.min(value, 100) / 100);
+  }
   var num = function (el) { var v = Number(el && el.value); return isFinite(v) ? v : 0; };
 
   function source() {
@@ -2039,7 +2074,7 @@ export function renderManual({
       var sku = row.querySelector('select').value;
       var qty = num(row.querySelector('[name="qty"]'));
       var price = num(row.querySelector('[name="unitPrice"]'));
-      var disc = num(row.querySelector('[name="unitDiscount"]'));
+      var disc = discountOf(row, price);
       var cell = row.querySelector('[data-line-total]');
       // A row without a product or a price contributes nothing and says so, rather than
       // quietly counting as zero in a total that looks complete.
@@ -2085,6 +2120,25 @@ export function renderManual({
         input.blur();
       }, { passive: false });
     });
+    // Rp or %, one click, and the field's own limits follow: a percentage over a
+    // hundred is not a discount, it is a mistake the browser can catch on the spot.
+    row.querySelectorAll('.seg__b').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var hidden = row.querySelector('[name="discountMode"]');
+        if (hidden.value === button.dataset.mode) return;
+        hidden.value = button.dataset.mode;
+        row.querySelectorAll('.seg__b').forEach(function (other) {
+          var on = other === button;
+          other.classList.toggle('is-on', on);
+          other.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        var field = row.querySelector('[name="unitDiscount"]');
+        if (button.dataset.mode === 'pct') field.setAttribute('max', '100');
+        else field.removeAttribute('max');
+        total();
+      });
+    });
+
     row.querySelector('[data-remove]').addEventListener('click', function () {
       if (lines.querySelectorAll('[data-row]').length === 1) {
         row.querySelector('select').value = '';

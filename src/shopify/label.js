@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
@@ -127,6 +128,22 @@ function fit(font, text, size, width) {
   return `${value}…`;
 }
 
+/**
+ * The Shopify bag, read once and embedded on every label.
+ *
+ * A thermal printer has no colour, so this prints as a dithered grey - the shape is what
+ * the bench recognises at a glance, and the shape survives. If the file ever goes missing
+ * the label still prints; it just wears the word alone.
+ */
+const MARK_PATH = new URL('./shopify-mark.png', import.meta.url);
+let markBytes;
+function shopifyMark() {
+  if (markBytes === undefined) {
+    try { markBytes = fs.readFileSync(MARK_PATH); } catch { markBytes = null; }
+  }
+  return markBytes;
+}
+
 export const SENDER = 'treelogy.com';
 export const UNBOXING_NOTICE = 'WAJIB Video Unboxing. Tanpa video unboxing, komplain tidak diterima.';
 
@@ -165,8 +182,19 @@ export async function buildShopifyLabel(order, { pick, printedAt = Math.floor(Da
   y -= 9;
   rightText(`Waktu Print  ${stamp(printedAt)}`, { size: 6.5, at: y, color: GRAY });
 
-  y -= 22;
-  text('Shopify', { size: 13, face: bold, at: y });
+  y -= 24;
+  const mark = shopifyMark();
+  let wordX = pad;
+  if (mark) {
+    try {
+      const image = await pdf.embedPng(mark);
+      const height = 22;
+      const width = (image.width / image.height) * height;
+      page.drawImage(image, { x: pad, y: y - 5, width, height });
+      wordX = pad + width + 5;
+    } catch { /* an unreadable mark is not a reason to fail the print */ }
+  }
+  page.drawText('Shopify', { x: wordX, y, size: 13, font: bold });
   rightText('Pengiriman', { size: 7, at: y + 3, color: GRAY });
   y -= 13;
   const codWidth = 52;

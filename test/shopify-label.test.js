@@ -87,6 +87,16 @@ test('the label is a one-page PDF that names the parcel and its contents', async
   assert.match(pdf, /\/Count 1/, 'satu halaman per label');
 });
 
+test('the Shopify mark rides on the label, and a missing one does not stop the print', async () => {
+  const bytes = await buildShopifyLabel(order(), { pick: '000000712' });
+  const raw = Buffer.from(bytes).toString('latin1');
+  // An embedded image announces itself in the PDF's own vocabulary.
+  assert.match(raw, /\/Subtype \/Image/);
+  assert.match(raw, /\/ColorSpace \/DeviceRGB/);
+  // The word stays beside it, so a printer that swallows the picture still says Shopify.
+  assert.ok(pdfText(bytes).includes('Shopify'));
+});
+
 test('a label with nothing in it still prints rather than throwing', async () => {
   const bare = await buildShopifyLabel({ id: '#1', createdAt: 1789199520, lines: [] }, { pick: '000000001' });
   assert.match(Buffer.from(bare).toString('latin1'), /^%PDF-/);

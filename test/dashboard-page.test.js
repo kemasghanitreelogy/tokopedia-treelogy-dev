@@ -826,3 +826,35 @@ test('the process page can select everything that still makes today van', async 
   const allEarly = renderProcess({ orders: [at(-3600), at(-60)], ...common, csrf: 'tok', generatedAt: now });
   assert.ok(!allEarly.includes('data-early>'), 'tombolnya tidak muncul kalau semua sama');
 });
+
+test('every page carries one confirmation dialog, and nothing falls back to the browser', () => {
+  for (const [name, html] of pages()) {
+    if (name === 'login') continue;
+    assert.match(html, /<dialog class="cf" id="confirm"/, `${name}: tidak punya dialog konfirmasi`);
+    assert.match(html, /id="cf-yes"/, `${name}: tidak punya tombol lanjutkan`);
+    assert.match(html, /id="cf-no"/, `${name}: tidak punya tombol batal`);
+    // window.confirm survives only as the fallback inside the dialog helper itself.
+    const calls = (html.match(/window\.confirm\(/g) ?? []).length;
+    assert.equal(calls, 1, `${name}: masih memanggil window.confirm ${calls} kali`);
+    assert.match(html, /if \(!dialog \|\| !dialog\.showModal\) return Promise\.resolve\(window\.confirm/);
+  }
+});
+
+test('a cancelled submit takes the loading skeleton down with it', () => {
+  // The bug this guards: the loader is armed on submit in the capture phase, and every
+  // confirmation cancels that submit in a later phase. Pressing Batal left a skeleton
+  // over the page forever, with no way back but a reload.
+  const [, html] = pages().find(([name]) => name === 'manual');
+  assert.match(html, /function endNavigation\(\)/);
+  assert.match(html, /window\.setTimeout\(function \(\) \{ if \(e\.defaultPrevented\) endNavigation\(\); \}, 0\);/);
+  // And the question is asked before the form is allowed through, not after.
+  assert.match(html, /form\.dataset\.confirmed = '1';/);
+  assert.match(html, /form\.requestSubmit\(submitter \|\| undefined\)/, 'tombol yang menekan ikut terkirim');
+});
+
+test('the dialog answers no to escape, to the backdrop and to nothing at all', () => {
+  const [, html] = pages().find(([name]) => name === 'stock');
+  assert.match(html, /dialog\.addEventListener\('close', onClose\)/);
+  assert.match(html, /function onBackdrop\(e\) \{ if \(e\.target === dialog\) finish\(false\); \}/);
+  assert.match(html, /no\.focus\(\);/, 'pilihan aman yang mendapat fokus');
+});

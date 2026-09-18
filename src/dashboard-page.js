@@ -1205,6 +1205,28 @@ a.rv__product:hover{color:var(--accent)}
   margin:1.25rem 0 .85rem; font-size:.86rem; color:var(--muted); animation:breathe 2.2s var(--ease-soft) infinite}
 .loader__dot{width:7px; height:7px; border-radius:50%; background:var(--brand); flex:none}
 
+/* --- confirmation: the question every irreversible button asks, in the house voice --- */
+.cf{width:min(26rem,calc(100vw - 2rem)); padding:0; border:1px solid var(--line); border-radius:16px;
+  background:var(--panel); color:var(--fg); box-shadow:var(--shadow)}
+.cf::backdrop{background:color-mix(in srgb,#000 58%,transparent); backdrop-filter:blur(3px)}
+.cf[open]{animation:rise var(--t-base) var(--ease-out) both}
+.cf__box{padding:1.5rem}
+.cf__ico{width:40px; height:40px; border-radius:11px; display:grid; place-items:center; margin-bottom:.9rem;
+  color:var(--warn); background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.cf__ico .ico{width:20px; height:20px}
+.cf--bad .cf__ico{color:var(--bad); background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.cf__title{margin:0; font-size:1.05rem; font-weight:600; letter-spacing:-.01em}
+.cf__text{margin:.45rem 0 0; font-size:.88rem; line-height:1.55; color:var(--muted); overflow-wrap:anywhere}
+.cf__row{display:flex; gap:.6rem; margin-top:1.4rem}
+.cf__no,.cf__yes{flex:1; font:inherit; font-size:.9rem; font-weight:600; padding:.65rem; min-height:44px;
+  border-radius:10px; cursor:pointer; transition:filter var(--t-base) var(--ease-out), border-color var(--t-fast)}
+.cf__no{border:1px solid var(--line); background:var(--panel-2); color:var(--fg)}
+.cf__no:hover{border-color:var(--brand)}
+.cf__yes{border:1px solid transparent; color:#fff; background:linear-gradient(155deg,var(--fill-a),var(--fill-b))}
+.cf__yes:hover{filter:brightness(1.12)}
+.cf--bad .cf__yes{background:linear-gradient(155deg,color-mix(in srgb,var(--bad) 80%,#000),color-mix(in srgb,var(--bad) 55%,#000))}
+.cf__no:focus-visible,.cf__yes:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+
 /* --- who is signed in: a small identity chip that doubles as a link to their own trail --- */
 .who{display:inline-flex; align-items:center; gap:.5rem; padding:.3rem .65rem .3rem .3rem; min-height:38px;
   border:1px solid var(--line); border-radius:10px; background:var(--panel); text-decoration:none; color:inherit;
@@ -1226,6 +1248,17 @@ ${style}
 </style>
 </head><body>
 <div id="nav-progress"></div>
+<dialog class="cf" id="confirm" aria-labelledby="cf-title">
+  <div class="cf__box">
+    <span class="cf__ico" id="cf-ico" aria-hidden="true">${svg('warn')}</span>
+    <h2 class="cf__title" id="cf-title">Konfirmasi</h2>
+    <p class="cf__text" id="cf-text"></p>
+    <div class="cf__row">
+      <button class="cf__no" type="button" id="cf-no">Batal</button>
+      <button class="cf__yes" type="button" id="cf-yes">Lanjutkan</button>
+    </div>
+  </div>
+</dialog>
 <div id="loader" aria-hidden="true">
   <div class="wrap">
     <p class="loader__note"><span class="loader__dot"></span><span id="loader-text">Memuat…</span></p>
@@ -1294,6 +1327,11 @@ ${style}
     }, 260);
   }
 
+  function endNavigation() {
+    progress.classList.remove('on');
+    loader.classList.remove('on');
+  }
+
   document.addEventListener('click', function (e) {
     var link = e.target.closest('a[href]');
     if (!link || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || link.target === '_blank') return;
@@ -1305,6 +1343,11 @@ ${style}
   document.addEventListener('submit', function (e) {
     if (e.target.getAttribute('target') === '_blank') return;
     beginNavigation('Menyimpan…');
+    // A listener further down the chain can still cancel this submit - every confirmation
+    // on this dashboard does exactly that - and a navigation that never starts must not
+    // leave a skeleton over the page forever. Checked on the next tick, by which time
+    // every other handler has had its say.
+    window.setTimeout(function () { if (e.defaultPrevented) endNavigation(); }, 0);
   }, true);
 
   // Coming back through history shows a cached page; a stuck skeleton would be a lie.
@@ -1330,14 +1373,76 @@ ${style}
 
   // Arrow keys stay: those are a deliberate keystroke, not a side effect of scrolling.
 
-  // Confirm with the value that is actually about to be written, not a generic question.
-  document.querySelectorAll('form[data-confirm]').forEach(function (form) {
-    form.addEventListener('submit', function (e) {
-      var field = form.querySelector('input[type="number"]');
-      var value = field ? field.value : '';
-      var text = form.dataset.confirm.replace('{v}', value);
-      if (!window.confirm(text)) e.preventDefault();
+  /**
+   * The house confirmation, in place of the browser's.
+   *
+   * One dialog for every irreversible button on the dashboard, so the question always
+   * looks and behaves the same, and so the wording can carry the number actually about
+   * to be written. Escape and the backdrop mean no, which is the safe answer.
+   */
+  var dialog = document.getElementById('confirm');
+  var dialogText = document.getElementById('cf-text');
+  var yes = document.getElementById('cf-yes');
+  var no = document.getElementById('cf-no');
+
+  function ask(text, danger) {
+    if (!dialog || !dialog.showModal) return Promise.resolve(window.confirm(text));
+    dialogText.textContent = text;
+    dialog.classList.toggle('cf--bad', Boolean(danger));
+    yes.textContent = danger ? 'Ya, lanjutkan' : 'Lanjutkan';
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish(answer) {
+        if (done) return;
+        done = true;
+        dialog.removeEventListener('close', onClose);
+        yes.removeEventListener('click', onYes);
+        no.removeEventListener('click', onNo);
+        dialog.removeEventListener('click', onBackdrop);
+        if (dialog.open) dialog.close();
+        resolve(answer);
+      }
+      function onYes() { finish(true); }
+      function onNo() { finish(false); }
+      function onClose() { finish(false); }
+      function onBackdrop(e) { if (e.target === dialog) finish(false); }
+
+      yes.addEventListener('click', onYes);
+      no.addEventListener('click', onNo);
+      dialog.addEventListener('close', onClose);
+      dialog.addEventListener('click', onBackdrop);
+      dialog.showModal();
+      // The cautious option takes the focus, so a held Enter cannot answer yes for you.
+      no.focus();
     });
+  }
+  window.treelogyConfirm = ask;
+
+  /*
+   * Everything that asks before it writes, asked in one place.
+   *
+   * The question can sit on the form or on the button that submitted it - "Hapus Dewi?"
+   * belongs to the delete button, not to the row - so the submitter is checked first.
+   * {v} is replaced with the number the form is about to write, because "save 0" and
+   * "save 240" deserve different answers.
+   */
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (form.dataset.confirmed === '1') { form.dataset.confirmed = ''; return; }
+
+    var submitter = e.submitter;
+    var text = (submitter && submitter.dataset.confirmText) || form.dataset.confirmText || form.dataset.confirm;
+    if (!text) return;
+
+    var field = form.querySelector('input[type="number"]');
+    e.preventDefault();
+    ask(text.replace('{v}', field ? field.value : ''), Boolean(submitter && submitter.classList.contains('um__act--bad')))
+      .then(function (ok) {
+        if (!ok) return;
+        form.dataset.confirmed = '1';
+        if (form.requestSubmit) form.requestSubmit(submitter || undefined);
+        else form.submit();
+      });
   });
 })();
 </script>
@@ -2746,11 +2851,6 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   head.addEventListener('change', function () { setAll(head.checked); });
   toggle.addEventListener('click', function () {
     setAll(toggle.getAttribute('aria-pressed') !== 'true');
-  });
-  document.querySelectorAll('button[data-confirm-text]').forEach(function (button) {
-    button.addEventListener('click', function (e) {
-      if (!window.confirm(button.dataset.confirmText)) e.preventDefault();
-    });
   });
   sync();
 })();`,

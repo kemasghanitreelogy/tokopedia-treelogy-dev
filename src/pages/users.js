@@ -234,9 +234,4 @@ document.querySelectorAll('.um__role select').forEach(function (sel) {
     form.classList.toggle('is-dirty', sel.value !== initial);
   });
 });
-document.querySelectorAll('form[data-confirm-text]').forEach(function (form) {
-  form.addEventListener('submit', function (e) {
-    if (!window.confirm(form.dataset.confirmText)) e.preventDefault();
-  });
-});
 `;

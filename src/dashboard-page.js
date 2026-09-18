@@ -246,7 +246,7 @@ export function pager(paged, { baseQuery, noun }) {
   </nav>`;
 }
 
-function row(order) {
+function row(order, index) {
   const meta = CHANNELS[order.channel];
   const stage = STAGE_META[order.stage];
   const track = order.tracking
@@ -254,7 +254,8 @@ function row(order) {
     : AWAITING_AWB.has(order.stage)
       ? '<span class="await">menunggu</span>'
       : '<span class="dim">&mdash;</span>';
-  return `<tr data-channel="${order.channel}" data-stage="${order.stage}">
+  return `<tr class="row" tabindex="0" role="button" aria-label="Rincian pesanan ${escape(order.id)}"
+    data-detail="od-${index}" data-channel="${order.channel}" data-stage="${order.stage}">
     <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
     <td class="mono nowrap">${escape(order.id)}</td>
     <td class="nowrap dim">${escape(dateTime(order.createdAt, order.channel))}</td>
@@ -264,6 +265,67 @@ function row(order) {
     <td class="nowrap dim">${escape(order.carrier) || '&mdash;'}</td>
     <td class="nowrap">${track}</td>
   </tr>`;
+}
+
+/**
+ * Everything known about one order, as the popup shows it.
+ *
+ * Rendered with the list rather than fetched on click: the page already holds the whole
+ * order, so opening it costs nothing and works with the network off. Escaping happens
+ * here, once, which is why the dialog copies markup instead of parsing a data attribute.
+ */
+function orderDetail(order, index) {
+  const meta = CHANNELS[order.channel];
+  const stage = STAGE_META[order.stage];
+  const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
+  const units = lines.reduce((n, l) => n + (Number(l.qty) || 0), 0);
+
+  const field = (label, value, mono = false) => (value
+    ? `<div class="od__f"><dt>${escape(label)}</dt><dd${mono ? ' class="mono"' : ''}>${escape(value)}</dd></div>`
+    : '');
+
+  const items = lines.map((l) => `<tr>
+    <td>
+      <span class="od__n">${escape(l.name || l.sku)}</span>
+      ${l.variant ? `<span class="od__v">${escape(l.variant)}</span>` : ''}
+      <span class="od__s mono">${escape(l.sku ?? '')}</span>
+    </td>
+    <td class="num mono">${escape(String(l.qty ?? 0))}</td>
+    ${l.unitPrice === undefined ? '' : `<td class="num mono">${escape(rupiah(l.unitPrice))}</td>`}
+    ${l.unitPrice === undefined ? '' : `<td class="num mono">${escape(rupiah((l.unitPrice - (l.unitDiscount ?? 0)) * (l.qty ?? 0)))}</td>`}
+  </tr>`).join('');
+
+  const priced = lines.some((l) => l.unitPrice !== undefined);
+
+  return `<div id="od-${index}">
+    <div class="od__head">
+      <span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span>
+      <span class="pill pill--${stage.tone}">${escape(stage.label)}</span>
+      <span class="od__when">${escape(dateTime(order.createdAt, order.channel))}</span>
+    </div>
+    <p class="od__id mono">${escape(order.id)}</p>
+
+    <dl class="od__grid">
+      ${field('Pembeli', order.buyer)}
+      ${field('Telepon', order.buyerPhone, true)}
+      ${field('Email', order.buyerEmail)}
+      ${field('Kurir', order.carrier)}
+      ${field('Resi', order.tracking, true)}
+      ${field('Status platform', order.status)}
+    </dl>
+    ${order.shipTo ? `<dl class="od__grid od__grid--wide">${field('Alamat', order.shipTo)}</dl>` : ''}
+
+    ${items ? `<table class="od__items">
+      <thead><tr><th>Produk</th><th class="num">Qty</th>${priced ? '<th class="num">Harga</th><th class="num">Subtotal</th>' : ''}</tr></thead>
+      <tbody>${items}</tbody>
+    </table>` : ''}
+
+    <dl class="od__sum">
+      <div><dt>Unit</dt><dd class="mono">${escape(String(units))}</dd></div>
+      ${order.finance?.shipping ? `<div><dt>Ongkir</dt><dd class="mono">${escape(rupiah(order.finance.shipping))}</dd></div>` : ''}
+      <div class="od__total"><dt>Total</dt><dd class="mono">${escape(rupiah(order.total))}</dd></div>
+    </dl>
+  </div>`;
 }
 
 export function shell({
@@ -1333,17 +1395,91 @@ export function renderDashboard({
           <th>Kanal</th><th>Order ID</th><th>Waktu</th><th>Pembeli</th>
           <th class="num">Total</th><th>Status</th><th>Kurir</th><th>Resi</th>
         </tr></thead>
-        <tbody id="rows">${paged.items.map(row).join('')}</tbody>
+        <tbody id="rows">${paged.items.map((o, i) => row(o, i)).join('')}</tbody>
       </table>` : '<p class="empty">Tidak ada pesanan yang cocok dengan filter.</p>'}
     </div>
+    <div id="od-store" hidden>${paged.items.map((o, i) => orderDetail(o, i)).join('')}</div>
+    <dialog class="od" id="od">
+      <button class="od__x" type="button" id="od-close" aria-label="Tutup">${svg('x')}</button>
+      <div id="od-body"></div>
+    </dialog>
     ${pager(paged, { baseQuery, noun })}
     <div class="foot">
       <span>${idNumber(all.count)} pesanan pada rentang ini</span>
       <span>Waktu mengikuti jam masing-masing platform</span>
     </div>
   </section>`,
+    style: ORDER_DETAIL_STYLE,
+    script: ORDER_DETAIL_SCRIPT,
   });
 }
+
+/* --- the order popup: a row opens what the page already knows about that order --- */
+
+const ORDER_DETAIL_STYLE = `
+tbody#rows .row{cursor:pointer; transition:background var(--t-fast)}
+tbody#rows .row:hover{background:var(--panel-2)}
+tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2px}
+.od{width:min(34rem,calc(100vw - 2rem)); max-height:min(85vh,48rem); padding:0; border:1px solid var(--line);
+  border-radius:16px; background:var(--panel); color:var(--fg); box-shadow:var(--shadow); overflow:visible}
+.od::backdrop{background:color-mix(in srgb,#000 55%,transparent); backdrop-filter:blur(2px)}
+.od[open]{animation:rise var(--t-base) var(--ease-out) both}
+.od>div{padding:1.4rem; overflow:auto; max-height:min(85vh,48rem)}
+.od__x{position:absolute; top:.6rem; right:.6rem; width:34px; height:34px; border-radius:9px; cursor:pointer;
+  border:1px solid var(--line); background:var(--panel-2); color:var(--muted); display:grid; place-items:center}
+.od__x:hover{color:var(--fg); border-color:var(--brand)}
+.od__x:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.od__x .ico{width:16px; height:16px}
+.od__head{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; padding-right:2.4rem}
+.od__when{font-size:.78rem; color:var(--dim)}
+.od__id{margin:.5rem 0 1rem; font-size:1.05rem; font-weight:600; overflow-wrap:anywhere}
+.od__grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr)); gap:.7rem 1rem; margin:0 0 1rem}
+.od__grid--wide{grid-template-columns:1fr}
+.od__f dt{font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted)}
+.od__f dd{margin:.1rem 0 0; font-size:.88rem; overflow-wrap:anywhere}
+.od__items{width:100%; font-size:.84rem; margin:0 0 1rem}
+.od__items th{position:static; background:none; border-bottom:1px solid var(--line); padding:.35rem .5rem}
+.od__items td{padding:.5rem; border-top:1px solid var(--line); vertical-align:top}
+.od__n{display:block; line-height:1.35}
+.od__v{display:block; font-size:.76rem; color:var(--muted)}
+.od__s{display:block; font-size:.72rem; color:var(--dim)}
+.od__sum{display:flex; gap:1.5rem; flex-wrap:wrap; margin:0; padding-top:.9rem; border-top:1px solid var(--line)}
+.od__sum dt{font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted)}
+.od__sum dd{margin:.1rem 0 0; font-size:.95rem; font-weight:600}
+.od__total{margin-left:auto; text-align:right}
+.od__total dd{font-size:1.15rem}
+@media (max-width:640px){ .od{width:calc(100vw - 1rem)} .od>div{padding:1.1rem} }
+`;
+
+const ORDER_DETAIL_SCRIPT = `
+(function () {
+  var dialog = document.getElementById('od');
+  var body = document.getElementById('od-body');
+  var store = document.getElementById('od-store');
+  if (!dialog || !body || !store) return;
+
+  function open(row) {
+    var source = store.querySelector('#' + row.dataset.detail);
+    if (!source) return;
+    body.innerHTML = source.innerHTML;
+    // showModal gives focus trapping and Escape for free; a div could do neither.
+    if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open', '');
+  }
+
+  document.querySelectorAll('tbody#rows .row').forEach(function (row) {
+    row.addEventListener('click', function () { open(row); });
+    row.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      open(row);
+    });
+  });
+
+  document.getElementById('od-close').addEventListener('click', function () { dialog.close(); });
+  // Clicking the backdrop lands on the dialog itself, never on its contents.
+  dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
+})();
+`;
 
 
 

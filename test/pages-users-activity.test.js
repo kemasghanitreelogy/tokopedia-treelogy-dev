@@ -149,3 +149,28 @@ test('no page still explains itself in prose the operator did not ask for', () =
   ];
   for (const html of pages) for (const pattern of banned) assert.ok(!pattern.test(html), `${pattern} masih ada`);
 });
+
+test('an order row opens a popup carrying everything the page already knows', () => {
+  const order = {
+    channel: 'shopify', id: '#10926', createdAt: 1789199520, status: 'PAID/UNFULFILLED', stage: 'to_ship',
+    total: 973250, currency: 'IDR', carrier: '', tracking: '', items: 2,
+    buyer: 'Anik <b>Maturafiah</b>', buyerPhone: '0812-3456-7890', buyerEmail: 'anik@example.com',
+    shipTo: 'Jln. Belida 1, Tenggarong, Kalimantan Timur',
+    lines: [{ sku: 'OMC-270-001', name: 'Organic Moringa Capsules', variant: '270 Moringa Capsules', qty: 1 }],
+    finance: { lines: [{ sku: 'OMC-270-001', name: 'Organic Moringa Capsules', variant: '270 Moringa Capsules', qty: 1, unitPrice: 1145000, unitDiscount: 171750 }], shipping: 0 },
+  };
+  const html = renderDashboard({ orders: [order], summary: summarize([order]), user: owner, ...common });
+
+  assert.match(html, /<tr class="row" tabindex="0" role="button"/, 'baris bisa diklik dan difokus');
+  assert.match(html, /data-detail="od-0"/);
+  assert.match(html, /<dialog class="od" id="od">/);
+  assert.match(html, /<div id="od-store" hidden>/);
+  // The detail is rendered with the list, so opening it needs no request and no parsing.
+  assert.match(html, /Anik &lt;b&gt;Maturafiah&lt;\/b&gt;/, 'nama diloloskan di dalam popup');
+  assert.ok(!html.includes('<b>Maturafiah</b>'));
+  assert.match(html, /0812-3456-7890/);
+  assert.match(html, /Jln\. Belida 1/);
+  assert.match(html, /270 Moringa Capsules/);
+  assert.match(html, /Rp973\.250/);
+  assert.match(html, /showModal/, 'popup dibuka sebagai dialog modal');
+});

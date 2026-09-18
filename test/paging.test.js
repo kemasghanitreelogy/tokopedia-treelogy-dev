@@ -67,7 +67,8 @@ test('the orders view renders one page, links the others, and keeps filters in e
   const baseQuery = 'view=orders&preset=30d&channel=shopee';
   const html = renderDashboard({ orders, summary: summarize(all), filter, paging: { page: 2, perPage: 25 }, baseQuery, ...common });
 
-  assert.equal((html.match(/<tr data-channel/g) ?? []).length, 25, 'one page of rows');
+  assert.equal((html.match(/<tr class="row"/g) ?? []).length, 25, 'one page of rows');
+  assert.equal((html.match(/<div id="od-\d+">/g) ?? []).length, 25, 'one detail per row, no more');
   assert.match(html, /Menampilkan <b>26&ndash;50<\/b> dari <b>65<\/b> pesanan cocok/);
   assert.match(html, /href="\?view=orders&amp;preset=30d&amp;channel=shopee&amp;page=3&amp;per=25" rel="next"/);
   assert.match(html, /href="\?view=orders&amp;preset=30d&amp;channel=shopee&amp;per=25" rel="prev"/, 'page one is implicit');

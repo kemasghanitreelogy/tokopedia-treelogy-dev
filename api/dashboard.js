@@ -16,7 +16,7 @@ import { filterOrders } from '../src/omni.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
-import { printedLabels, markPrinted } from '../src/shopify/label.js';
+import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
@@ -231,7 +231,7 @@ async function handleWrite(form, ip, user) {
   }
 
   if (action === 'mass_arrange') {
-    const SELECTION = /^(tokopedia|tiktok_shop|shopee):([A-Za-z0-9_-]{1,64})$/;
+    const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify):([A-Za-z0-9_#-]{1,64})$/;
     const wanted = [];
     for (const value of form.getAll('order')) {
       const match = SELECTION.exec(String(value));
@@ -861,10 +861,10 @@ export default async function handler(req, res) {
     }
 
     if (view === 'process') {
-      // A Shopify order leaves this queue when its label is printed, and only this says so.
-      const printed = await printedLabels().catch(() => ({}));
+      // Arranging a Shopify order calls nothing, so only this says it has been done.
+      const arranged = await arrangedOrders().catch(() => ({}));
       console.log(`dashboard/process: ${data.orders.length} orders in range`);
-      send(200, renderProcess({ user, ...data, csrf, flash, printed, defaultSize: DEFAULT_SIZE }));
+      send(200, renderProcess({ user, ...data, csrf, flash, arranged }));
       return;
     }
 

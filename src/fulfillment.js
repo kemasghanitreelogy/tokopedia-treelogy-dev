@@ -4,6 +4,7 @@ import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
 import { shopifyGraphql } from './shopify/client.js';
 import { isShopifyConfigured } from './shopify/config.js';
+import { markArranged } from './shopify/label.js';
 import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
 
 /**
@@ -30,16 +31,16 @@ import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
  * What, if anything, moves this order forward right now.
  *
  * @param {object} order
- * @param {Record<string, unknown>} printed  Shopify orders whose label has been printed.
- *   Shopify cannot answer that itself, and without it a printed order asks forever.
+ * @param {Record<string, unknown>} arranged  Shopify orders already worked through this
+ *   queue. Arranging one calls nothing, so nothing on Shopify's side can say it happened.
  */
-export function nextAction(order, printed = {}) {
-  // Shopify has nothing to arrange - its couriers are booked outside Shopify and the
-  // order is closed there by hand - but the parcel still needs its packing label, and
-  // printing one touches no API at all. That is the whole of its move here.
+export function nextAction(order, arranged = {}) {
+  // Shopify is arranged the same way from the operator's side, but nothing is called:
+  // its couriers are booked outside Shopify and the order is closed there by hand. So
+  // the move is recorded here, and the parcel joins the same day's picking and printing.
   if (order.channel === 'shopify') {
-    return order.stage === 'to_ship' && !printed[order.id]
-      ? { action: 'shopify_label', label: 'Cetak label', needs: [] }
+    return order.stage === 'to_ship' && !arranged[order.id]
+      ? { action: 'shopify_arrange', label: 'Atur pengiriman', needs: [] }
       : null;
   }
 
@@ -57,9 +58,9 @@ export function nextAction(order, printed = {}) {
 }
 
 /** Orders still waiting on the seller, newest first, with the action each one needs. */
-export function pending(orders, printed = {}) {
+export function pending(orders, arranged = {}) {
   return orders
-    .map((order) => ({ order, next: nextAction(order, printed) }))
+    .map((order) => ({ order, next: nextAction(order, arranged) }))
     .filter((row) => row.next)
     .sort((a, b) => b.order.createdAt - a.order.createdAt);
 }
@@ -252,16 +253,15 @@ export async function massArrange(orders) {
 
   const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
   const shopee = orders.filter((o) => o.channel === 'shopee');
+  const shopify = orders.filter((o) => o.channel === 'shopify');
   const results = [];
 
-  // Shopify cannot ride along: there is no courier to ask, only a tracking number to
-  // type, and a batch has nowhere to type it. Said out loud rather than dropped, so a
-  // selection that somehow carried one does not quietly leave it unshipped.
-  for (const order of orders.filter((o) => o.channel === 'shopify')) {
-    results.push({
-      channel: 'shopify', id: order.id, status: 'failed',
-      error: 'Shopify ditandai satu per satu dengan nomor resinya',
-    });
+  // Shopify rides along, but nothing is called for it: there is no courier to ask and
+  // no status of ours to move on that side. Arranging it is the record that the bench
+  // has taken it, which is what lets it leave the queue.
+  if (shopify.length > 0) {
+    await markArranged(shopify.map((o) => o.id), { by: 'dashboard' });
+    for (const order of shopify) results.push({ channel: 'shopify', id: order.id, status: 'ok' });
   }
 
   if (tiktok.length > 0) {

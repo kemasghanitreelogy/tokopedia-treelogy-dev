@@ -277,6 +277,32 @@ export const PRINTED_DOC = 'labels/shopify-printed.json';
 const EMPTY = { version: 1, printed: {} };
 
 /**
+ * Shopify orders already worked through the Proses queue.
+ *
+ * Arranging a marketplace order calls its courier and the platform's own status moves on.
+ * Shopify has no courier to call and nothing of ours changes there, so "done with this
+ * one" has to be written down somewhere, and this is it. It is deliberately separate
+ * from the print ledger: a label can be reprinted long after the parcel was arranged.
+ */
+export const ARRANGED_DOC = 'shopify/arranged.json';
+const EMPTY_ARRANGED = { version: 1, arranged: {} };
+
+export async function arrangedOrders() {
+  const doc = await readDoc(ARRANGED_DOC).catch(() => null);
+  return doc?.arranged ?? {};
+}
+
+/** @param {string[]} ids order names, exactly as they appear on the order */
+export async function markArranged(ids, { by = '', at = Math.floor(Date.now() / 1000) } = {}) {
+  if (ids.length === 0) return;
+  await updateDoc(ARRANGED_DOC, (current) => {
+    const next = current ?? structuredClone(EMPTY_ARRANGED);
+    for (const id of ids) next.arranged[id] = { at, by };
+    return next;
+  }, structuredClone(EMPTY_ARRANGED));
+}
+
+/**
  * Which Shopify orders have already had a label printed.
  *
  * Shopify itself cannot answer this: printing is invisible to it, and an order stays

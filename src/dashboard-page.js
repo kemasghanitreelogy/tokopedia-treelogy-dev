@@ -583,8 +583,6 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
   background:linear-gradient(to top,var(--bg) 65%,transparent);
   display:flex; justify-content:center}
 .wl__go .wo__go{max-width:24rem}
-/* The print queue sits under the batch's button, so a rule says where one ends. */
-.wl--apart{border-top:1px solid var(--line); padding-top:1.25rem; margin-top:.5rem}
 
 .wo{display:flex; align-items:flex-start; gap:.7rem; margin:0; padding:.85rem .9rem; cursor:pointer;
   background:var(--panel-2); border:1px solid var(--line); border-radius:12px;
@@ -1497,20 +1495,15 @@ const rangeQuery = (range) =>
  * channel is what makes the page a worklist instead of a report. Actions run one at a
  * time on purpose - shipping cannot be undone from here.
  */
-export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, printed = {}, defaultSize = '100x150', user = null }) {
-  const rows = pending(orders, printed);
+export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, arranged = {}, user = null }) {
+  const rows = pending(orders, arranged);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
 
   const byAction = {};
   for (const row of rows) (byAction[row.next.action] ??= []).push(row);
 
-  // Shopify is not arranged with the others: its move is a print, so it has its own form
-  // and stands outside the courier filter, which exists to serve a dropoff run.
-  const printing = byAction.shopify_label ?? [];
-  const arranging = rows.filter((row) => row.next.action !== 'shopify_label');
-
   const carriers = new Map();
-  for (const { order } of arranging) {
+  for (const { order } of rows) {
     const name = order.carrier || 'Belum ditentukan';
     carriers.set(name, (carriers.get(name) ?? 0) + 1);
   }
@@ -1523,11 +1516,12 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const GROUPS = {
     tiktok_rts: { title: 'Tokopedia &amp; TikTok Shop' },
     shopee_ship: { title: 'Shopee' },
+    shopify_arrange: { title: 'Shopify' },
   };
 
   // Waiting on the courier, not on us. Shown as a count so the page is not mistaken for
   // the whole picture, but never as a task.
-  const waiting = orders.filter((o) => o.stage === 'to_ship' && !nextAction(o, printed)).length;
+  const waiting = orders.filter((o) => o.stage === 'to_ship' && !nextAction(o, arranged)).length;
   const moving = orders.filter((o) => o.stage === 'shipping').length;
 
   // A worklist, not a report: the action is the point, so each order is a card with the
@@ -1573,29 +1567,9 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     </section>`;
   };
 
-  /**
-   * The Shopify queue: the same cards, a different verb.
-   *
-   * It posts to the label endpoint rather than to the dashboard, because nothing here
-   * writes anything anywhere - the label is drawn from the order and opens in a tab.
-   */
-  const printSection = printing.length === 0 ? '' : `
-    <form method="post" action="/api/labels" target="_blank" class="wl wl--apart">
-      ${hidden}
-      <input type="hidden" name="size" value="${escape(defaultSize)}">
-      <header class="wl__h">
-        <h3>Shopify<span class="wl__n">${printing.length}</span></h3>
-      </header>
-      <div class="wl__grid">${printing.map(card).join('')}</div>
-      <div class="wl__go">
-        <button class="wo__go" type="submit">Cetak ${printing.length} label</button>
-      </div>
-    </form>`;
-
   // Arranging shipment comes before recording a dispatch, so the sections follow the
   // order a day actually runs in rather than whatever order the channels answered.
   const sections = Object.entries(byAction)
-    .filter(([action]) => Object.hasOwn(GROUPS, action))
     .sort(([a], [b]) => Object.keys(GROUPS).indexOf(a) - Object.keys(GROUPS).indexOf(b))
     .map(([action, list]) => section(action, list))
     .join('');
@@ -1654,11 +1628,11 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     body: rows.length === 0
       ? `<p class="empty">Semua pesanan sudah diatur pengirimannya.${
           waiting > 0 ? ` ${waiting} menunggu dijemput kurir.` : ''}</p>`
-      : `${arranging.length === 0 ? '' : `<form method="post" id="massform" data-confirm="Atur pengiriman untuk {n} pesanan sekaligus?">
+      : `<form method="post" id="massform" data-confirm="Atur pengiriman untuk {n} pesanan sekaligus?">
           ${hidden}
           <input type="hidden" name="action" value="mass_arrange">
           <div class="wl__bar">
-            <button class="chip is-on" type="button" data-carrier="">Semua kurir <b>${arranging.length}</b></button>
+            <button class="chip is-on" type="button" data-carrier="">Semua kurir <b>${rows.length}</b></button>
             ${carrierChips}
             <span class="strip__grow"></span>
             <button class="chip" type="button" id="all">Pilih semua</button>
@@ -1666,10 +1640,9 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           </div>
           ${sections}
           <div class="wl__go">
-            <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${arranging.length}</span> pesanan</button>
+            <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${rows.length}</span> pesanan</button>
           </div>
-        </form>`}
-        ${printSection}`,
+        </form>`,
   });
 }
 

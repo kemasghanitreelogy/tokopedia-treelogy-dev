@@ -415,27 +415,7 @@ test('both marketplace paths commit through one button', () => {
   assert.ok(html.includes('Pilih semua') && html.includes('Kosongkan'));
 });
 
-test('Shopify is queued for printing, never for arranging', () => {
-  const html = renderProcess({
-    orders: [processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1')],
-    ...common, csrf: 'tok',
-  });
-  assert.match(html, /SHOPIFY1/);
-  assert.match(html, /action="\/api\/labels"/, 'tombolnya mencetak, bukan memanggil marketplace');
-  assert.match(html, /Cetak 1 label/);
-  assert.ok(!html.includes('id="massform"'), 'tanpa pesanan marketplace, tidak ada formulir atur pengiriman');
-  assert.ok(!html.includes('mass_arrange'), 'tidak pernah ikut diatur pengirimannya');
-
-  // Printed already: it has left the queue, and the page says there is nothing to do.
-  const done = renderProcess({
-    orders: [processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1')],
-    printed: { SHOPIFY1: { at: 1 } }, ...common, csrf: 'tok',
-  });
-  assert.ok(!done.includes('SHOPIFY1'));
-  assert.match(done, /Semua pesanan sudah diatur/);
-});
-
-test('the two queues stand side by side, each counting only its own', () => {
+test('Shopify stands in the same queue, under the same button', () => {
   const html = renderProcess({
     orders: [
       processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1'),
@@ -443,10 +423,19 @@ test('the two queues stand side by side, each counting only its own', () => {
     ],
     ...common, csrf: 'tok',
   });
-  assert.match(html, /id="massform"/);
-  assert.match(html, /Atur pengiriman <span id="n">1<\/span> pesanan/, 'Shopify tidak masuk hitungan batch');
-  assert.match(html, /Cetak 1 label/);
-  assert.match(html, /Semua kurir <b>1<\/b>/, 'saringan kurir hanya untuk yang diatur');
+  assert.match(html, /SHOPIFY1/);
+  assert.match(html, /<h3>Shopify<span class="wl__n">1<\/span>/);
+  assert.match(html, /name="order" value="shopify:SHOPIFY1"/, 'ikut satu seleksi dengan yang lain');
+  assert.match(html, /Atur pengiriman <span id="n">2<\/span> pesanan/, 'satu tombol untuk dua kanal');
+  assert.ok(!html.includes('Cetak'), 'label dicetak di menu Label, bukan di sini');
+
+  // Once it has been arranged, our own record is what takes it out of the queue.
+  const done = renderProcess({
+    orders: [processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1')],
+    arranged: { SHOPIFY1: { at: 1 } }, ...common, csrf: 'tok',
+  });
+  assert.ok(!done.includes('SHOPIFY1'));
+  assert.match(done, /Semua pesanan sudah diatur/);
 });
 
 test('a row held because it came from the seed offers a way to vouch for it', async () => {

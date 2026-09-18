@@ -6,22 +6,28 @@ const order = (channel, status, stage, extra = {}) => ({
   channel, status, stage, id: 'X', createdAt: 1, ...extra,
 });
 
-test('a Shopify order is here to be printed, and leaves once it has been', () => {
-  // Nothing is arranged for it - its couriers are booked outside Shopify - but the
-  // parcel still needs its packing label, and printing one calls no API at all.
+test('a Shopify order is arranged like any other, and the record of it lives here', () => {
+  // Nothing is called for it, so nothing on Shopify's side could say it was handled.
   const waiting = order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: '#10926' });
-  assert.equal(nextAction(waiting).action, 'shopify_label');
-  assert.equal(nextAction(waiting, { '#10926': { at: 1 } }), null, 'sudah dicetak, keluar dari antrean');
+  assert.equal(nextAction(waiting).action, 'shopify_arrange');
+  assert.equal(nextAction(waiting).label, 'Atur pengiriman', 'kata kerjanya sama dengan kanal lain');
+  assert.equal(nextAction(waiting, { '#10926': { at: 1 } }), null, 'sudah diproses, keluar dari antrean');
   assert.equal(nextAction(order('shopify', 'PAID/FULFILLED', 'completed')), null);
   assert.equal(nextAction(order('shopify', 'PENDING/UNFULFILLED', 'unpaid')), null);
 });
 
-test('a batch refuses a Shopify order out loud rather than shipping it blind', async () => {
+test('a batch takes a Shopify order by writing it down, never by calling Shopify', async () => {
   const { massArrange } = await import('../src/fulfillment.js');
+  const { arrangedOrders, markArranged, ARRANGED_DOC } = await import('../src/shopify/label.js');
+  const { deleteDoc } = await import('../src/store/index.js');
+  await deleteDoc(ARRANGED_DOC);
+
   const result = await massArrange([order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: '#10922' })]);
-  assert.equal(result.succeeded, 0);
-  assert.equal(result.failed, 1);
-  assert.match(result.results[0].error, /satu per satu/);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.failed, 0);
+  // The whole point: the order is done because our own store says so.
+  assert.ok((await arrangedOrders())['#10922']);
+  await markArranged([]);
 });
 
 test('Shopee needs shipment arranged only while it is READY_TO_SHIP', () => {

@@ -6,14 +6,11 @@ const order = (channel, status, stage, extra = {}) => ({
   channel, status, stage, id: 'X', createdAt: 1, ...extra,
 });
 
-test('Shopify is in the queue, but as a typed action rather than a batched one', () => {
-  // There is no courier to ask: somebody reads the tracking number off the parcel and
-  // records it, which is why this action declares what it needs instead of running blind.
-  const next = nextAction(order('shopify', 'PAID/UNFULFILLED', 'to_ship'));
-  assert.equal(next.action, 'shopify_fulfill');
-  assert.deepEqual(next.needs, ['tracking']);
+test('Shopify stays out of this queue: nothing here is arranged for it', () => {
+  // Its couriers are booked outside Shopify and fulfilment is recorded there by hand.
+  // What it needs from us is a packing label, which the Label tab prints.
+  assert.equal(nextAction(order('shopify', 'PAID/UNFULFILLED', 'to_ship')), null);
   assert.equal(nextAction(order('shopify', 'PAID/FULFILLED', 'completed')), null);
-  assert.equal(nextAction(order('shopify', 'PENDING/UNFULFILLED', 'unpaid')), null);
 });
 
 test('a batch refuses a Shopify order out loud rather than shipping it blind', async () => {
@@ -51,7 +48,7 @@ test('the pending list keeps only actionable orders, newest first', () => {
     order('tokopedia', 'AWAITING_SHIPMENT', 'to_ship', { id: 'new', createdAt: 50 }),
     order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: 'shopify', createdAt: 98 }),
   ]);
-  assert.deepEqual(rows.map((r) => r.order.id), ['shopify', 'new', 'old']);
+  assert.deepEqual(rows.map((r) => r.order.id), ['new', 'old']);
 });
 
 test('a mass arrangement is blocked in read-only mode before any call is made', async () => {

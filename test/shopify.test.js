@@ -63,13 +63,14 @@ test('STORE_NAME stands in when no dedicated domain variable is set', () => {
   }
 });
 
-test('Shopify orders are never offered for waybill printing', () => {
-  // shippingLabelPurchase exists but buys through Shopify Shipping, which a SG-registered
-  // shop delivering in ID cannot use - and this store rates shipping manually anyway, so
-  // no waybill exists. Offering it could only ever fail.
-  const readiness = labelReadiness({ channel: 'shopify', status: 'PAID/UNFULFILLED' });
-  assert.equal(readiness.state, 'none');
-  assert.match(readiness.note, /manual/);
+test('a Shopify order needs a label until one has been printed for it', () => {
+  // No waybill exists to fetch - Shopify Shipping does not serve a SG-registered shop
+  // delivering in ID, and this store rates shipping manually - so the label is the
+  // packing sheet drawn here, and Shopify cannot tell us whether it was printed.
+  const order = { channel: 'shopify', id: '#10926', status: 'PAID/UNFULFILLED', stage: 'to_ship' };
+  assert.equal(labelReadiness(order).state, 'needsPrint');
+  assert.equal(labelReadiness(order, { '#10926': { at: 1 } }).state, 'reprint');
+  assert.equal(labelReadiness({ ...order, stage: 'completed' }).state, 'none');
 });
 
 test('the queries ask for pagination and nothing undefined', () => {

@@ -1,4 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
+import { buildShopifyLabel, reservePickNumbers } from './shopify/label.js';
 import { loadConfig } from './config.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
@@ -334,15 +335,14 @@ export const PRINTABLE_STAGES = new Set(['to_ship', 'shipping']);
  *   arrange      shipping has not been arranged, so no document can exist at all.
  *   none         nothing to print, now or later.
  */
-export function labelReadiness(order) {
-  // Admin API does expose shippingLabelPurchase, but it buys through Shopify Shipping,
-  // which this shop cannot use: it is registered in SG and ships domestically in ID,
-  // outside Shopify Shipping's supported countries. Checked against the live store -
-  // its open fulfillment orders offer CREATE_FULFILLMENT / REPORT_PROGRESS / HOLD and no
-  // label action, and the shipping line is a manual "Domestic Shipping" rate with no
-  // carrier attached. There is simply no waybill here to print.
+export function labelReadiness(order, printed = {}) {
+  // Shopify issues no waybill - Shopify Shipping does not serve this shop, and the
+  // courier is booked outside it - so the label is the packing sheet we draw ourselves.
+  // Nothing on Shopify's side records that it was printed, so `printed` does.
   if (order.channel === 'shopify') {
-    return { state: 'none', note: 'kurir diatur manual, tidak ada label untuk dicetak' };
+    if (printed[order.id]) return { state: 'reprint', note: 'sudah dicetak' };
+    if (order.stage === 'to_ship') return { state: 'needsPrint', note: 'siap dicetak' };
+    return { state: 'none', note: 'sudah selesai, tidak perlu label' };
   }
 
   if (order.channel === 'shopee') {
@@ -375,7 +375,7 @@ export const FETCHABLE = new Set(['needsPrint', 'reprint']);
  * Returns the PDF plus a per-order account of anything that could not be printed, so the
  * operator is never left guessing which parcel is missing a label.
  */
-export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePackages = null }) {
+export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePackages = null, resolveShopify = null }) {
   // An order with no stage has not been pre-checked; the platform decides, and it gives
   // a more precise reason than we could guess anyway.
   const printable = orders.filter((o) => !o.stage || PRINTABLE_STAGES.has(o.stage));
@@ -383,25 +383,30 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
     .filter((o) => o.stage && !PRINTABLE_STAGES.has(o.stage))
     .map((o) => ({ id: o.id, channel: o.channel, reason: `status ${o.status} tidak bisa dicetak` }));
 
-  const tiktok = printable.filter((o) => o.channel !== 'shopee');
+  const tiktok = printable.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
   const shopee = printable.filter((o) => o.channel === 'shopee');
+  const shopify = printable.filter((o) => o.channel === 'shopify');
 
-  const [tiktokResult, shopeeResult] = await Promise.all([
+  const [tiktokResult, shopeeResult, shopifyResult] = await Promise.all([
     fetchTikTokLabels(tiktok, resolvePackages).catch((error) => ({
       pages: [], failures: tiktok.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
     })),
     fetchShopeeLabels(shopee).catch((error) => ({
       pages: [], failures: shopee.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
     })),
+    drawShopifyLabels(shopify, resolveShopify).catch((error) => ({
+      pages: [], printed: [], failures: shopify.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
+    })),
   ]);
 
-  const documents = [...tiktokResult.pages, ...shopeeResult.pages];
+  const documents = [...tiktokResult.pages, ...shopeeResult.pages, ...shopifyResult.pages];
   if (documents.length === 0) {
     return {
       bytes: null,
       pageCount: 0,
       requested: orders.length,
-      failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures],
+      printed: [],
+      failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...shopifyResult.failures],
       size,
     };
   }
@@ -411,9 +416,48 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
     bytes: merged.bytes,
     pageCount: merged.pageCount,
     requested: orders.length,
-    failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...merged.failures],
+    // Which Shopify orders actually came out of the printer, for the print ledger.
+    printed: shopifyResult.printed,
+    failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...shopifyResult.failures, ...merged.failures],
     size,
   };
+}
+
+/**
+ * Shopify labels are drawn from the order itself, so the only way to fail is to not have
+ * the order. The selection carries ids; `resolveShopify` turns them into real orders, and
+ * anything it cannot find is reported rather than silently dropped.
+ */
+async function drawShopifyLabels(selection, resolveShopify) {
+  if (selection.length === 0) return { pages: [], printed: [], failures: [] };
+  if (!resolveShopify) {
+    return { pages: [], printed: [], failures: selection.map((o) => ({ id: o.id, channel: 'shopify', reason: 'data pesanan tidak tersedia' })) };
+  }
+
+  const full = await resolveShopify(selection);
+  const byId = new Map(full.map((o) => [o.id, o]));
+  const found = selection.filter((o) => byId.has(o.id));
+  const failures = selection
+    .filter((o) => !byId.has(o.id))
+    .map((o) => ({ id: o.id, channel: 'shopify', reason: 'pesanan tidak ditemukan di Shopify' }));
+
+  // Reserved together so a batch of ten gets ten consecutive numbers, and an abandoned
+  // print leaves a gap rather than handing the next print the same number.
+  const picks = await reservePickNumbers(found.length);
+  const pages = [];
+  const printed = [];
+  for (const [index, row] of found.entries()) {
+    try {
+      // The merger wants the same shape the carriers' documents arrive in, so a drawn
+      // page is attributed to its order exactly like a fetched one.
+      const bytes = await buildShopifyLabel(byId.get(row.id), { pick: picks[index] });
+      pages.push({ bytes, order: { id: row.id, channel: 'shopify' } });
+      printed.push(row.id);
+    } catch (error) {
+      failures.push({ id: row.id, channel: 'shopify', reason: error.message });
+    }
+  }
+  return { pages, printed, failures };
 }
 
 export const labelSizeMm = (sizeKey) => {

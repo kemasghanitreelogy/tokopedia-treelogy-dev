@@ -51,6 +51,8 @@ query TreelogyOrders($cursor: String, $query: String) {
     nodes {
       id
       name
+      note
+      totalWeight
       createdAt
       displayFinancialStatus
       displayFulfillmentStatus
@@ -61,7 +63,7 @@ query TreelogyOrders($cursor: String, $query: String) {
       billingAddress { name address1 address2 city province zip countryCodeV2 }
       lineItems(first: 50) {
         nodes {
-          quantity sku title
+          quantity sku title variantTitle
           originalUnitPriceSet { shopMoney { amount } }
           totalDiscountSet { shopMoney { amount } }
         }
@@ -143,7 +145,9 @@ const lines = (order) => {
     const qty = Number(item.quantity) || 0;
     const existing = bySku.get(sku);
     if (existing) existing.qty += qty;
-    else bySku.set(sku, { sku, name: item.title ?? '', variant: '', qty });
+    // The variant is what tells 180 capsules from 270 on a packing bench, so it travels
+    // with the line rather than being dropped on the way in.
+    else bySku.set(sku, { sku, name: item.title ?? '', variant: item.variantTitle ?? '', qty });
   }
   return [...bySku.values()];
 };
@@ -196,6 +200,9 @@ export function mapOrder(order) {
     gateways: order.paymentGatewayNames ?? [],
     items: order.lineItems?.nodes?.length ?? 0,
     lines: lines(order),
+    // Grams, as Shopify keeps it. The packing label prints it; nothing else reads it.
+    weightGram: Number(order.totalWeight) || 0,
+    note: order.note ?? '',
     finance: financeFromShopify(order),
   };
 }

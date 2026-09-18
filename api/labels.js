@@ -1,4 +1,5 @@
 import { fetchOrdersByIds } from '../src/omni.js';
+import { markPrinted } from '../src/shopify/label.js';
 import { buildLabelSheet, LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { dashboardError, renderLabelReport } from '../src/dashboard-page.js';
 import {
@@ -15,7 +16,8 @@ import { recordActivity } from '../src/audit.js';
  */
 
 // Selections are posted as "channel:id" pairs; anything else is ignored rather than trusted.
-const SELECTION = /^(tokopedia|tiktok_shop|shopee):([A-Za-z0-9_-]{1,64})$/;
+// Shopify names an order "#10926", so the id charset carries the hash it prints with.
+const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify):([A-Za-z0-9_#-]{1,64})$/;
 const MAX_LABELS = 100;
 
 export default async function handler(req, res) {
@@ -88,6 +90,15 @@ export default async function handler(req, res) {
         }
         return orders;
       },
+      // A Shopify label is drawn from the order, so the whole order has to be read back -
+      // the form carries ids, and an address typed into a form is not an address.
+      resolveShopify: async (rows) => {
+        const { orders, errors } = await fetchOrdersByIds(rows);
+        if (orders.length === 0 && Object.keys(errors).length > 0) {
+          throw new Error(Object.values(errors)[0]);
+        }
+        return orders.filter((o) => o.channel === 'shopify');
+      },
     });
 
     if (!sheet.bytes) {
@@ -97,6 +108,14 @@ export default async function handler(req, res) {
         .join(' | ');
       fail(409, 'Tidak ada label yang bisa dicetak', lines || 'Semua pesanan yang dipilih belum siap.');
       return;
+    }
+
+    // Shopify has no idea a label exists, so the fact that one came out is recorded here
+    // or the order would ask to be printed again tomorrow.
+    if (sheet.printed?.length) {
+      await markPrinted(sheet.printed, { by: user.email }).catch((error) => {
+        console.warn(`labels: gagal mencatat cetakan Shopify - ${error.message}`);
+      });
     }
 
     console.log(`labels: ${sheet.pageCount} pages for ${chosen.length} orders at ${size}, ${sheet.failures.length} failed`);

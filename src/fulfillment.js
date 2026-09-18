@@ -28,14 +28,10 @@ import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
 
 /** What, if anything, moves this order forward right now. */
 export function nextAction(order) {
-  // Shopify has no courier to ask, so its move is a typed one: the parcel has gone out
-  // and the tracking number from whoever carried it gets recorded. That cannot join the
-  // marketplaces' one-click batch, so it is its own action rather than none at all.
-  if (order.channel === 'shopify') {
-    return order.stage === 'to_ship'
-      ? { action: 'shopify_fulfill', label: 'Tandai dikirim', needs: ['tracking'] }
-      : null;
-  }
+  // Shopify needs nothing arranged: this shop books its couriers outside Shopify, and
+  // fulfilment is recorded there by hand. What it does need from us is a packing label,
+  // which is the Label tab's job, not this queue's.
+  if (order.channel === 'shopify') return null;
 
   if (order.channel === 'shopee') {
     if (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP') {

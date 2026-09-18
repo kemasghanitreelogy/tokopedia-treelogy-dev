@@ -16,6 +16,7 @@ import { filterOrders } from '../src/omni.js';
 import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
+import { printedLabels, markPrinted } from '../src/shopify/label.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
@@ -91,6 +92,7 @@ const readCatalogSafely = () =>
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
+  label_printed: 'labels',
   user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
 };
 const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_status', 'user_delete']);
@@ -295,6 +297,28 @@ async function handleWrite(form, ip, user) {
           ...(tracking ? [{ field: 'resi', from: order.tracking || null, to: tracking }] : []),
           ...(form.get('company') ? [{ field: 'kurir', from: order.carrier || null, to: String(form.get('company')).trim() }] : []),
         ],
+      },
+    };
+  }
+
+  if (action === 'label_printed') {
+    // Clearing a backlog, not printing one: the orders that were handled before this
+    // ledger existed have to be able to say so, or they ask for a label forever.
+    const ids = form.getAll('order')
+      .map((value) => String(value))
+      .filter((value) => value.startsWith('shopify:'))
+      .map((value) => value.slice('shopify:'.length));
+    if (ids.length === 0) throw new Error('tidak ada pesanan Shopify yang dipilih');
+    if (ids.length > 200) throw new Error('terlalu banyak sekaligus');
+
+    await markPrinted(ids, { by: user.email });
+    console.log(`dashboard: label_printed ${ids.length} shopify orders`);
+    return {
+      view: 'labels', message: `${ids.length} pesanan Shopify ditandai sudah dicetak`,
+      audit: {
+        menu: 'labels', verb: 'edit', target: `${ids.length} pesanan`,
+        summary: `Menandai ${ids.length} label Shopify sebagai sudah dicetak tanpa mencetak`,
+        changes: ids.map((id) => ({ field: id, to: 'sudah dicetak' })),
       },
     };
   }
@@ -825,9 +849,12 @@ export default async function handler(req, res) {
     );
 
     if (view === 'labels') {
+      // Shopify prints are remembered here, not there; the page cannot tell what still
+      // needs a label without it.
+      const printed = await printedLabels().catch(() => ({}));
       console.log(`dashboard/labels: ${data.orders.length} orders in range`);
       send(200, renderLabels({ user,
-        ...data, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE,
+        ...data, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed,
         showReprints: url.searchParams.get('reprint') === '1',
       }));
       return;

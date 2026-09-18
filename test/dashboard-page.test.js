@@ -415,32 +415,13 @@ test('both marketplace paths commit through one button', () => {
   assert.ok(html.includes('Pilih semua') && html.includes('Kosongkan'));
 });
 
-test('a Shopify order gets its own form with a tracking number, never a checkbox', () => {
+test('Shopify never appears in the shipment queue', () => {
   const html = renderProcess({
     orders: [processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1')],
     ...common, csrf: 'tok',
   });
-  assert.match(html, /SHOPIFY1/);
-  assert.match(html, /name="op" value="shopify_fulfill"/);
-  assert.match(html, /name="tracking" required/, 'resi wajib diisi');
-  assert.match(html, /name="company"/);
-  assert.ok(!html.includes('id="massform"'), 'tanpa pesanan marketplace, tidak ada formulir massal');
-  assert.ok(!/name="order" value="shopify:/.test(html), 'tidak pernah ikut seleksi massal');
-});
-
-test('the two queues stand side by side without either swallowing the other', () => {
-  const html = renderProcess({
-    orders: [
-      processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1'),
-      processOrder('shopee', 'READY_TO_SHIP', 'SHOPEE1'),
-    ],
-    ...common, csrf: 'tok',
-  });
-  assert.match(html, /id="massform"/);
-  assert.match(html, /Atur pengiriman <span id="n">1<\/span> pesanan/, 'hitungan batch tidak menghitung Shopify');
-  assert.match(html, /class="wo wo--typed"/);
-  assert.match(html, /SHOPEE1/);
-  assert.match(html, /SHOPIFY1/);
+  assert.ok(!html.includes('SHOPIFY1'), 'Shopify was offered for batch arrangement');
+  assert.ok(html.includes('Semua pesanan sudah diatur'), 'the empty state should show instead');
 });
 
 test('a row held because it came from the seed offers a way to vouch for it', async () => {

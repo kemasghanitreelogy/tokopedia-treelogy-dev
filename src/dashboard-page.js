@@ -325,6 +325,11 @@ function orderDetail(order, index) {
       ${order.finance?.shipping ? `<div><dt>Ongkir</dt><dd class="mono">${escape(rupiah(order.finance.shipping))}</dd></div>` : ''}
       <div class="od__total"><dt>Total</dt><dd class="mono">${escape(rupiah(order.total))}</dd></div>
     </dl>
+
+    <a class="od__print" target="_blank" rel="noopener"
+       href="/api/invoice?channel=${escape(order.channel)}&amp;id=${escape(encodeURIComponent(order.id))}">
+      ${svg('printer')}<span>Cetak faktur</span>
+    </a>
   </div>`;
 }
 
@@ -1458,6 +1463,13 @@ tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2p
 .od__sum{display:flex; gap:1.5rem; flex-wrap:wrap; margin:0; padding-top:.9rem; border-top:1px solid var(--line)}
 .od__sum dt{font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted)}
 .od__sum dd{margin:.1rem 0 0; font-size:.95rem; font-weight:600}
+.od__print{display:flex; align-items:center; justify-content:center; gap:.5rem; margin-top:1.1rem;
+  padding:.7rem 1rem; min-height:44px; border-radius:11px; font-size:.9rem; font-weight:600;
+  color:#fff; text-decoration:none; border:1px solid transparent;
+  background:linear-gradient(155deg,var(--fill-a),var(--fill-b)); transition:filter var(--t-base) var(--ease-out)}
+.od__print:hover{filter:brightness(1.12)}
+.od__print:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.od__print .ico{width:18px; height:18px}
 .od__total{margin-left:auto; text-align:right}
 .od__total dd{font-size:1.15rem}
 @media (max-width:640px){ .od{width:calc(100vw - 1rem)} .od>div{padding:1.1rem} }

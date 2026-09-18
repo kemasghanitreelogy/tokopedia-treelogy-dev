@@ -174,3 +174,18 @@ test('an order row opens a popup carrying everything the page already knows', ()
   assert.match(html, /Rp973\.250/);
   assert.match(html, /showModal/, 'popup dibuka sebagai dialog modal');
 });
+
+test('the popup offers to print the order as an invoice', () => {
+  const order = {
+    channel: 'shopify', id: '#10926', createdAt: 1789199520, status: 'PAID/UNFULFILLED', stage: 'to_ship',
+    total: 690000, currency: 'IDR', carrier: '', tracking: '', items: 1,
+    buyer: 'Riri Peltakian', buyerPhone: '', buyerEmail: '', shipTo: 'Bali',
+    lines: [{ sku: 'A', name: 'Satu', variant: '', qty: 1 }],
+    finance: { lines: [{ sku: 'A', name: 'Satu', variant: '', qty: 1, unitPrice: 690000, unitDiscount: 0 }], shipping: 0 },
+  };
+  const html = renderDashboard({ orders: [order], summary: summarize([order]), user: owner, ...common });
+  assert.match(html, /class="od__print"/);
+  // The id is encoded, because a Shopify order's name starts with a hash.
+  assert.match(html, /href="\/api\/invoice\?channel=shopify&amp;id=%2310926"/);
+  assert.match(html, /target="_blank"/);
+});

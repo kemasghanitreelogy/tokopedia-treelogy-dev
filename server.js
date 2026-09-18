@@ -19,6 +19,7 @@ const PUBLIC_DIR = path.join(process.cwd(), 'public');
 const ROUTES = {
   '/api/dashboard': './api/dashboard.js',
   '/api/activate': './api/activate.js',
+  '/api/invoice': './api/invoice.js',
   '/api/labels': './api/labels.js',
   '/api/status': './api/status.js',
   '/api/callback': './api/callback.js',

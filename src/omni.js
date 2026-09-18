@@ -251,9 +251,24 @@ export function financeFromShopify(order) {
   const lines = (order.lineItems?.nodes ?? []).map((li) => {
     const qty = Number(li.quantity) || 0;
     const unit = toNumber(li.originalUnitPriceSet?.shopMoney?.amount);
-    // Shopify allocates order-level discounts down to the lines, so the per-line total
-    // discount is the honest figure - an order-level number would double-count.
-    const discountTotal = toNumber(li.totalDiscountSet?.shopMoney?.amount);
+    /*
+     * What this line was actually discounted by.
+     *
+     * `totalDiscountSet` was the only field read here, and on a real order it is zero
+     * while the discount is real: #10926 carried a WELCOME15 code worth Rp171.750, which
+     * Shopify reports under `discountAllocations` and not there. Every discounted Shopify
+     * sale was therefore booked at its undiscounted price - and unlike a marketplace
+     * voucher, which the platform reimburses, a shop's own discount code is money the
+     * seller never receives.
+     *
+     * Allocations win when there are any, because that is where Shopify puts a code's
+     * share of each line; the older field is the fallback so a line discounted directly
+     * in the order editor still counts. They are not added together: that would
+     * double-count any order where Shopify fills in both.
+     */
+    const allocated = (li.discountAllocations ?? [])
+      .reduce((sum, a) => sum + toNumber(a.allocatedAmountSet?.shopMoney?.amount), 0);
+    const discountTotal = allocated > 0 ? allocated : toNumber(li.totalDiscountSet?.shopMoney?.amount);
     return {
       sku: li.sku || li.title || '',
       name: li.title ?? '',

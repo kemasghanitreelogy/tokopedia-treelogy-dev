@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { shopifyStage, PRODUCTS_QUERY, ORDERS_QUERY, SHOP_QUERY } from '../src/shopify/shop.js';
 import { loadShopifyConfig } from '../src/shopify/config.js';
-import { STAGES } from '../src/omni.js';
+import { STAGES, financeFromShopify } from '../src/omni.js';
 import { labelReadiness } from '../src/labels.js';
 
 const order = (financial, fulfillment, extra = {}) => ({
@@ -107,4 +107,65 @@ test('an address is joined from the parts the buyer filled in, skipping the blan
   assert.equal(formatAddress(null), '');
   assert.equal(formatAddress({}), '');
   assert.equal(formatAddress({ city: '  ', province: 'Bali' }), 'Bali');
+});
+
+test('a shop discount code reduces the sale, because nobody reimburses it', () => {
+  // Read from discountAllocations, not totalDiscountSet. On order #10926 the second is
+  // zero while a WELCOME15 code took Rp171.750 off - so every discounted Shopify sale
+  // was booked at its full price, which is money the seller never received.
+  const order = {
+    totalPriceSet: { shopMoney: { amount: '973250.0', currencyCode: 'IDR' } },
+    shippingLine: { originalPriceSet: { shopMoney: { amount: '0.0' } } },
+    lineItems: {
+      nodes: [
+        {
+          sku: 'GFT-MYST-001', quantity: 1, title: 'Moringa Seed Oil 3ml',
+          originalUnitPriceSet: { shopMoney: { amount: '0.0' } },
+          totalDiscountSet: { shopMoney: { amount: '0.0' } },
+          discountAllocations: [],
+        },
+        {
+          sku: 'OMC-270-001', quantity: 1, title: 'Organic Moringa Capsules',
+          originalUnitPriceSet: { shopMoney: { amount: '1145000.0' } },
+          totalDiscountSet: { shopMoney: { amount: '0.0' } },
+          discountAllocations: [{ allocatedAmountSet: { shopMoney: { amount: '171750.0' } } }],
+        },
+      ],
+    },
+  };
+  const finance = financeFromShopify(order);
+  const capsules = finance.lines.find((l) => l.sku === 'OMC-270-001');
+  assert.equal(capsules.unitDiscount, 171750);
+  const goods = finance.lines.reduce((n, l) => n + (l.unitPrice - l.unitDiscount) * l.qty, 0);
+  assert.equal(goods + finance.shipping, 973250, 'yang dibukukan sama dengan yang dibayar');
+});
+
+test('a line discounted in the order editor still counts, and is never counted twice', () => {
+  const line = (over) => ({
+    sku: 'A', quantity: 2, title: 'Satu',
+    originalUnitPriceSet: { shopMoney: { amount: '100000.0' } },
+    totalDiscountSet: { shopMoney: { amount: '0.0' } },
+    discountAllocations: [],
+    ...over,
+  });
+  const of = (nodes) => financeFromShopify({
+    totalPriceSet: { shopMoney: { amount: '0.0', currencyCode: 'IDR' } },
+    shippingLine: { originalPriceSet: { shopMoney: { amount: '0.0' } } },
+    lineItems: { nodes },
+  }).lines[0];
+
+  // Only the old field: it is still the answer.
+  assert.equal(of([line({ totalDiscountSet: { shopMoney: { amount: '20000.0' } } })]).unitDiscount, 10000);
+  // Both filled in: allocations win rather than the two being added together.
+  assert.equal(of([line({
+    totalDiscountSet: { shopMoney: { amount: '20000.0' } },
+    discountAllocations: [{ allocatedAmountSet: { shopMoney: { amount: '30000.0' } } }],
+  })]).unitDiscount, 15000);
+  // Several allocations on one line add up, because each is a different discount.
+  assert.equal(of([line({
+    discountAllocations: [
+      { allocatedAmountSet: { shopMoney: { amount: '10000.0' } } },
+      { allocatedAmountSet: { shopMoney: { amount: '30000.0' } } },
+    ],
+  })]).unitDiscount, 20000);
 });

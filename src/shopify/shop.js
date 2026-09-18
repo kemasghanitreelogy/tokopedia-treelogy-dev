@@ -66,6 +66,7 @@ query TreelogyOrders($cursor: String, $query: String) {
           quantity sku title variantTitle
           originalUnitPriceSet { shopMoney { amount } }
           totalDiscountSet { shopMoney { amount } }
+          discountAllocations { allocatedAmountSet { shopMoney { amount } } }
         }
       }
       shippingLine { originalPriceSet { shopMoney { amount } } }
@@ -224,9 +225,10 @@ query TreelogyOrderByGid($id: ID!) {
     billingAddress { name address1 address2 city province zip countryCodeV2 }
     lineItems(first: 50) {
       nodes {
-        quantity sku title
+        quantity sku title variantTitle
         originalUnitPriceSet { shopMoney { amount } }
         totalDiscountSet { shopMoney { amount } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount } } }
       }
     }
     shippingLine { originalPriceSet { shopMoney { amount } } }

@@ -152,3 +152,22 @@ test('a printed Shopify order leaves the daily list and joins the reprints', () 
   assert.equal(labelReadiness(o, {}).state, 'needsPrint');
   assert.equal(labelReadiness(o, { '#10926': { at: 1, times: 1 } }).state, 'reprint');
 });
+
+test('a whole run is one document, with the mark embedded once rather than once a parcel', async () => {
+  const { buildShopifyLabels } = await import('../src/shopify/label.js');
+  const { PDFDocument } = await import('pdf-lib');
+
+  const jobs = Array.from({ length: 20 }, (_, i) => ({ order: order({ id: `#${10900 + i}` }), pick: String(i).padStart(9, '0') }));
+  const many = await buildShopifyLabels(jobs);
+  assert.equal((await PDFDocument.load(many)).getPageCount(), 20);
+
+  // Twenty labels drawn together must not weigh twenty times one: the picture and the
+  // fonts are shared, which is most of what a print run used to cost.
+  const one = await buildShopifyLabels(jobs.slice(0, 1));
+  assert.ok(many.length < one.length * 3, `20 label ${many.length}B vs 1 label ${one.length}B`);
+
+  // Each page still carries its own pick number, in the order it was asked for.
+  const text = pdfText(many);
+  assert.ok(text.includes('PICK-000000000'));
+  assert.ok(text.includes('PICK-000000019'));
+});

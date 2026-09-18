@@ -152,6 +152,38 @@ export async function orderById(channel, id) {
 }
 
 /**
+ * Many orders by id, in one round trip per channel.
+ *
+ * Printing a hundred labels used to mean asking the platforms for them, and for Shopify
+ * that is a sixty-day scan - eleven seconds before a single page was drawn. Every one of
+ * those orders is already here, and Supabase answers a keyed read in a quarter of a
+ * second whether it is asked for one row or a hundred.
+ *
+ * @param {{channel: string, id: string}[]} selection
+ * @returns {Promise<object[]>} the orders it holds; anything missing is simply absent,
+ *   which is the caller's cue to go and ask the platform for those and only those.
+ */
+export async function ordersByIds(selection) {
+  const byChannel = new Map();
+  for (const { channel, id } of selection) {
+    if (!channel || !id) continue;
+    if (!byChannel.has(channel)) byChannel.set(channel, new Set());
+    byChannel.get(channel).add(String(id));
+  }
+  if (byChannel.size === 0) return [];
+
+  const pages = await Promise.all([...byChannel].map(([channel, ids]) => selectAll('orders', {
+    select: 'payload',
+    channel: `eq.${channel}`,
+    // PostgREST reads a quoted list, and an order name carries characters - "#10926",
+    // "260918C0F11PKT" - that must not be read as list syntax.
+    id: `in.(${[...ids].map((id) => `"${id.replace(/"/g, '')}"`).join(',')})`,
+  })));
+
+  return pages.flat().map((row) => row.payload).filter(Boolean);
+}
+
+/**
  * How far each source has actually been read.
  *
  * Keyed by source, not by channel: one TikTok Shop pull answers for both the tokopedia

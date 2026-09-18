@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { buildShopifyLabel, reservePickNumbers } from './shopify/label.js';
+import { buildShopifyLabels, reservePickNumbers } from './shopify/label.js';
 import { loadConfig } from './config.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
@@ -444,20 +444,24 @@ async function drawShopifyLabels(selection, resolveShopify) {
   // Reserved together so a batch of ten gets ten consecutive numbers, and an abandoned
   // print leaves a gap rather than handing the next print the same number.
   const picks = await reservePickNumbers(found.length);
-  const pages = [];
-  const printed = [];
-  for (const [index, row] of found.entries()) {
-    try {
-      // The merger wants the same shape the carriers' documents arrive in, so a drawn
-      // page is attributed to its order exactly like a fetched one.
-      const bytes = await buildShopifyLabel(byId.get(row.id), { pick: picks[index] });
-      pages.push({ bytes, order: { id: row.id, channel: 'shopify' } });
-      printed.push(row.id);
-    } catch (error) {
-      failures.push({ id: row.id, channel: 'shopify', reason: error.message });
-    }
+  try {
+    // One document for the whole run: the fonts and the Shopify mark are embedded once
+    // rather than once per parcel, which is most of what a hundred labels used to cost.
+    const bytes = await buildShopifyLabels(found.map((row, index) => ({ order: byId.get(row.id), pick: picks[index] })));
+    return {
+      pages: [{ bytes, order: { id: found[0].id, channel: 'shopify' } }],
+      printed: found.map((row) => row.id),
+      failures,
+    };
+  } catch (error) {
+    // Drawing is arithmetic on data we already hold, so a failure here is a bug rather
+    // than a bad parcel - it is reported against all of them because it stopped all of them.
+    return {
+      pages: [],
+      printed: [],
+      failures: [...failures, ...found.map((row) => ({ id: row.id, channel: 'shopify', reason: error.message }))],
+    };
   }
-  return { pages, printed, failures };
 }
 
 export const labelSizeMm = (sizeKey) => {

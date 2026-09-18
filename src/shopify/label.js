@@ -154,12 +154,44 @@ export const UNBOXING_NOTICE = 'WAJIB Video Unboxing. Tanpa video unboxing, komp
  * @param {{pick: string, printedAt?: number, width?: number, height?: number}} options
  * @returns {Promise<Uint8Array>} a one-page PDF
  */
-export async function buildShopifyLabel(order, { pick, printedAt = Math.floor(Date.now() / 1000), width = 283.46, height = 425.20 } = {}) {
+export async function buildShopifyLabel(order, options = {}) {
+  return buildShopifyLabels([{ order, pick: options.pick }], options);
+}
+
+/**
+ * A whole print run in one document.
+ *
+ * One PDF per label meant embedding Helvetica, Helvetica-Bold and the Shopify mark once
+ * per parcel, and then embedding every one of those documents again into the merged
+ * sheet. Fifty labels carried fifty copies of the same picture. Drawn into a single
+ * document they are embedded once, which is both faster and about four times smaller -
+ * and a smaller file is the part the operator actually waits for.
+ *
+ * @param {{order: object, pick: string}[]} jobs
+ * @returns {Promise<Uint8Array>} one PDF, one page per job, in the order given
+ */
+export async function buildShopifyLabels(jobs, { printedAt = Math.floor(Date.now() / 1000), width = 283.46, height = 425.20 } = {}) {
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([width, height]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
+  const raw = shopifyMark();
+  let mark = null;
+  if (raw) {
+    // Embedded once for the run: the same image object is referenced by every page.
+    try { mark = await pdf.embedPng(raw); } catch { mark = null; }
+  }
+
+  for (const job of jobs) {
+    drawLabel(pdf.addPage([width, height]), {
+      order: job.order, pick: job.pick, printedAt, font, bold, mark, width, height,
+    });
+  }
+  return pdf.save();
+}
+
+/** One label, onto a page that already exists, with fonts and mark already embedded. */
+function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, height }) {
   const pad = 12;
   const right = width - pad;
   const inner = width - pad * 2;
@@ -183,16 +215,12 @@ export async function buildShopifyLabel(order, { pick, printedAt = Math.floor(Da
   rightText(`Waktu Print  ${stamp(printedAt)}`, { size: 6.5, at: y, color: GRAY });
 
   y -= 24;
-  const mark = shopifyMark();
   let wordX = pad;
   if (mark) {
-    try {
-      const image = await pdf.embedPng(mark);
-      const height = 22;
-      const width = (image.width / image.height) * height;
-      page.drawImage(image, { x: pad, y: y - 5, width, height });
-      wordX = pad + width + 5;
-    } catch { /* an unreadable mark is not a reason to fail the print */ }
+    const markHeight = 22;
+    const markWidth = (mark.width / mark.height) * markHeight;
+    page.drawImage(mark, { x: pad, y: y - 5, width: markWidth, height: markHeight });
+    wordX = pad + markWidth + 5;
   }
   page.drawText('Shopify', { x: wordX, y, size: 13, font: bold });
   rightText('Pengiriman', { size: 7, at: y + 3, color: GRAY });
@@ -295,8 +323,6 @@ export async function buildShopifyLabel(order, { pick, printedAt = Math.floor(Da
   rightText(`Total Qty : ${total}`, { size: 6.5, at: y, face: bold });
   y -= 5;
   line(y);
-
-  return pdf.save();
 }
 
 /* ------------------------------------------------------------ printing state */

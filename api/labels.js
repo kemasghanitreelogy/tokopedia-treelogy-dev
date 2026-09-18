@@ -1,4 +1,5 @@
 import { fetchOrdersByIds } from '../src/omni.js';
+import { ordersForPrinting } from '../src/orders-by-id.js';
 import { markPrinted } from '../src/shopify/label.js';
 import { buildLabelSheet, LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { dashboardError, renderLabelReport } from '../src/dashboard-page.js';
@@ -91,9 +92,11 @@ export default async function handler(req, res) {
         return orders;
       },
       // A Shopify label is drawn from the order, so the whole order has to be read back -
-      // the form carries ids, and an address typed into a form is not an address.
+      // the form carries ids, and an address typed into a form is not an address. It is
+      // read from our own database first: a hundred keyed rows cost one round trip, while
+      // asking Shopify for them means scanning sixty days of history.
       resolveShopify: async (rows) => {
-        const { orders, errors } = await fetchOrdersByIds(rows);
+        const { orders, errors } = await ordersForPrinting(rows);
         if (orders.length === 0 && Object.keys(errors).length > 0) {
           throw new Error(Object.values(errors)[0]);
         }

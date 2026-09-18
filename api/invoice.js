@@ -1,4 +1,4 @@
-import { fetchOrdersByIds } from '../src/omni.js';
+import { ordersForPrinting } from '../src/orders-by-id.js';
 import { buildFaktur } from '../src/faktur.js';
 import { dashboardError } from '../src/dashboard-page.js';
 import { COOKIE_NAME, isConfigured, parseCookies, authenticate, callerIp } from '../src/dashboard-auth.js';
@@ -38,7 +38,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { orders, errors } = await fetchOrdersByIds([{ channel, id }]);
+    const started = Date.now();
+    const { orders, errors, fromDb } = await ordersForPrinting([{ channel, id }]);
     const order = orders.find((o) => o.id === id && o.channel === channel);
     if (!order) {
       const reason = Object.values(errors ?? {})[0];
@@ -52,7 +53,7 @@ export default async function handler(req, res) {
       summary: `Mencetak faktur ${orderCode(order)} untuk ${order.buyer || order.customer || 'pembeli'}`,
       changes: [{ field: 'nilai', to: order.total }],
     });
-    console.log(`invoice: ${channel}/${id} dicetak oleh ${user.email}`);
+    console.log(`invoice: ${channel}/${id} dicetak oleh ${user.email} dalam ${Date.now() - started}ms (${fromDb ? 'database' : 'platform'})`);
 
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/pdf');

@@ -77,15 +77,30 @@ test('a refused recipient surfaces the server reply and never hangs', async () =
   }
 });
 
-test('a host that swallows the connection fails fast with a message that names the likely cause', async () => {
-  // 10.255.255.1 is unroutable from anywhere sane: the SYN goes nowhere, exactly like a
-  // provider that filters outbound SMTP.
-  const t = Date.now();
-  await assert.rejects(
-    sendMail({ to: 'x@y.co', subject: 's', text: 't' }, { config: { host: '10.255.255.1', port: 465, user: '', pass: '', from: 'a@b.c', secure: 'none' }, connectTimeoutMs: 300 }),
-    /tidak tersambung dalam 0\.3 detik.*diblokir/,
-  );
-  assert.ok(Date.now() - t < 5000, 'menyerah dalam hitungan ratusan milidetik, bukan menit');
+test('a server that accepts and then says nothing hits the connect deadline instead of hanging', async () => {
+  // What a provider that filters outbound SMTP actually looks like: the connection is
+  // taken and the handshake never finishes. Driven with a local socket rather than an
+  // unroutable address, because whether a black-holed IP times out or is refused outright
+  // depends on the host - and a test that depends on that is a test that fails on deploy.
+  const open = new Set();
+  const silent = net.createServer((socket) => { open.add(socket); socket.on('error', () => {}); });
+  await new Promise((resolve) => silent.listen(0, '127.0.0.1', resolve));
+  const { port } = silent.address();
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      sendMail({ to: 'x@y.co', subject: 's', text: 't' }, {
+        config: { host: '127.0.0.1', port, user: '', pass: '', from: 'a@b.c', secure: 'tls' },
+        connectTimeoutMs: 400,
+      }),
+      /tidak tersambung dalam 0\.4 detik.*diblokir/,
+    );
+    assert.ok(Date.now() - started < 5000, 'menyerah dalam hitungan ratusan milidetik, bukan menit');
+  } finally {
+    // close() waits on live connections, and the half-open handshake is one of them.
+    for (const socket of open) socket.destroy();
+    await new Promise((resolve) => silent.close(resolve));
+  }
 });
 
 test('the wire format survives non-ASCII subjects and long bodies', () => {

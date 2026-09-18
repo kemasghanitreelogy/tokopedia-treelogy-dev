@@ -155,9 +155,15 @@ function reader(initial) {
  * browser spinner over a "Kirim undangan" click looked like. Ten seconds is generous for
  * a handshake and short enough that the operator reads an error instead of waiting.
  */
+/**
+ * SNI carries a hostname, never an address: node throws outright on an IP, so a host
+ * given as one would fail before a single byte went out.
+ */
+const sni = (host) => (/^[\d.]+$/.test(host) || host.includes(':') ? {} : { servername: host });
+
 const openSocket = (config, timeoutMs) => new Promise((resolve, reject) => {
   const socket = config.secure === 'tls'
-    ? tls.connect({ host: config.host, port: config.port, servername: config.host }, () => { socket.setTimeout(0); resolve(socket); })
+    ? tls.connect({ host: config.host, port: config.port, ...sni(config.host) }, () => { socket.setTimeout(0); resolve(socket); })
     : net.connect({ host: config.host, port: config.port }, () => { socket.setTimeout(0); resolve(socket); });
   socket.once('error', reject);
   socket.setTimeout(timeoutMs, () => {
@@ -166,7 +172,7 @@ const openSocket = (config, timeoutMs) => new Promise((resolve, reject) => {
 });
 
 const upgrade = (socket, config) => new Promise((resolve, reject) => {
-  const secure = tls.connect({ socket, servername: config.host }, () => resolve(secure));
+  const secure = tls.connect({ socket, ...sni(config.host) }, () => resolve(secure));
   secure.once('error', reject);
 });
 

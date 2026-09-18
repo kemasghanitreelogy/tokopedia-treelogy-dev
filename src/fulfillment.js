@@ -28,10 +28,14 @@ import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
 
 /** What, if anything, moves this order forward right now. */
 export function nextAction(order) {
-  // Shopify is fulfilled in its own admin, so it is deliberately outside this queue:
-  // mixing a channel that needs a typed tracking number into a one-click batch would
-  // make the batch impossible.
-  if (order.channel === 'shopify') return null;
+  // Shopify has no courier to ask, so its move is a typed one: the parcel has gone out
+  // and the tracking number from whoever carried it gets recorded. That cannot join the
+  // marketplaces' one-click batch, so it is its own action rather than none at all.
+  if (order.channel === 'shopify') {
+    return order.stage === 'to_ship'
+      ? { action: 'shopify_fulfill', label: 'Tandai dikirim', needs: ['tracking'] }
+      : null;
+  }
 
   if (order.channel === 'shopee') {
     if (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP') {
@@ -123,54 +127,73 @@ mutation TreelogyFulfill($fulfillment: FulfillmentInput!) {
   }
 }`;
 
+/** Validated against the live 2026-07 schema via the Shopify Admin skill. */
 const FULFILLMENT_ORDERS_QUERY = `
 query TreelogyFulfillmentOrders($id: ID!) {
   order(id: $id) {
     id
     name
-    fulfillmentOrders(first: 10) {
+    fulfillmentOrders(first: 20) {
       nodes {
         id
         status
-        lineItems(first: 50) { nodes { id remainingQuantity } }
+        assignedLocation { name location { id } }
+        lineItems(first: 100) { nodes { id remainingQuantity } }
       }
     }
   }
 }`;
 
+/** Only work that has not been handed off or closed can still be fulfilled. */
+const FULFILLABLE = new Set(['OPEN', 'IN_PROGRESS']);
+
 /**
  * Shopify: record that the parcel went out, with the courier's tracking number.
  *
- * A fulfillment is created against fulfillment orders, not the order itself, and only
- * OPEN ones can be fulfilled - a closed one has already been handled and including it
- * would make the whole mutation fail.
+ * A fulfillment is created against fulfillment orders, not the order itself, and one
+ * mutation can only cover fulfillment orders assigned to the same location - Shopify
+ * says so in the mutation's own documentation. So the open ones are grouped by location
+ * and each group is its own call. One location is the ordinary case and costs one call;
+ * two locations used to mean the whole thing was rejected.
  */
 export async function shopifyFulfill(orderGid, { trackingNumber, company, notifyCustomer = false }) {
   guard(`fulfillment Shopify ${orderGid}`);
   if (!isShopifyConfigured()) throw new Error('Shopify belum dikonfigurasi');
 
   const data = await shopifyGraphql(FULFILLMENT_ORDERS_QUERY, { id: orderGid });
-  const open = (data.order?.fulfillmentOrders?.nodes ?? []).filter((fo) => fo.status === 'OPEN');
-  if (open.length === 0) throw new Error('tidak ada fulfillment order yang terbuka');
+  const open = (data.order?.fulfillmentOrders?.nodes ?? []).filter((fo) => FULFILLABLE.has(fo.status));
+  if (open.length === 0) throw new Error('tidak ada fulfillment order yang bisa dikirim');
 
-  const fulfillment = {
-    notifyCustomer,
-    lineItemsByFulfillmentOrder: open.map((fo) => ({ fulfillmentOrderId: fo.id })),
-  };
-  // An empty tracking number is worse than none: it shows the buyer a blank link.
-  if (trackingNumber) {
-    fulfillment.trackingInfo = { number: trackingNumber, company: company || undefined };
+  const byLocation = new Map();
+  for (const fo of open) {
+    const key = fo.assignedLocation?.location?.id ?? fo.assignedLocation?.name ?? 'tanpa lokasi';
+    const group = byLocation.get(key);
+    if (group) group.push(fo);
+    else byLocation.set(key, [fo]);
   }
 
-  const result = await shopifyGraphql(FULFILL_MUTATION, { fulfillment });
-  const errors = result.fulfillmentCreate?.userErrors ?? [];
-  if (errors.length > 0) throw new Error(errors.map((e) => e.message).join('; '));
+  const statuses = [];
+  for (const group of byLocation.values()) {
+    const fulfillment = {
+      notifyCustomer,
+      lineItemsByFulfillmentOrder: group.map((fo) => ({ fulfillmentOrderId: fo.id })),
+    };
+    // An empty tracking number is worse than none: it shows the buyer a blank link.
+    if (trackingNumber) {
+      fulfillment.trackingInfo = { number: trackingNumber, company: company || undefined };
+    }
+
+    const result = await shopifyGraphql(FULFILL_MUTATION, { fulfillment });
+    const errors = result.fulfillmentCreate?.userErrors ?? [];
+    if (errors.length > 0) throw new Error(errors.map((e) => e.message).join('; '));
+    statuses.push(result.fulfillmentCreate?.fulfillment?.status);
+  }
 
   return {
     channel: 'shopify',
     id: data.order?.name ?? orderGid,
     action: 'shopify_fulfill',
-    status: result.fulfillmentCreate?.fulfillment?.status,
+    status: statuses.every((st) => st === 'SUCCESS') ? 'ok' : statuses.join('/'),
   };
 }
 
@@ -221,9 +244,19 @@ export async function runAction({ action, order, trackingNumber, company }) {
 export async function massArrange(orders) {
   guard(`pengiriman ${orders.length} pesanan`);
 
-  const tiktok = orders.filter((o) => o.channel !== 'shopee');
+  const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
   const shopee = orders.filter((o) => o.channel === 'shopee');
   const results = [];
+
+  // Shopify cannot ride along: there is no courier to ask, only a tracking number to
+  // type, and a batch has nowhere to type it. Said out loud rather than dropped, so a
+  // selection that somehow carried one does not quietly leave it unshipped.
+  for (const order of orders.filter((o) => o.channel === 'shopify')) {
+    results.push({
+      channel: 'shopify', id: order.id, status: 'failed',
+      error: 'Shopify ditandai satu per satu dengan nomor resinya',
+    });
+  }
 
   if (tiktok.length > 0) {
     const config = loadConfig();

@@ -6,11 +6,22 @@ const order = (channel, status, stage, extra = {}) => ({
   channel, status, stage, id: 'X', createdAt: 1, ...extra,
 });
 
-test('Shopify stays out of this queue entirely', () => {
-  // It is fulfilled in its own admin and needs a typed tracking number, which cannot be
-  // part of a one-click batch. Mixing it in would make the batch impossible.
-  assert.equal(nextAction(order('shopify', 'PAID/UNFULFILLED', 'to_ship')), null);
+test('Shopify is in the queue, but as a typed action rather than a batched one', () => {
+  // There is no courier to ask: somebody reads the tracking number off the parcel and
+  // records it, which is why this action declares what it needs instead of running blind.
+  const next = nextAction(order('shopify', 'PAID/UNFULFILLED', 'to_ship'));
+  assert.equal(next.action, 'shopify_fulfill');
+  assert.deepEqual(next.needs, ['tracking']);
   assert.equal(nextAction(order('shopify', 'PAID/FULFILLED', 'completed')), null);
+  assert.equal(nextAction(order('shopify', 'PENDING/UNFULFILLED', 'unpaid')), null);
+});
+
+test('a batch refuses a Shopify order out loud rather than shipping it blind', async () => {
+  const { massArrange } = await import('../src/fulfillment.js');
+  const result = await massArrange([order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: '#10922' })]);
+  assert.equal(result.succeeded, 0);
+  assert.equal(result.failed, 1);
+  assert.match(result.results[0].error, /satu per satu/);
 });
 
 test('Shopee needs shipment arranged only while it is READY_TO_SHIP', () => {
@@ -40,7 +51,7 @@ test('the pending list keeps only actionable orders, newest first', () => {
     order('tokopedia', 'AWAITING_SHIPMENT', 'to_ship', { id: 'new', createdAt: 50 }),
     order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: 'shopify', createdAt: 98 }),
   ]);
-  assert.deepEqual(rows.map((r) => r.order.id), ['new', 'old']);
+  assert.deepEqual(rows.map((r) => r.order.id), ['shopify', 'new', 'old']);
 });
 
 test('a mass arrangement is blocked in read-only mode before any call is made', async () => {

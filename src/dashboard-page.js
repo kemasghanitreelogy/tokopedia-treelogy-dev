@@ -529,6 +529,11 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .wo:focus-within{border-color:var(--brand)}
 .wo__pick{width:17px; height:17px; margin-top:.15rem; flex:none; cursor:pointer; accent-color:var(--brand)}
 .wo__body{display:flex; flex-direction:column; gap:.35rem; min-width:0; flex:1}
+/* The batch's button sits above this, so the rule says where one queue ends. */
+.wl--apart{border-top:1px solid var(--line); padding-top:1.25rem; margin-top:.5rem}
+.wo--typed{cursor:default; padding-left:.9rem}
+.wo--typed .wo__body{gap:.5rem}
+.wo--typed:hover{transform:none; border-color:var(--line)}
 .wo:has(.wo__pick:checked){border-color:color-mix(in srgb,var(--brand) 55%,transparent);
   background:color-mix(in srgb,var(--brand) 7%,var(--panel-2))}
 .wo__top{display:flex; align-items:center; justify-content:space-between; gap:.5rem}
@@ -1366,8 +1371,13 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const byAction = {};
   for (const row of rows) (byAction[row.next.action] ??= []).push(row);
 
+  // Shopify is worked one order at a time - somebody types the number the courier gave -
+  // so it stands outside the batch and outside the courier filter that serves the batch.
+  const typed = byAction.shopify_fulfill ?? [];
+  const batched = rows.filter((row) => row.next.action !== 'shopify_fulfill');
+
   const carriers = new Map();
-  for (const { order } of rows) {
+  for (const { order } of batched) {
     const name = order.carrier || 'Belum ditentukan';
     carriers.set(name, (carriers.get(name) ?? 0) + 1);
   }
@@ -1381,6 +1391,56 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     tiktok_rts: { title: 'Tokopedia &amp; TikTok Shop' },
     shopee_ship: { title: 'Shopee' },
   };
+
+  // Couriers already seen in the range, offered as suggestions for the Shopify field so
+  // the same carrier is not spelled three ways across a week.
+  const courierOptions = [...new Set(orders.map((o) => o.carrier).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => `<option value="${escape(name)}"></option>`)
+    .join('');
+
+  /**
+   * One Shopify order, with the two fields that turn it into a fulfillment.
+   *
+   * Its own form, submitted on its own: the tracking number belongs to this parcel and
+   * nothing else, and posting it with the rest would mean typing one number for many.
+   */
+  const typedCard = ({ order: o }) => `<form method="post" class="wo wo--typed">
+    ${hidden}
+    <input type="hidden" name="view" value="process">
+    <input type="hidden" name="action" value="fulfil">
+    <input type="hidden" name="op" value="shopify_fulfill">
+    <input type="hidden" name="channel" value="shopify">
+    <input type="hidden" name="order" value="${escape(o.id)}">
+    <span class="wo__body">
+      <span class="wo__top">
+        <span class="tag" style="--accent:${CHANNELS.shopify.accent}">${escape(CHANNELS.shopify.label)}</span>
+        <span class="wo__when">${escape(dateTime(o.createdAt, o.channel))}</span>
+      </span>
+      <span class="wo__id mono">${escape(o.id)}</span>
+      <span class="wo__who">
+        <span>${escape(o.buyer) || '<span class="dim">tanpa nama</span>'}</span>
+        <b class="mono">${escape(rupiah(o.total))}</b>
+      </span>
+      <span class="wo__in">
+        <label class="visually-hidden" for="trk-${escape(o.id)}">Nomor resi ${escape(o.id)}</label>
+        <input class="trk" id="trk-${escape(o.id)}" name="tracking" required maxlength="64"
+               autocomplete="off" placeholder="Nomor resi">
+        <label class="visually-hidden" for="crr-${escape(o.id)}">Kurir ${escape(o.id)}</label>
+        <input class="trk trk--s" id="crr-${escape(o.id)}" name="company" maxlength="40"
+               list="couriers" autocomplete="off" placeholder="Kurir">
+      </span>
+      <button class="wo__go" type="submit">Tandai dikirim</button>
+    </span>
+  </form>`;
+
+  const typedSection = typed.length === 0 ? '' : `<section class="wl ${batched.length ? 'wl--apart' : ''}">
+    <header class="wl__h">
+      <h3>Shopify<span class="wl__n">${typed.length}</span></h3>
+    </header>
+    <datalist id="couriers">${courierOptions}</datalist>
+    <div class="wl__grid">${typed.map(typedCard).join('')}</div>
+  </section>`;
 
   // Waiting on the courier, not on us. Shown as a count so the page is not mistaken for
   // the whole picture, but never as a task.
@@ -1429,6 +1489,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   // Arranging shipment comes before recording a dispatch, so the sections follow the
   // order a day actually runs in rather than whatever order the channels answered.
   const sections = Object.entries(byAction)
+    .filter(([action]) => Object.hasOwn(GROUPS, action))
     .sort(([a], [b]) => Object.keys(GROUPS).indexOf(a) - Object.keys(GROUPS).indexOf(b))
     .map(([action, list]) => section(action, list))
     .join('');
@@ -1487,11 +1548,11 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     body: rows.length === 0
       ? `<p class="empty">Semua pesanan sudah diatur pengirimannya.${
           waiting > 0 ? ` ${waiting} menunggu dijemput kurir.` : ''}</p>`
-      : `<form method="post" id="massform" data-confirm="Atur pengiriman untuk {n} pesanan sekaligus?">
+      : `${batched.length === 0 ? '' : `<form method="post" id="massform" data-confirm="Atur pengiriman untuk {n} pesanan sekaligus?">
           ${hidden}
           <input type="hidden" name="action" value="mass_arrange">
           <div class="wl__bar">
-            <button class="chip is-on" type="button" data-carrier="">Semua kurir <b>${rows.length}</b></button>
+            <button class="chip is-on" type="button" data-carrier="">Semua kurir <b>${batched.length}</b></button>
             ${carrierChips}
             <span class="strip__grow"></span>
             <button class="chip" type="button" id="all">Pilih semua</button>
@@ -1499,9 +1560,10 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           </div>
           ${sections}
           <div class="wl__go">
-            <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${rows.length}</span> pesanan</button>
+            <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${batched.length}</span> pesanan</button>
           </div>
-        </form>`,
+        </form>`}
+        ${typedSection}`,
   });
 }
 

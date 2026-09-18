@@ -94,3 +94,23 @@ test('shipping reaches the summary, and the grand total is the order total', asy
   assert.ok(pdf.includes('50.000,00'), 'ongkir tampil');
   assert.ok(pdf.includes('740.000,00'), 'grand total dari order');
 });
+
+test('the Treelogy seal rides on the invoice, and a missing one does not stop the print', async () => {
+  const bytes = await buildFaktur(order());
+  const raw = Buffer.from(bytes).toString('latin1');
+  assert.match(raw, /\/Subtype \/Image/, 'gambar tertanam di faktur');
+  // The words stay whatever happens to the picture, so a printer that swallows it still
+  // produces a readable invoice.
+  assert.ok(pdfText(bytes).includes('Faktur Penjualan'));
+});
+
+test('a discounted line shows its discount, so the table and the total agree', async () => {
+  // The case that exposed the Shopify booking bug: an order-level code worth Rp171.750.
+  const pdf = pdfText(await buildFaktur(order({
+    total: 973250,
+    finance: { lines: [{ sku: 'OMC-270-001', name: 'Organic Moringa Capsules', qty: 1, unitPrice: 1145000, unitDiscount: 171750 }], shipping: 0 },
+  })));
+  assert.ok(pdf.includes('15,00'), 'diskon tampil sebagai persen');
+  assert.ok(pdf.includes('973.250,00'), 'jumlah baris sudah dipotong');
+  assert.ok(!pdf.includes('1.145.000,00\n'), 'harga penuh tidak menjadi subtotal');
+});

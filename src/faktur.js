@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { orderCode } from './mekari/prefix.js';
 import { zoneForChannel } from './clock.js';
@@ -15,6 +16,21 @@ import { zoneForChannel } from './clock.js';
 
 const BLACK = rgb(0, 0, 0);
 const RULE = rgb(0.45, 0.45, 0.45);
+
+/**
+ * The seal that goes at the head of the invoice, read once per process.
+ *
+ * Supplied as WebP, which pdf-lib cannot embed, so it is kept here as the PNG it has to
+ * be. A missing file leaves the invoice without its mark rather than without an invoice.
+ */
+const MARK_PATH = new URL('./treelogy-mark.png', import.meta.url);
+let markBytes;
+function treelogyMark() {
+  if (markBytes === undefined) {
+    try { markBytes = fs.readFileSync(MARK_PATH); } catch { markBytes = null; }
+  }
+  return markBytes;
+}
 
 /** Who is selling. One place to change it when the address does. */
 export const SELLER = {
@@ -122,11 +138,19 @@ export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1
   const rightOf = (value, { x = right, size = 8, at = y, face = font } = {}) =>
     page.drawText(String(value ?? ''), { x: x - face.widthOfTextAtSize(String(value ?? ''), size), y: at, size, font: face });
 
-  // --- title
+  // --- the seal on the left, the title on the right, as the books print it
+  const mark = treelogyMark();
+  if (mark) {
+    try {
+      const image = await pdf.embedPng(mark);
+      const size = 58;
+      page.drawImage(image, { x: pad, y: y - size + 4, width: (image.width / image.height) * size, height: size });
+    } catch { /* an unreadable mark is not a reason to fail the invoice */ }
+  }
   rightOf('Faktur Penjualan', { size: 20, at: y - 14, face: bold });
 
   // --- three columns: who is selling, who is buying, and the invoice's own facts
-  y -= 62;
+  y -= 78;
   const colB = pad + 190;
   const colLabel = pad + 372;
   const colValue = right;

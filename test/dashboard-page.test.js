@@ -98,10 +98,12 @@ test('every view closes as a complete document', () => {
 test('the label view wires its controls to elements that exist', () => {
   const printable = { ...order, status: 'PROCESSED' };
   const html = renderLabels({ orders: [printable], sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, ...common });
-  for (const id of ['all', 'none', 'head', 'n']) {
+  for (const id of ['pickall', 'head', 'n']) {
     assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
   }
   assert.ok(html.includes('class="pick"'), 'missing order checkboxes');
+  // One control that says what pressing it does, rather than two that say what is true.
+  assert.ok(!html.includes('id="all"') && !html.includes('id="none"'));
 });
 
 test('untrusted text is escaped, not interpolated', () => {
@@ -790,4 +792,37 @@ test('each discount cell can be switched between rupiah and percent', () => {
   // The browser's arithmetic is a courtesy; it still has to agree with the server's.
   assert.match(html, /function discountOf/);
   assert.match(html, /Math\.round\(price \* Math\.min\(value, 100\) \/ 100\)/);
+});
+
+test('the cut-off is three in the afternoon in the shop own clock, whatever the server thinks', async () => {
+  const { dispatchCutoff, DISPATCH_HOUR_WITA } = await import('../src/dashboard-page.js');
+  assert.equal(DISPATCH_HOUR_WITA, 15);
+  const wita = (iso) => Math.floor(Date.parse(iso) / 1000);
+  const reads = (epoch) => new Date(dispatchCutoff(epoch) * 1000)
+    .toLocaleString('sv-SE', { timeZone: 'Asia/Makassar' });
+
+  // Morning, afternoon and late night on the same WITA day all mean the same van.
+  assert.equal(reads(wita('2026-09-18T08:00:00+08:00')), '2026-09-18 15:00:00');
+  assert.equal(reads(wita('2026-09-18T15:30:00+08:00')), '2026-09-18 15:00:00');
+  assert.equal(reads(wita('2026-09-18T23:59:00+08:00')), '2026-09-18 15:00:00');
+  // And a minute later is the next day's van.
+  assert.equal(reads(wita('2026-09-19T00:01:00+08:00')), '2026-09-19 15:00:00');
+});
+
+test('the process page can select everything that still makes today van', async () => {
+  const { dispatchCutoff } = await import('../src/dashboard-page.js');
+  const now = Date.parse('2026-09-18T16:00:00+08:00');
+  const cutoff = dispatchCutoff(Math.floor(now / 1000));
+  const at = (offset) => ({ ...processOrder('shopee', 'READY_TO_SHIP', `S${offset}`), createdAt: cutoff + offset });
+
+  const html = renderProcess({
+    orders: [at(-3600), at(-60), at(60)], ...common, csrf: 'tok', generatedAt: now,
+  });
+  assert.match(html, /data-early>Masuk sebelum 15\.00 WITA <b>2<\/b>/, 'dua dari tiga masih terkejar');
+  assert.equal((html.match(/data-early="1"/g) ?? []).length, 2);
+  assert.equal((html.match(/data-early="0"/g) ?? []).length, 1);
+
+  // Nothing to choose between when every order is on the same side of the line.
+  const allEarly = renderProcess({ orders: [at(-3600), at(-60)], ...common, csrf: 'tok', generatedAt: now });
+  assert.ok(!allEarly.includes('data-early>'), 'tombolnya tidak muncul kalau semua sama');
 });

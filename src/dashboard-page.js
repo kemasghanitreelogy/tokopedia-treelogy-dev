@@ -1,4 +1,4 @@
-import { businessToday, zoneLabel, zoneName, zoneForChannel } from './clock.js';
+import { businessToday, zoneLabel, zoneName, zoneForChannel, ZONES } from './clock.js';
 import { CHANNELS, STAGES } from './omni.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
@@ -189,6 +189,26 @@ function channelCard(id, bucket) {
 
 // An order that is moving but has no AWB yet is waiting for pickup - that is different
 // from an order where a tracking number will never exist, and the table should say so.
+/**
+ * The hour the courier's van leaves, in the shop's own clock.
+ *
+ * Bali runs on WITA, and a parcel handed over after three o'clock goes out tomorrow. So
+ * "which of these can still make today" is a real question with a real answer, and the
+ * selection button on the process page is that answer rather than a guess made by eye.
+ */
+export const DISPATCH_HOUR_WITA = 15;
+// Taken from the zone table rather than written out, so there is one place that knows
+// what WITA is. Every channel here reports UTC+8 too, which is why a card's own clock
+// and this cut-off never disagree about which side of three o'clock an order fell.
+const WITA_OFFSET_SECONDS = ZONES['Asia/Makassar'].offsetHours * 3600;
+
+/** Today's cut-off, as an instant. Anything before it can still go out today. */
+export function dispatchCutoff(nowEpochSeconds) {
+  const shifted = nowEpochSeconds + WITA_OFFSET_SECONDS;
+  const dayStart = Math.floor(shifted / 86400) * 86400 - WITA_OFFSET_SECONDS;
+  return dayStart + DISPATCH_HOUR_WITA * 3600;
+}
+
 const AWAITING_AWB = new Set(['to_ship', 'shipping']);
 /** Stages whose carrier waybill can exist; mirrors PRINTABLE_STAGES in labels.js. */
 const PRINTABLE = new Set(['to_ship', 'shipping']);
@@ -582,6 +602,7 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 .wl__grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:.7rem; padding:0 1rem}
 
 .wl__bar{display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; padding:0 1rem 1rem}
+.wl__sep{width:1px; height:22px; background:var(--line); margin:0 .25rem}
 /* The commit button follows the list down the page - on a thirty-order day the action
    should never be something you have to scroll back to find. */
 .wl__go{position:sticky; bottom:0; padding:1rem; margin-top:.5rem;
@@ -1555,9 +1576,13 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   // One form around everything, so the whole day's shipments go out on one click. Both
   // marketplace paths are handled server-side from the same selection - the operator
   // should not have to know that Shopee and TikTok batch differently.
+  const cutoff = dispatchCutoff(Math.floor(generatedAt / 1000));
+  const early = rows.filter(({ order }) => order.createdAt < cutoff).length;
+
   const card = ({ order: o }) => {
     const ch = CHANNELS[o.channel];
-    return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}">
+    return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
+      data-early="${o.createdAt < cutoff ? '1' : '0'}">
       <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
         aria-label="Pilih ${escape(o.id)}">
       <span class="wo__body">
@@ -1616,32 +1641,40 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   var counter = document.getElementById('n');
   var go = document.getElementById('go');
 
+  var toggle = document.getElementById('pickall');
+
   function sync() {
     var n = picks.filter(function (p) { return p.checked; }).length;
     counter.textContent = n;
     // Nothing selected means nothing to do; a live button would only produce an error.
     go.disabled = n === 0;
     form.dataset.confirm = 'Atur pengiriman untuk ' + n + ' pesanan sekaligus?';
+    // One control, and it says what pressing it will do rather than what is true now.
+    var allOn = n > 0 && n === picks.length;
+    toggle.textContent = allOn ? 'Kosongkan semua' : 'Pilih semua';
+    toggle.setAttribute('aria-pressed', allOn ? 'true' : 'false');
   }
   function setAll(v) { picks.forEach(function (p) { p.checked = v; }); sync(); }
 
   picks.forEach(function (p) { p.addEventListener('change', sync); });
-  document.getElementById('all').addEventListener('click', function () { setAll(true); });
-  document.getElementById('none').addEventListener('click', function () { setAll(false); });
+  toggle.addEventListener('click', function () {
+    setAll(toggle.getAttribute('aria-pressed') !== 'true');
+  });
 
-  // Selecting by courier rather than hiding by it: a dropoff run covers one courier, but
-  // the rest of the day's orders should stay visible so nothing is forgotten.
-  document.querySelectorAll('[data-carrier]').forEach(function (chip) {
-    if (chip.tagName !== 'BUTTON') return;
+  // Selecting rather than hiding: a dropoff run covers one courier, or everything that
+  // made today's cut-off, but the rest of the day's orders stay visible so nothing is
+  // forgotten. One selector is active at a time, whichever axis it selects by.
+  var selectors = Array.prototype.slice.call(form.querySelectorAll('.wl__bar button[data-carrier], .wl__bar button[data-early]'));
+  selectors.forEach(function (chip) {
     chip.addEventListener('click', function () {
-      document.querySelectorAll('button[data-carrier]').forEach(function (c) {
-        c.classList.toggle('is-on', c === chip);
-      });
+      selectors.forEach(function (c) { c.classList.toggle('is-on', c === chip); });
+      var wantEarly = chip.hasAttribute('data-early');
       var want = chip.dataset.carrier;
       picks.forEach(function (p) {
         var card = p.closest('.wo');
-        p.checked = want === '' || card.dataset.carrier === want;
-        card.classList.toggle('wo--dim', want !== '' && card.dataset.carrier !== want);
+        var hit = wantEarly ? card.dataset.early === '1' : (want === '' || card.dataset.carrier === want);
+        p.checked = hit;
+        card.classList.toggle('wo--dim', !hit && (wantEarly || want !== ''));
       });
       sync();
     });
@@ -1658,9 +1691,12 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           <div class="wl__bar">
             <button class="chip is-on" type="button" data-carrier="">Semua kurir <b>${rows.length}</b></button>
             ${carrierChips}
+            ${early > 0 && early < rows.length
+              ? `<span class="wl__sep" aria-hidden="true"></span>
+                 <button class="chip" type="button" data-early>Masuk sebelum ${DISPATCH_HOUR_WITA}.00 WITA <b>${early}</b></button>`
+              : ''}
             <span class="strip__grow"></span>
-            <button class="chip" type="button" id="all">Pilih semua</button>
-            <button class="chip" type="button" id="none">Kosongkan</button>
+            <button class="chip" type="button" id="pickall" aria-pressed="true">Kosongkan semua</button>
           </div>
           ${sections}
           <div class="wl__go">
@@ -2667,8 +2703,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
             <span class="grow"></span>
             <a class="chip" href="?view=labels&reprint=${showReprints ? '0' : '1'}">${
               showReprints ? 'Daftar harian' : 'Cetak ulang'}</a>
-            <button class="chip" type="button" id="all">Pilih semua</button>
-            <button class="chip" type="button" id="none">Kosongkan</button>
+            <button class="chip" type="button" id="pickall" aria-pressed="true">Kosongkan semua</button>
           </div>
           <div class="scroll"><table class="dense">
             <thead><tr>
@@ -2692,6 +2727,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   var picks = Array.prototype.slice.call(document.querySelectorAll('.pick'));
   var counter = document.getElementById('n');
   var head = document.getElementById('head');
+  var toggle = document.getElementById('pickall');
   if (!picks.length) return;
 
   function sync() {
@@ -2699,13 +2735,18 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     counter.textContent = n;
     head.checked = n === picks.length;
     head.indeterminate = n > 0 && n < picks.length;
+    // One control, and it says what pressing it will do rather than what is true now.
+    var allOn = n > 0 && n === picks.length;
+    toggle.textContent = allOn ? 'Kosongkan semua' : 'Pilih semua';
+    toggle.setAttribute('aria-pressed', allOn ? 'true' : 'false');
   }
   function setAll(value) { picks.forEach(function (p) { p.checked = value; }); sync(); }
 
   picks.forEach(function (p) { p.addEventListener('change', sync); });
   head.addEventListener('change', function () { setAll(head.checked); });
-  document.getElementById('all').addEventListener('click', function () { setAll(true); });
-  document.getElementById('none').addEventListener('click', function () { setAll(false); });
+  toggle.addEventListener('click', function () {
+    setAll(toggle.getAttribute('aria-pressed') !== 'true');
+  });
   document.querySelectorAll('button[data-confirm-text]').forEach(function (button) {
     button.addEventListener('click', function (e) {
       if (!window.confirm(button.dataset.confirmText)) e.preventDefault();

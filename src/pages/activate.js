@@ -14,6 +14,10 @@ const head = (title) => `<!doctype html><html lang="id"><head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${escape(title)} &mdash; Omnichannel Treelogy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="mask-icon" href="/favicon.svg" color="#526547">
+<meta name="theme-color" content="#141A17" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F4F5F0" media="(prefers-color-scheme: light)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -86,8 +90,8 @@ export function renderActivateInvalid({ dashboardUrl = '/api/dashboard' } = {}) 
 <main class="card dead">
   <div class="mark">${svg('warn')}</div>
   <h1>Tautan undangan tidak berlaku</h1>
-  <p class="lead">Tautan ini sudah dipakai, sudah kedaluwarsa, atau bukan tautan yang utuh. Undangan berlaku 72 jam sejak dikirim.</p>
-  <p class="foot">Minta admin mengirim ulang undangan dari menu Pengguna. Sudah punya akun? <a href="${escape(dashboardUrl)}">Masuk di sini</a>.</p>
+  <p class="lead">Tautan ini sudah dipakai atau kedaluwarsa.</p>
+  <p class="foot"><a href="${escape(dashboardUrl)}">Masuk ke dashboard</a></p>
 </main>
 </body></html>`;
 }
@@ -102,7 +106,6 @@ export function renderActivate({ invitee, token, error = null, action = '/api/ac
 <main class="card">
   <div class="mark">${svg('key')}</div>
   <h1>Buat password Anda</h1>
-  <p class="lead">Satu langkah lagi. Password ini hanya Anda yang tahu; admin tidak pernah melihatnya.</p>
   <div class="you" aria-label="Akun yang diaktifkan">
     <span class="you__av" aria-hidden="true">${escape(av)}</span>
     <span class="you__t"><span class="you__n">${escape(invitee.name)}</span><span class="you__e">${escape(invitee.email)}</span></span>
@@ -119,7 +122,7 @@ export function renderActivate({ invitee, token, error = null, action = '/api/ac
       <button class="toggle" type="button" data-toggle="password" aria-label="Tampilkan password" aria-pressed="false">${svg('eye')}</button>
     </div>
     <div class="meter" id="meter" data-n="0" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-    <p class="hint" id="pw-hint">Gabungkan kata yang mudah Anda ingat; panjang lebih penting daripada simbol.</p>
+    <p class="hint" id="pw-hint"></p>
     <div class="gap"></div>
     <label for="confirm">Ulangi password</label>
     <div class="pw">
@@ -130,7 +133,6 @@ export function renderActivate({ invitee, token, error = null, action = '/api/ac
     <p class="hint" id="cf-hint"></p>
     <button class="go" type="submit" id="go">Aktifkan &amp; masuk</button>
   </form>
-  <p class="foot">Setelah aktif Anda langsung masuk ke dashboard. Sesi berlaku 12 jam di perangkat ini.</p>
 </main>
 <script>
 (function () {
@@ -138,7 +140,6 @@ export function renderActivate({ invitee, token, error = null, action = '/api/ac
   var meter = document.getElementById('meter'), pwHint = document.getElementById('pw-hint'), cfHint = document.getElementById('cf-hint');
   var go = document.getElementById('go'), MIN = ${MIN_PASSWORD_LENGTH};
   var eye = ${JSON.stringify(svg('eye'))}, eyeOff = ${JSON.stringify(svg('eyeOff'))};
-  var pwHintDefault = pwHint.textContent;
 
   function strength(v) {
     if (!v) return 0;
@@ -154,13 +155,13 @@ export function renderActivate({ invitee, token, error = null, action = '/api/ac
     var n = strength(v);
     meter.setAttribute('data-n', String(n));
     var pwOk = v.length >= MIN;
-    if (!v) { pwHint.textContent = pwHintDefault; pwHint.className = 'hint'; }
+    if (!v) { pwHint.textContent = ''; pwHint.className = 'hint'; }
     else if (!pwOk) { pwHint.textContent = 'Kurang ' + (MIN - v.length) + ' karakter lagi.'; pwHint.className = 'hint is-bad'; }
-    else { pwHint.textContent = ['', 'Lemah', 'Cukup', 'Bagus', 'Kuat'][n] + (n < 3 ? ' — lebih panjang lebih aman.' : '.'); pwHint.className = 'hint ' + (n >= 3 ? 'is-ok' : ''); }
+    else { pwHint.textContent = ['', 'Lemah', 'Cukup', 'Bagus', 'Kuat'][n]; pwHint.className = 'hint ' + (n >= 3 ? 'is-ok' : ''); }
     pw.setAttribute('aria-invalid', v && !pwOk ? 'true' : 'false');
     var match = c.length > 0 && c === v;
     if (!c) { cfHint.textContent = ''; cfHint.className = 'hint'; }
-    else if (!match) { cfHint.textContent = 'Belum sama dengan password di atas.'; cfHint.className = 'hint is-bad'; }
+    else if (!match) { cfHint.textContent = 'Belum sama.'; cfHint.className = 'hint is-bad'; }
     else { cfHint.textContent = 'Sama.'; cfHint.className = 'hint is-ok'; }
     cf.setAttribute('aria-invalid', c && !match ? 'true' : 'false');
     go.disabled = !(pwOk && match);

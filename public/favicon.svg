@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Treelogy">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0.45" y2="1">
+      <stop offset="0" stop-color="#6E8663"/>
+      <stop offset="1" stop-color="#3C4C36"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <!-- A moringa leaf: one stem, four leaflets. Legible at 16px because the shapes are
+       fat and the stem is the only thin line. -->
+  <g fill="none" stroke="#F1F3EE" stroke-width="4" stroke-linecap="round">
+    <path d="M32 50V22"/>
+  </g>
+  <g fill="#F1F3EE">
+    <ellipse cx="22" cy="26" rx="7.5" ry="5.5" transform="rotate(-28 22 26)"/>
+    <ellipse cx="42" cy="26" rx="7.5" ry="5.5" transform="rotate(28 42 26)"/>
+    <ellipse cx="24" cy="38" rx="6.5" ry="4.8" transform="rotate(-28 24 38)"/>
+    <ellipse cx="40" cy="38" rx="6.5" ry="4.8" transform="rotate(28 40 38)"/>
+    <circle cx="32" cy="17" r="4.6"/>
+  </g>
+</svg>

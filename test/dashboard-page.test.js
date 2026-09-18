@@ -647,8 +647,8 @@ test('the submit button starts disabled, because an empty form is not a sale', (
 });
 
 test('the form says plainly when it cannot actually post yet', () => {
-  assert.match(manualPage({ live: false }), /MEKARI_SYNC_LIVE/);
-  assert.ok(!/MEKARI_SYNC_LIVE/.test(manualPage({ live: true }).split('<script>')[0]));
+  assert.match(manualPage({ live: false }), /Sinkronisasi belum aktif/);
+  assert.ok(!/Sinkronisasi belum aktif/.test(manualPage({ live: true }).split('<script>')[0]));
 });
 
 test('every number field in the manual form is wheel-guarded', () => {
@@ -670,7 +670,6 @@ test('a product with a picture shows it on its card and its detail page; one wit
   assert.match(list, /card__img--none/, 'produk tanpa gambar diberi tanda, bukan kotak kosong');
   const detail = renderProducts({ catalog, ledger, ...common, images, selected: 'MRS-002' });
   assert.match(detail, /class="pd__img"/);
-  assert.match(detail, /terpasang di Jurnal/);
   const bare = renderProducts({ catalog, ledger, ...common, images: {}, selected: 'MRS-002' });
   // The stylesheet mentions the class on every page; only the element counts.
   assert.ok(!/class="pd__img"/.test(bare));
@@ -737,8 +736,7 @@ test('a sparkline is drawn inline, and a series too short to plot says so', () =
   assert.ok(!/<svg class="fc__spark"/.test(html2));
 });
 
-test('with no forecast yet the page says how to make one, rather than breaking', () => {
+test('with no forecast yet the page says so, rather than breaking', () => {
   const html = renderForecast({ forecast: null, ...common });
   assert.match(html, /Belum ada prakiraan/);
-  assert.match(html, /npm run forecast/);
 });

@@ -21,11 +21,6 @@ export const escape = (value) =>
   );
 
 const rupiah = (n) => 'Rp' + Math.round(n).toLocaleString('id-ID');
-const compact = (n) =>
-  n >= 1e9 ? (n / 1e9).toFixed(1).replace('.0', '') + ' M'
-  : n >= 1e6 ? (n / 1e6).toFixed(1).replace('.0', '') + ' jt'
-  : n >= 1e3 ? Math.round(n / 1e3) + ' rb'
-  : String(Math.round(n));
 
 const STAGE_META = {
   unpaid: { label: 'Belum bayar', tone: 'warn' },
@@ -105,14 +100,22 @@ export const svg = (name, cls = '') =>
 
 export const VIEWS = {
   orders: 'Pesanan', process: 'Proses', picklist: 'Picklist', labels: 'Label',
-  stock: 'Stok', products: 'Produk', jurnal: 'Jurnal', forecast: 'Prakiraan', reviews: 'Ulasan',
-  activity: 'Aktivitas', users: 'Pengguna',
+  stock: 'Stok', products: 'Produk', forecast: 'Prakiraan', reviews: 'Ulasan',
+  users: 'Pengguna',
 };
+
+/**
+ * Views that answer to a URL but are not tabs.
+ *
+ * `jurnal` is the sync ledger: real-time posting means nobody needs to watch it, so it
+ * stopped earning a place in the menu. The one thing an operator does reach for - typing
+ * in a sale that never went through a marketplace - is a button on the orders page.
+ */
+export const HIDDEN_VIEWS = { jurnal: 'Jurnal', activity: 'Aktivitas' };
+export const VALID_VIEWS = { ...VIEWS, ...HIDDEN_VIEWS };
 
 /** Tabs that need a permission the person may not have are not shown, not merely refused. */
 const TAB_PERMISSION = { users: 'users' };
-/** Views that are reached from inside a menu, never from the tab row. */
-const HIDDEN_TABS = new Set(['activity']);
 /**
  * Menus whose actions write something, and therefore have a log of their own. The log
  * button sits in the tab row of exactly these; a read-only menu has nothing to show.
@@ -121,17 +124,24 @@ export const LOGGED_MENUS = new Set(['process', 'labels', 'stock', 'products', '
 
 function viewNav(current, rangeQuery, user = null, { log = false } = {}) {
   const tabs = Object.entries(VIEWS)
-    .filter(([id]) => !HIDDEN_TABS.has(id))
     .filter(([id]) => !TAB_PERMISSION[id] || can(user, TAB_PERMISSION[id]))
     .map(([id, label]) => {
       const query = id === 'products' || id === 'users' ? `?view=${id}` : `?view=${id}${rangeQuery}`;
       return `<a class="viewtab ${id === current ? 'is-on' : ''}" href="${escape(query)}">${escape(label)}</a>`;
     })
     .join('');
-  const logButton = !log && LOGGED_MENUS.has(current)
-    ? `<a class="viewlog" href="${escape(`?view=activity&menu=${current}${rangeQuery}`)}" title="Siapa mengubah apa di ${escape(VIEWS[current])}">${svg('history')}<span>Log aktivitas</span></a>`
-    : '';
-  return `<nav class="views" aria-label="Halaman">${tabs}${logButton}</nav>`;
+
+  const end = [];
+  // Typing in an off-marketplace sale is the only reason left to open Jurnal by hand, so
+  // the door to it stands on the page the operator is already looking at.
+  if (current === 'orders' && can(user, 'write')) {
+    end.push(`<a class="viewadd" href="?view=jurnal&amp;add=1">${svg('plus')}<span>Tambah transaksi</span></a>`);
+  }
+  if (!log && LOGGED_MENUS.has(current)) {
+    end.push(`<a class="viewlog" href="${escape(`?view=activity&menu=${current}${rangeQuery}`)}">${svg('history')}<span>Log aktivitas</span></a>`);
+  }
+  return `<nav class="views" aria-label="Halaman">${tabs}${
+    end.length ? `<span class="views__end">${end.join('')}</span>` : ''}</nav>`;
 }
 
 function stageBar(stages, total) {
@@ -150,13 +160,12 @@ function stat(label, value, tone = '') {
   </span>`;
 }
 
-function kpiCard({ iconName, label, value, sub, tone = '' }) {
+function kpiCard({ iconName, label, value, tone = '' }) {
   return `<article class="kpi ${tone}">
     <span class="kpi__ico">${svg(iconName)}</span>
     <div class="kpi__body">
       <p class="kpi__label">${escape(label)}</p>
       <p class="kpi__value">${escape(value)}</p>
-      <p class="kpi__sub">${sub}</p>
     </div>
   </article>`;
 }
@@ -316,6 +325,10 @@ export function shell({
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${escape(title)} &mdash; Treelogy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="mask-icon" href="/favicon.svg" color="#526547">
+<meta name="theme-color" content="#141A17" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F4F5F0" media="(prefers-color-scheme: light)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap">
@@ -409,13 +422,20 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
   overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch}
 .views::-webkit-scrollbar{display:none}
 .viewtab{flex:none}
-.viewlog{margin-left:auto; flex:none; display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .8rem;
+.views__end{margin-left:auto; flex:none; display:flex; gap:.4rem; align-items:center}
+.viewadd{flex:none; display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .9rem; border-radius:9px;
+  font-size:.82rem; font-weight:600; color:#fff; text-decoration:none; border:1px solid transparent;
+  background:linear-gradient(155deg,var(--fill-a),var(--fill-b)); transition:filter var(--t-base) var(--ease-out)}
+.viewadd:hover{filter:brightness(1.12)}
+.viewadd:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.viewadd .ico{width:16px; height:16px}
+.viewlog{flex:none; display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .8rem;
   border-radius:9px; font-size:.82rem; font-weight:500; color:var(--muted); text-decoration:none;
   border:1px solid var(--line); background:var(--panel); transition:color var(--t-fast), border-color var(--t-fast)}
 .viewlog:hover{color:var(--fg); border-color:var(--brand)}
 .viewlog:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .viewlog .ico{width:16px; height:16px}
-@media (max-width:640px){ .viewlog span{display:none} .viewlog{padding:.45rem .55rem} }
+@media (max-width:640px){ .viewlog span,.viewadd span{display:none} .viewlog,.viewadd{padding:.45rem .6rem} }
 .viewtab{padding:.45rem .9rem; border-radius:9px; font-size:.87rem; font-weight:500; text-decoration:none;
   color:var(--muted); transition:background var(--t-base) var(--ease-out),color var(--t-base) var(--ease-out)}
 .viewtab:hover{color:var(--fg); background:var(--panel-2)}
@@ -428,6 +448,7 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
   box-shadow:var(--shadow); margin-bottom:.85rem}
 .strip__grow{flex:1}
+.backbar{margin:0 0 .85rem}
 .stat{display:flex; align-items:baseline; gap:.45rem; white-space:nowrap}
 .stat__n{font-family:"Fira Code",ui-monospace,monospace; font-size:1.15rem; font-weight:600;
   font-variant-numeric:tabular-nums; letter-spacing:-.01em}
@@ -491,7 +512,6 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
   align-items:center; gap:.5rem}
 .wl__n{font:500 .72rem/1 "Inter",sans-serif; padding:.22rem .45rem; border-radius:6px;
   background:var(--panel-2); color:var(--muted); border:1px solid var(--line)}
-.wl__hint{margin:.2rem 0 0; font-size:.8rem; color:var(--muted)}
 .wl__grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:.7rem; padding:0 1rem}
 
 .wl__bar{display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; padding:0 1rem 1rem}
@@ -522,7 +542,6 @@ h1{font-size:1.15rem; margin:0; font-weight:600; letter-spacing:-.01em}
 /* A card outside the chosen courier stays readable but steps back. */
 .wo--dim{opacity:.45}
 .wo--dim:hover{opacity:1}
-.wl__note{padding:0 1rem 1rem; margin:-.5rem 0 0}
 .wl__bar .chip b{margin-left:.25rem; font-weight:600; font-variant-numeric:tabular-nums}
 .wo__in{display:flex; gap:.35rem}
 .wo__in .trk{flex:1; width:auto; min-width:0}
@@ -697,9 +716,8 @@ select.dr__in{width:auto; text-align:left; cursor:pointer}
 .kpi.is-act .kpi__ico{color:var(--act)}
 .kpi__body{min-width:0}
 .kpi__label{margin:0; font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
-.kpi__value{margin:.15rem 0; font-size:1.6rem; font-weight:600; letter-spacing:-.02em;
+.kpi__value{margin:.15rem 0 0; font-size:1.6rem; font-weight:600; letter-spacing:-.02em;
   font-family:"Fira Code",ui-monospace,monospace; font-variant-numeric:tabular-nums}
-.kpi__sub{margin:0; font-size:.78rem; color:var(--dim)}
 
 /* ---- channels ---- */
 .chs{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:.85rem; margin-bottom:1.5rem}
@@ -829,7 +847,6 @@ tbody tr:hover{background:var(--panel-2)}
 .cta:hover{filter:brightness(1.08); box-shadow:0 1px 0 rgba(255,255,255,.14) inset, 0 2px 4px rgba(0,0,0,.25), 0 14px 28px -12px color-mix(in srgb,var(--fill-a) 90%,transparent); transform:translateY(-1px)}
 .cta:active{transform:translateY(0); filter:brightness(.98)}
 .cta:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
-.cta__hint{font:inherit; font-size:.66rem; font-weight:500; letter-spacing:.04em; text-transform:uppercase; padding:.1rem .4rem; border-radius:6px; background:rgba(255,255,255,.16); color:rgba(255,255,255,.9)}
 @media (prefers-reduced-motion:reduce){ .cta,.cta:hover{transition:none; transform:none} }
 
 /* ------------------------------------------------- pager -------------------- */
@@ -1289,21 +1306,10 @@ export function renderDashboard({
     range, errors, truncated, maxPerPlatform, shopeeShop, generatedAt,
     view: 'orders',
     kpis: `<section class="kpis" aria-label="Ringkasan">
-    ${kpiCard({
-      iconName: 'wallet',
-      label: 'Omzet',
-      value: rupiah(all.revenue),
-      // The figure that reaches Jurnal, and the caption says how it differs from what the
-      // buyer paid. The two used to be Rp110 million apart over thirty days with nothing
-      // on either screen to explain it, and a number nobody can tie out is a number
-      // somebody eventually stops trusting.
-      sub: all.paid && all.revenue > all.paid
-        ? `${compact(all.revenue)} &middot; harga jual, sama dengan Jurnal &middot; pembeli bayar ${compact(all.paid)}, selisih ${compact(all.revenue - all.paid)} ditanggung platform`
-        : `${compact(all.revenue)} &middot; harga jual, sama dengan Jurnal &middot; tanpa order batal`,
-    })}
-    ${kpiCard({ iconName: 'cube', label: 'Pesanan', value: String(all.count), sub: '3 kanal digabung' })}
-    ${kpiCard({ iconName: 'bell', label: 'Perlu tindakan', value: String(all.actionable), sub: 'belum bayar + siap kirim', tone: all.actionable > 0 ? 'is-act' : '' })}
-    ${kpiCard({ iconName: 'truck', label: 'Dalam pengiriman', value: String(inTransit), sub: 'sedang di kurir' })}
+    ${kpiCard({ iconName: 'wallet', label: 'Omzet', value: rupiah(all.revenue) })}
+    ${kpiCard({ iconName: 'cube', label: 'Pesanan', value: String(all.count) })}
+    ${kpiCard({ iconName: 'bell', label: 'Perlu tindakan', value: String(all.actionable), tone: all.actionable > 0 ? 'is-act' : '' })}
+    ${kpiCard({ iconName: 'truck', label: 'Dalam pengiriman', value: String(inTransit) })}
   </section>`,
     body: `<section class="chs" aria-label="Per kanal">
     ${Object.keys(CHANNELS).map((id) => channelCard(id, byChannel[id])).join('')}
@@ -1372,14 +1378,8 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     .join('');
 
   const GROUPS = {
-    tiktok_rts: {
-      title: 'Tokopedia &amp; TikTok Shop',
-      hint: 'Label bisa dicetak setelah pengiriman diatur',
-    },
-    shopee_ship: {
-      title: 'Shopee',
-      hint: 'Dokumen kurir dibuat setelah pengiriman diatur',
-    },
+    tiktok_rts: { title: 'Tokopedia &amp; TikTok Shop' },
+    shopee_ship: { title: 'Shopee' },
   };
 
   // Waiting on the courier, not on us. Shown as a count so the page is not mistaken for
@@ -1421,7 +1421,6 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     return `<section class="wl">
       <header class="wl__h">
         <h3>${meta.title}<span class="wl__n">${list.length}</span></h3>
-        <p class="wl__hint">${meta.hint}</p>
       </header>
       <div class="wl__grid">${list.map(card).join('')}</div>
     </section>`;
@@ -1498,7 +1497,6 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
             <button class="chip" type="button" id="all">Pilih semua</button>
             <button class="chip" type="button" id="none">Kosongkan</button>
           </div>
-          <p class="wl__note note">Pengiriman tidak bisa dibatalkan dari sini. Menyaring kurir hanya mengubah yang tercentang, bukan yang ditampilkan.</p>
           ${sections}
           <div class="wl__go">
             <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${rows.length}</span> pesanan</button>
@@ -1540,8 +1538,6 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
         ${stat('Unit dipetik', String(picklist.unitCount))}
         ${stat('SKU', String(picklist.skuCount))}
         ${stat('Pesanan', String(picklist.orderCount))}
-        <span class="strip__grow"></span>
-        <span class="note">Hanya pesanan berbayar yang belum diserahkan ke kurir</span>
       </div>`,
     body: picklist.items.length === 0
       ? '<p class="empty">Tidak ada pesanan yang menunggu dipetik.</p>'
@@ -1651,18 +1647,11 @@ export function renderJurnal({
         ${stat('Nilai antre', rupiah(overview.queuedValue))}
         ${overview.broken > 0 ? stat('Perlu ditinjau', String(overview.broken), 'stop') : ''}
         <span class="strip__grow"></span>
-        <span class="note">${overview.ledgerTotal} faktur tercatat seluruhnya${
-          depositTo ? ` &middot; lunas ke ${escape(depositTo)}` : ' &middot; faktur dibiarkan terbuka'}</span>
-        <a class="cta" href="?view=jurnal&amp;add=1">${svg('plus')}<span>Tambah transaksi</span><kbd class="cta__hint" aria-hidden="true">manual</kbd></a>
+        <a class="cta" href="?view=jurnal&amp;add=1">${svg('plus')}<span>Tambah transaksi</span></a>
       </div>`,
     body: `
       ${configured ? '' : '<div class="alert">' + svg('warn') + '<span>Kredensial Mekari belum diisi, jadi tidak ada yang bisa dikirim.</span></div>'}
-      <div class="alert ${live ? 'alert--ok' : 'alert--soft'}">
-        ${svg(live ? 'check' : 'warn')}
-        <span>${live
-          ? 'Sinkronisasi <b>real-time aktif</b> &mdash; tiap pesanan berbayar didorong platform ke Jurnal saat itu juga. Daftar di bawah adalah jaring pengaman: apa pun yang terlewat muncul sebagai <b>antre</b>.'
-          : 'Sinkronisasi <b>belum aktif</b>. Setel <span class="mono">MEKARI_SYNC_LIVE=1</span> untuk menyalakannya; sampai itu webhook tetap diterima tapi tidak menulis apa pun.'}</span>
-      </div>
+      ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif.</span></div>`}
       ${syncHealth(heartbeat, generatedAt)}
       ${canPost ? `<form method="post" data-confirm="Kirim ${overview.queued} faktur senilai ${escape(rupiah(overview.queuedValue))} ke Mekari Jurnal?">
         <input type="hidden" name="csrf" value="${escape(csrf)}">
@@ -1670,7 +1659,6 @@ export function renderJurnal({
         <input type="hidden" name="action" value="mekari_sync">
         <div class="apply">
           <button type="submit">Kirim ${overview.queued} faktur sekarang</button>
-          <span class="note">Untuk pesanan yang webhook-nya terlewat. Faktur yang sudah ada tidak akan dibuat dua kali.</span>
         </div>
       </form>` : ''}
       ${rows
@@ -1681,8 +1669,7 @@ export function renderJurnal({
             </tr></thead>
             <tbody>${rows}</tbody>
           </table></div>
-          ${pager(paged, { baseQuery, noun: 'pesanan' })}
-          <div class="foot"><span>${idNumber(overview.rows.length)} pesanan pada rentang ini &middot; antre dan bermasalah selalu di depan</span></div>`
+          ${pager(paged, { baseQuery, noun: 'pesanan' })}`
         : '<p class="empty">Tidak ada pesanan pada rentang ini.</p>'}`,
   });
 }
@@ -1698,7 +1685,7 @@ export function renderJurnal({
  */
 export function renderManual({
   range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
-  live, depositTo, existingCodes = [], images = {}, seqTail = '', user = null,
+  live, existingCodes = [], images = {}, seqTail = '', user = null,
 }) {
   const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
 
@@ -1750,14 +1737,9 @@ export function renderManual({
     view: 'jurnal',
     flash,
     hideRangeControls: true,
-    kpis: `
-      <div class="strip">
-        <span class="note">Untuk penjualan yang tidak lewat marketplace. Tersimpan sebagai faktur Jurnal yang sama persis dengan pesanan online.</span>
-        <span class="strip__grow"></span>
-        <a class="chip" href="?view=jurnal">&larr; Kembali ke Jurnal</a>
-      </div>`,
+    kpis: '<div class="backbar"><a class="chip" href="?view=orders">&larr; Kembali</a></div>',
     body: `
-      ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif &mdash; transaksi akan dihitung dan diperiksa, tapi belum dikirim ke Jurnal sampai <span class="mono">MEKARI_SYNC_LIVE=1</span> disetel.</span></div>`}
+      ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif.</span></div>`}
       <form method="post" id="mxform" data-confirm="Simpan transaksi ini dan kirim ke Mekari Jurnal?">
         <input type="hidden" name="csrf" value="${escape(csrf)}">
         <input type="hidden" name="view" value="jurnal">
@@ -1777,9 +1759,6 @@ export function renderManual({
                   <label for="code">Kode transaksi</label>
                   <input id="code" name="code" value="${escape(code)}" required maxlength="43"
                          pattern="[A-Za-z]{2}-[A-Za-z0-9-]{1,40}" data-code>
-                  <span class="fld__hint" data-code-hint>${seqTail
-                    ? `Sumber, tanggal, lalu nomor urut <span class="mono">${escape(seqTail)}</span> yang direservasi untuk formulir ini dan tidak akan diberikan lagi. Boleh diubah.`
-                    : 'Otomatis dari sumber dan tanggal. Boleh diubah.'}</span>
                 </div>
                 <div class="fld">
                   <label for="date">Tanggal</label>
@@ -1789,7 +1768,6 @@ export function renderManual({
                   <label for="customer">Pelanggan</label>
                   <input id="customer" name="customer" list="mxcontacts" maxlength="120"
                          placeholder="${escape(chosen.label)}" data-customer>
-                  <span class="fld__hint">Dibuat otomatis di Jurnal kalau belum ada.</span>
                 </div>
                 <div class="fld">
                   <label for="shipping">Ongkir</label>
@@ -1828,11 +1806,6 @@ export function renderManual({
               <div class="sum__t"><span>Total</span><b data-sum-total>Rp0</b></div>
               <input type="hidden" name="total" data-total-field value="0">
               <button class="sum__go" type="submit" id="mxgo" disabled>Simpan &amp; kirim ke Jurnal</button>
-              <p class="fld__hint" style="margin:.6rem 0 0">${
-                depositTo
-                  ? `Ditandai lunas ke <b>${escape(depositTo)}</b>.`
-                  : 'Faktur dibiarkan terbuka sebagai piutang.'
-              }</p>
             </div>
           </aside>
         </div>
@@ -2020,7 +1993,7 @@ export function renderForecast({ forecast, range, errors, shopeeShop, generatedA
     return shell({ user,
       title: 'Prakiraan stok', range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
       hideRangeControls: true,
-      body: `<p class="empty">Belum ada prakiraan. Jalankan <span class="mono">npm run forecast</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
+      body: '<p class="empty">Belum ada prakiraan.</p>',
     });
   }
 
@@ -2239,7 +2212,7 @@ export function renderReviews({
     return shell({ user,
       title: 'Ulasan', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
       hideRangeControls: true,
-      body: `<p class="empty">Belum ada ulasan tersimpan. Jalankan <span class="mono">npm run tokopedia:reviews</span> dan <span class="mono">npm run shopee:reviews</span> di server, atau tunggu tugas harian jam 02.30 WIB.</p>`,
+      body: '<p class="empty">Belum ada ulasan tersimpan.</p>',
     });
   }
 
@@ -2430,7 +2403,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     body: candidates.length === 0
       ? `<p class="empty">${showReprints
           ? 'Tidak ada label yang bisa dicetak.'
-          : 'Semua label sudah dicetak. Tidak ada pesanan yang menunggu.'}</p>
+          : 'Semua label sudah dicetak.'}</p>
          <div class="apply"><a class="chip" href="?view=labels&reprint=${showReprints ? '0' : '1'}">${
            showReprints ? 'Kembali ke daftar harian' : 'Tampilkan cetak ulang'}</a></div>`
       : `<form method="post" action="/api/labels" target="_blank">
@@ -2453,9 +2426,6 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
           </table></div>
           <div class="apply">
             <button type="submit">Cetak <span id="n">${ticked}</span> label</button>
-            <span class="note">${showReprints
-              ? 'Cetak ulang label pesanan yang sudah diambil kurir.'
-              : 'Semua yang tampil di sini perlu dicetak dan siap dicetak.'} Maksimal ${MAX_PRESELECT} sekali cetak.</span>
           </div>
         </form>`,
     script: `
@@ -3186,7 +3156,6 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       <div class="pd__cap">
         <b>${escape(product.name)}</b>${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}
         <span class="mono dim">${escape(product.sku)}</span>
-        <span class="fld__hint">Gambar dari Shopify (${escape(picture.source === 'variant' ? 'varian' : 'produk')}), juga terpasang di Jurnal.</span>
       </div>
     </div>` : ''}
     <p class="sec">${escape(product.name)}${product.variant ? ' &middot; ' + escape(product.variant) : ''}
@@ -3243,6 +3212,7 @@ export function renderLabelReport({ pageCount, requested, failures, pdfBase64, s
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Hasil cetak label</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fira+Code:wght@400&display=swap">
 <style>
@@ -3341,6 +3311,10 @@ export function renderLogin({ failed = false, lockedFor = 0, email = '', redirec
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Masuk &mdash; Omnichannel Treelogy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="mask-icon" href="/favicon.svg" color="#526547">
+<meta name="theme-color" content="#141A17" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F4F5F0" media="(prefers-color-scheme: light)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
@@ -3384,7 +3358,6 @@ button:disabled,input:disabled{opacity:.5;cursor:not-allowed}
 <main class="card">
   <div class="mark">${svg('lock')}</div>
   <h1>Omnichannel Orders</h1>
-  <p class="lead">Tokopedia &middot; TikTok Shop &middot; Shopee</p>
   ${lockedFor > 0
     ? `<p class="err" role="alert">Terlalu banyak percobaan gagal. Coba lagi dalam ${minutes} menit.</p>`
     : failed
@@ -3400,13 +3373,13 @@ button:disabled,input:disabled{opacity:.5;cursor:not-allowed}
       autocomplete="current-password" placeholder="Password">
     <button type="submit" ${lockedFor > 0 ? 'disabled' : ''}>Masuk</button>
   </form>
-  <p class="hint">Sesi berlaku 12 jam di perangkat ini.</p>
 </main>
 </body></html>`;
 }
 
 export const dashboardError = (heading, detail) => `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(heading)}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0B0E14;color:#E8ECF4;
 font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:1.5rem}
 .c{max-width:30rem;padding:2rem;border:1px solid #232937;border-radius:14px;background:#12161F;text-align:center}

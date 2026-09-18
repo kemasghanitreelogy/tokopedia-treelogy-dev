@@ -1,7 +1,7 @@
 import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
 import { can, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
@@ -432,7 +432,7 @@ async function handleWrite(form, ip, user) {
     console.log(`dashboard: manual_invoice ${order.id} -> ${result.status}`);
 
     return {
-      view: 'jurnal',
+      view: 'orders',
       message: result.status === 'exists'
         ? `${order.id} sudah ada di Jurnal, tidak dibuat dua kali`
         : `${order.id} tersimpan di Jurnal senilai ${built.expectedTotal.toLocaleString('id-ID')}`,
@@ -670,7 +670,7 @@ export default async function handler(req, res) {
 
   const requestedView = url.searchParams.get('view') ?? 'orders';
   // The stock tab was folded into products; old links and bookmarks still land somewhere useful.
-  const view = Object.hasOwn(VIEWS, requestedView) ? requestedView : 'orders';
+  const view = Object.hasOwn(VALID_VIEWS, requestedView) ? requestedView : 'orders';
   // Page and page size come from the URL, and every page link is the current URL with
   // only those two changed - so filters, range and page survive reload and history.
   const paging = parsePaging(url.searchParams);
@@ -770,7 +770,6 @@ export default async function handler(req, res) {
         source, code: formatManualCode(source, today, sequence), seqTail: encodeSequence(sequence), today,
         contacts, existingCodes: used, images: await imagesByKey(),
         live: process.env.MEKARI_SYNC_LIVE === '1',
-        depositTo: POOLED_LABEL,
       }));
       return;
     }

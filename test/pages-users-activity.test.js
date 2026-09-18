@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
 import { renderActivate, renderActivateInvalid } from '../src/pages/activate.js';
-import { renderDashboard, renderProcess, VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderProcess, VIEWS, VALID_VIEWS } from '../src/dashboard-page.js';
 import { summarize } from '../src/omni.js';
 
 const range = { preset: '7d', from: '2026-09-11', to: '2026-09-17', label: '7 hari', since: 1, until: 2, clamped: false };
@@ -111,4 +111,41 @@ test('the activation page shows who is activating, both password fields, and the
   assert.match(html, /Operator/);
   validJs(html, 'activate');
   assert.match(renderActivateInvalid(), /tidak berlaku/);
+});
+
+test('Jurnal is no longer a tab; the one thing it was opened for is a button on Pesanan', () => {
+  const orders = renderDashboard({ orders: [], summary: summarize([]), user: owner, ...common });
+  assert.ok(!/viewtab[^>]*>Jurnal</.test(orders), 'tidak ada tab Jurnal');
+  assert.equal(VIEWS.jurnal, undefined);
+  assert.match(orders, /class="viewadd" href="\?view=jurnal&amp;add=1"/, 'tombol tambah transaksi ada di Pesanan');
+  // A viewer may not write, so the door to a new invoice is not shown to them at all.
+  const viewer = renderDashboard({ orders: [], summary: summarize([]), user: { ...operator, role: 'viewer' }, ...common });
+  assert.ok(!viewer.includes('class="viewadd"'));
+  // The page the button opens is still reachable, and so is its log.
+  assert.equal(VALID_VIEWS.jurnal, 'Jurnal');
+});
+
+test('every page asks for the same favicon', () => {
+  const pages = [
+    renderDashboard({ orders: [], summary: summarize([]), user: owner, ...common }),
+    renderUsers({ users: [owner], me: owner, smtpReady: true, ...common }),
+    renderActivity({ entries: [], actors: [], filter: { actor: '', menu: '', status: '', q: '' }, user: owner, ...common }),
+    renderActivate({ invitee: { name: 'D', email: 'd@t.co', role: 'viewer' }, token: 't' }),
+    renderActivateInvalid(),
+  ];
+  for (const html of pages) assert.match(html, /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/);
+});
+
+test('no page still explains itself in prose the operator did not ask for', () => {
+  const pages = [
+    renderDashboard({ orders: [], summary: summarize([]), user: owner, ...common }),
+    renderUsers({ users: [owner], me: owner, smtpReady: false, ...common }),
+    renderActivity({ entries: [], actors: [], filter: { actor: '', menu: 'users', status: '', q: '' }, user: owner, ...common }),
+  ];
+  const banned = [
+    /harga jual, sama dengan Jurnal/, /ditanggung platform/, /kanal digabung/, /sedang di kurir/,
+    /Mereka menerima email/, /Menghapus pengguna tidak menghapus/, /Siapa mengubah apa/,
+    /Isi SMTP_HOST/, /npm run/,
+  ];
+  for (const html of pages) for (const pattern of banned) assert.ok(!pattern.test(html), `${pattern} masih ada`);
 });

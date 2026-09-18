@@ -234,7 +234,6 @@ test('the reviews view has a menu entry, leads with low ratings, and escapes wha
 
   const empty = renderReviews({ doc: null, stats: null, reviews: [], ...common });
   assert.match(empty, /Belum ada ulasan tersimpan/);
-  assert.match(empty, /npm run tokopedia:reviews/);
 
   const low = normalizeShopReview(shopRaw('9', {
     rating: 2, reviewText: 'Paket <b>penyok</b>', badRatingReasonFmt: 'Kemasan',

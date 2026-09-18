@@ -1,5 +1,5 @@
 import { shell, svg, escape, initials } from '../dashboard-page.js';
-import { ROLES, ASSIGNABLE_ROLES, STATUS, OWNER_ID, INVITE_TTL_SECONDS } from '../users.js';
+import { ROLES, ASSIGNABLE_ROLES, STATUS, OWNER_ID } from '../users.js';
 
 /**
  * The Pengguna tab: who has a login, what they may do, and the door for adding one.
@@ -112,10 +112,7 @@ export function renderUsers({ users, me, smtpReady, csrf, flash, ...common }) {
   const invite = `<section class="panel um__invite" aria-labelledby="um-invite-h">
     <div class="um__invite-h">
       <span class="um__invite-ico" aria-hidden="true">${svg('userPlus')}</span>
-      <div>
-        <h2 id="um-invite-h">Undang pengguna baru</h2>
-        <p>Mereka menerima email berisi tautan, lalu membuat password sendiri. Tautan berlaku ${INVITE_TTL_SECONDS / 3600} jam.</p>
-      </div>
+      <h2 id="um-invite-h">Undang pengguna baru</h2>
     </div>
     <form method="post" class="um__form">
       ${hidden(csrf)}<input type="hidden" name="action" value="user_invite">
@@ -125,7 +122,7 @@ export function renderUsers({ users, me, smtpReady, csrf, flash, ...common }) {
       </div>
       <div class="fld">
         <label for="inv-email">Email</label>
-        <input id="inv-email" name="email" type="email" required autocomplete="off" placeholder="nama@treelogy.com" ${smtpReady ? '' : 'aria-describedby="um-smtp-warn"'}>
+        <input id="inv-email" name="email" type="email" required autocomplete="off" placeholder="nama@treelogy.com">
       </div>
       <fieldset class="um__roles">
         <legend>Peran</legend>
@@ -135,7 +132,6 @@ export function renderUsers({ users, me, smtpReady, csrf, flash, ...common }) {
         </label>`).join('')}
       </fieldset>
       <button class="um__go" type="submit">${svg('send')}Kirim undangan</button>
-      ${smtpReady ? '' : '<p id="um-smtp-warn" class="um__warn">Isi SMTP_HOST, SMTP_USER, SMTP_PASS dan SMTP_FROM di environment server dulu. Undangan yang dibuat sekarang bisa dikirim ulang setelah itu.</p>'}
     </form>
   </section>`;
 
@@ -144,7 +140,6 @@ export function renderUsers({ users, me, smtpReady, csrf, flash, ...common }) {
       <thead><tr><th>Pengguna</th><th>Peran</th><th>Status</th><th>Sejak</th><th class="num">Tindakan</th></tr></thead>
       <tbody>${users.map((u) => userRow({ u, me, csrf, now })).join('')}</tbody>
     </table></div>
-    <p class="um__foot">Setiap perubahan di sini tercatat di <a href="?view=activity&amp;menu=users">Log aktivitas</a>. Menghapus pengguna tidak menghapus riwayatnya.</p>
   </section>`;
 
   const body = `<div class="um">${invite}${table}</div>`;
@@ -165,9 +160,8 @@ const STYLE = `
 .um__smtp.is-off{color:var(--warn); border-color:color-mix(in srgb,var(--warn) 45%,transparent); background:color-mix(in srgb,var(--warn) 10%,transparent)}
 
 .um__invite{position:sticky; top:1rem; padding:1.25rem}
-.um__invite-h{display:flex; gap:.85rem; align-items:flex-start; margin-bottom:1.1rem}
+.um__invite-h{display:flex; gap:.75rem; align-items:center; margin-bottom:1.1rem}
 .um__invite-h h2{margin:0; font-size:1rem; font-weight:600; letter-spacing:-.01em}
-.um__invite-h p{margin:.2rem 0 0; font-size:.8rem; color:var(--muted); line-height:1.5}
 .um__invite-ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center; flex:none; color:#fff;
   background:linear-gradient(155deg,var(--fill-a),var(--fill-b))}
 .um__form{display:flex; flex-direction:column; gap:.85rem}
@@ -187,7 +181,6 @@ const STYLE = `
 .um__go:hover{filter:brightness(1.12)}
 .um__go:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .um__go .ico{width:18px; height:18px}
-.um__warn{margin:0; font-size:.76rem; line-height:1.5; color:var(--warn)}
 
 .um__list .scroll{overflow:auto}
 .um__row.is-off{opacity:.55}
@@ -230,8 +223,6 @@ const STYLE = `
 .um__act:disabled{opacity:.35; cursor:not-allowed}
 .um__act:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 @media (max-width:900px){ .um__act span{display:none} .um__act{padding:.35rem .5rem} }
-.um__foot{margin:0; padding:.85rem 1rem; font-size:.76rem; color:var(--dim); border-top:1px solid var(--line)}
-.um__foot a{color:var(--muted)}
 `;
 
 const SCRIPT = `

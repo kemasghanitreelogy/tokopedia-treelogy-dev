@@ -6,11 +6,14 @@ const order = (channel, status, stage, extra = {}) => ({
   channel, status, stage, id: 'X', createdAt: 1, ...extra,
 });
 
-test('Shopify stays out of this queue: nothing here is arranged for it', () => {
-  // Its couriers are booked outside Shopify and fulfilment is recorded there by hand.
-  // What it needs from us is a packing label, which the Label tab prints.
-  assert.equal(nextAction(order('shopify', 'PAID/UNFULFILLED', 'to_ship')), null);
+test('a Shopify order is here to be printed, and leaves once it has been', () => {
+  // Nothing is arranged for it - its couriers are booked outside Shopify - but the
+  // parcel still needs its packing label, and printing one calls no API at all.
+  const waiting = order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: '#10926' });
+  assert.equal(nextAction(waiting).action, 'shopify_label');
+  assert.equal(nextAction(waiting, { '#10926': { at: 1 } }), null, 'sudah dicetak, keluar dari antrean');
   assert.equal(nextAction(order('shopify', 'PAID/FULFILLED', 'completed')), null);
+  assert.equal(nextAction(order('shopify', 'PENDING/UNFULFILLED', 'unpaid')), null);
 });
 
 test('a batch refuses a Shopify order out loud rather than shipping it blind', async () => {
@@ -48,7 +51,10 @@ test('the pending list keeps only actionable orders, newest first', () => {
     order('tokopedia', 'AWAITING_SHIPMENT', 'to_ship', { id: 'new', createdAt: 50 }),
     order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: 'shopify', createdAt: 98 }),
   ]);
-  assert.deepEqual(rows.map((r) => r.order.id), ['new', 'old']);
+  assert.deepEqual(rows.map((r) => r.order.id), ['shopify', 'new', 'old']);
+  // Printing it is what takes it out, and nothing else can.
+  const afterPrint = pending([order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: 'shopify' })], { shopify: { at: 1 } });
+  assert.deepEqual(afterPrint, []);
 });
 
 test('a mass arrangement is blocked in read-only mode before any call is made', async () => {

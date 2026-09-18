@@ -26,12 +26,22 @@ import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
  * whether it succeeds or fails.
  */
 
-/** What, if anything, moves this order forward right now. */
-export function nextAction(order) {
-  // Shopify needs nothing arranged: this shop books its couriers outside Shopify, and
-  // fulfilment is recorded there by hand. What it does need from us is a packing label,
-  // which is the Label tab's job, not this queue's.
-  if (order.channel === 'shopify') return null;
+/**
+ * What, if anything, moves this order forward right now.
+ *
+ * @param {object} order
+ * @param {Record<string, unknown>} printed  Shopify orders whose label has been printed.
+ *   Shopify cannot answer that itself, and without it a printed order asks forever.
+ */
+export function nextAction(order, printed = {}) {
+  // Shopify has nothing to arrange - its couriers are booked outside Shopify and the
+  // order is closed there by hand - but the parcel still needs its packing label, and
+  // printing one touches no API at all. That is the whole of its move here.
+  if (order.channel === 'shopify') {
+    return order.stage === 'to_ship' && !printed[order.id]
+      ? { action: 'shopify_label', label: 'Cetak label', needs: [] }
+      : null;
+  }
 
   if (order.channel === 'shopee') {
     if (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP') {
@@ -47,9 +57,9 @@ export function nextAction(order) {
 }
 
 /** Orders still waiting on the seller, newest first, with the action each one needs. */
-export function pending(orders) {
+export function pending(orders, printed = {}) {
   return orders
-    .map((order) => ({ order, next: nextAction(order) }))
+    .map((order) => ({ order, next: nextAction(order, printed) }))
     .filter((row) => row.next)
     .sort((a, b) => b.order.createdAt - a.order.createdAt);
 }

@@ -861,8 +861,10 @@ export default async function handler(req, res) {
     }
 
     if (view === 'process') {
+      // A Shopify order leaves this queue when its label is printed, and only this says so.
+      const printed = await printedLabels().catch(() => ({}));
       console.log(`dashboard/process: ${data.orders.length} orders in range`);
-      send(200, renderProcess({ user, ...data, csrf, flash }));
+      send(200, renderProcess({ user, ...data, csrf, flash, printed, defaultSize: DEFAULT_SIZE }));
       return;
     }
 

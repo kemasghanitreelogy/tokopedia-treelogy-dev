@@ -415,13 +415,38 @@ test('both marketplace paths commit through one button', () => {
   assert.ok(html.includes('Pilih semua') && html.includes('Kosongkan'));
 });
 
-test('Shopify never appears in the shipment queue', () => {
+test('Shopify is queued for printing, never for arranging', () => {
   const html = renderProcess({
     orders: [processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1')],
     ...common, csrf: 'tok',
   });
-  assert.ok(!html.includes('SHOPIFY1'), 'Shopify was offered for batch arrangement');
-  assert.ok(html.includes('Semua pesanan sudah diatur'), 'the empty state should show instead');
+  assert.match(html, /SHOPIFY1/);
+  assert.match(html, /action="\/api\/labels"/, 'tombolnya mencetak, bukan memanggil marketplace');
+  assert.match(html, /Cetak 1 label/);
+  assert.ok(!html.includes('id="massform"'), 'tanpa pesanan marketplace, tidak ada formulir atur pengiriman');
+  assert.ok(!html.includes('mass_arrange'), 'tidak pernah ikut diatur pengirimannya');
+
+  // Printed already: it has left the queue, and the page says there is nothing to do.
+  const done = renderProcess({
+    orders: [processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1')],
+    printed: { SHOPIFY1: { at: 1 } }, ...common, csrf: 'tok',
+  });
+  assert.ok(!done.includes('SHOPIFY1'));
+  assert.match(done, /Semua pesanan sudah diatur/);
+});
+
+test('the two queues stand side by side, each counting only its own', () => {
+  const html = renderProcess({
+    orders: [
+      processOrder('shopify', 'PAID/UNFULFILLED', 'SHOPIFY1'),
+      processOrder('shopee', 'READY_TO_SHIP', 'SHOPEE1'),
+    ],
+    ...common, csrf: 'tok',
+  });
+  assert.match(html, /id="massform"/);
+  assert.match(html, /Atur pengiriman <span id="n">1<\/span> pesanan/, 'Shopify tidak masuk hitungan batch');
+  assert.match(html, /Cetak 1 label/);
+  assert.match(html, /Semua kurir <b>1<\/b>/, 'saringan kurir hanya untuk yang diatur');
 });
 
 test('a row held because it came from the seed offers a way to vouch for it', async () => {

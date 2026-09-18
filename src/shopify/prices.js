@@ -37,25 +37,27 @@ export async function priceBySku() {
  * Draft and archived products are skipped: a price nobody can buy at is not a price to
  * write a sale at. A variant with no SKU is skipped too - there is nothing to key it by.
  *
+ * `read` is injectable so the shape this depends on is pinned by a test rather than by
+ * memory. It was written against the nested GraphQL shape once, while fetchProducts
+ * hands back a flat list of variants, and the result was a sync that reported success
+ * and wrote nothing at all.
+ *
  * @returns {Promise<{written: number, skipped: number, unknown: string[], syncedAt: number}>}
  */
-export async function syncShopifyPrices({ now = Math.floor(Date.now() / 1000) } = {}) {
+export async function syncShopifyPrices({ now = Math.floor(Date.now() / 1000), read = fetchProducts } = {}) {
   if (!isShopifyConfigured()) throw new Error('Shopify belum dikonfigurasi');
 
-  const products = await fetchProducts();
+  const variants = await read();
   const prices = {};
   let skipped = 0;
-  for (const product of products) {
-    if (product.status !== 'ACTIVE') { skipped += (product.variants?.nodes ?? []).length; continue; }
-    for (const variant of product.variants?.nodes ?? []) {
-      const sku = String(variant.sku ?? '').trim();
-      const price = Math.round(Number(variant.price) || 0);
-      if (!sku || price <= 0) { skipped += 1; continue; }
-      // Two variants can share a SKU across products; the dearer one is the safer default,
-      // because a price typed too low is money gone and a price typed too high is a question.
-      if (!prices[sku] || price > prices[sku].price) {
-        prices[sku] = { price, title: product.title ?? '' };
-      }
+  for (const variant of variants) {
+    const sku = String(variant.sku ?? '').trim();
+    const price = Math.round(Number(variant.price) || 0);
+    if (variant.status !== 'ACTIVE' || !sku || price <= 0) { skipped += 1; continue; }
+    // Two variants can share a SKU across products; the dearer one is the safer default,
+    // because a price typed too low is money gone and a price typed too high is a question.
+    if (!prices[sku] || price > prices[sku].price) {
+      prices[sku] = { price, title: variant.title ?? '' };
     }
   }
 

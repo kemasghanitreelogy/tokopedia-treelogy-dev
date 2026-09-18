@@ -17,6 +17,7 @@ import { runAction, massArrange } from '../src/fulfillment.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
+import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
@@ -419,6 +420,11 @@ async function handleWrite(form, ip, user) {
       note: form.get('note'),
       addedBy: user.name || user.email,
       shipping: form.get('shipping'),
+      // Who the parcel goes to and how, which is not always who the invoice bills.
+      buyer: form.get('buyer'),
+      buyerPhone: form.get('buyerPhone'),
+      shipTo: form.get('shipTo'),
+      carrier: form.get('carrier'),
       lines,
     });
 
@@ -465,6 +471,10 @@ async function handleWrite(form, ip, user) {
         summary: `Menambah transaksi manual ${order.id} (${order.source}) untuk ${order.customer} senilai Rp${built.expectedTotal.toLocaleString('id-ID')}${result.status === 'exists' ? ' (sudah ada di Jurnal)' : ''}`,
         changes: [
           { field: 'pelanggan', to: order.customer },
+          ...(order.buyer ? [{ field: 'penerima', to: order.buyer }] : []),
+          ...(order.buyerPhone ? [{ field: 'telepon', to: order.buyerPhone }] : []),
+          ...(order.shipTo ? [{ field: 'alamat', to: order.shipTo }] : []),
+          ...(order.carrier ? [{ field: 'kurir', to: order.carrier }] : []),
           { field: 'tanggal', to: form.get('date') },
           { field: 'keterangan', to: order.note },
           { field: 'ongkir', to: order.finance.shipping },
@@ -793,6 +803,9 @@ export default async function handler(req, res) {
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
         source, code: formatManualCode(source, today, sequence), seqTail: encodeSequence(sequence), today,
         contacts, existingCodes: used, images: await imagesByKey(),
+        // Shopify's own prices, read from our store rather than from Shopify: the form
+        // must open at the same speed whether or not Shopify is answering today.
+        prices: await cached('shopify-prices', 5 * 60_000, () => priceBySku().catch(() => ({}))),
         live: process.env.MEKARI_SYNC_LIVE === '1',
       }));
       return;

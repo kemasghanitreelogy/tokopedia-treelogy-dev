@@ -754,3 +754,26 @@ test('with no forecast yet the page says so, rather than breaking', () => {
   const html = renderForecast({ forecast: null, ...common });
   assert.match(html, /Belum ada prakiraan/);
 });
+
+test('the manual form asks who the parcel goes to, and fills a price when one is known', () => {
+  const html = renderManual({
+    source: 'CS', code: 'CS-260918-001', today: '2026-09-18', contacts: [], existingCodes: [],
+    live: true, seqTail: '0000001', prices: { 'OMP-45-001': 199000 }, ...common,
+  });
+
+  assert.match(html, /<label for="buyer">Nama penerima<\/label>/);
+  assert.match(html, /<label for="buyerPhone">Nomor telepon<\/label>/);
+  assert.match(html, /<label for="shipTo">Alamat<\/label>/);
+  assert.match(html, /<textarea id="shipTo" name="shipTo"/);
+
+  // A fixed courier list, so one courier is one name in the books.
+  for (const courier of ['Grab Express Instant', 'Lion Parcel', 'JNE', 'J&amp;T', 'PAXEL', 'DHL Express']) {
+    assert.ok(html.includes(`<option value="${courier}">${courier}</option>`), `kurir ${courier} tidak ada`);
+  }
+
+  // The price rides on the option, so choosing a product needs no request.
+  assert.match(html, /<option value="OMP-45-001" data-price="199000">/);
+  assert.match(html, /data-price="0"/, 'produk tanpa harga tersimpan tetap bisa dipilih');
+  assert.match(html, /function fillPrice/);
+  assert.match(html, /if \(price > 0 && !field\.value\)/, 'harga yang sudah diketik tidak ditimpa');
+});

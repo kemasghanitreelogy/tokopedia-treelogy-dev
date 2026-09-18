@@ -6,7 +6,7 @@ import { labelReadiness } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode } from './mekari/prefix.js';
-import { SOURCE_OPTIONS, SELLABLE } from './mekari/manual.js';
+import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
 import { paginate, pageHref, pageWindow, PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from './paging.js';
@@ -1066,6 +1066,7 @@ a.rv__product:hover{color:var(--accent)}
 .fset__h{font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:0 0 .7rem}
 
 .flds{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.7rem}
+.flds--one{grid-template-columns:1fr; margin-top:.7rem}
 .fld{display:flex; flex-direction:column; gap:.28rem; min-width:0}
 .fld label{font-size:.74rem; color:var(--muted)}
 .fld input,.fld select,.fld textarea{width:100%; font:inherit; font-size:.86rem; padding:.5rem .65rem;
@@ -1826,7 +1827,7 @@ export function renderJurnal({
  */
 export function renderManual({
   range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
-  live, existingCodes = [], images = {}, seqTail = '', user = null,
+  live, existingCodes = [], images = {}, seqTail = '', prices = {}, user = null,
 }) {
   const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
 
@@ -1847,9 +1848,12 @@ export function renderManual({
     if (!byCategory.has(product.category)) byCategory.set(product.category, []);
     byCategory.get(product.category).push(product);
   }
+  // Each option carries the price Shopify sells it at, copied into our own store by the
+  // daily job. The field is still editable - a consignment is often discounted - but
+  // nobody has to go and look the number up.
   const productOptions = [...byCategory.entries()]
     .map(([category, items]) => `<optgroup label="${escape(CATEGORIES[category] ?? category)}">${
-      items.map((p) => `<option value="${escape(p.sku)}">${escape(p.name)}</option>`).join('')
+      items.map((p) => `<option value="${escape(p.sku)}" data-price="${Number(prices[p.sku]) || 0}">${escape(p.name)}</option>`).join('')
     }</optgroup>`)
     .join('');
 
@@ -1913,6 +1917,34 @@ export function renderManual({
                 <div class="fld">
                   <label for="shipping">Ongkir</label>
                   <input id="shipping" name="shipping" type="number" value="0" min="0" step="1" inputmode="numeric">
+                </div>
+              </div>
+            </div>
+
+            <div class="fset">
+              <h3 class="fset__h">Pelanggan</h3>
+              <div class="flds">
+                <div class="fld">
+                  <label for="buyer">Nama penerima</label>
+                  <input id="buyer" name="buyer" maxlength="120" autocomplete="off" placeholder="Nama di paket">
+                </div>
+                <div class="fld">
+                  <label for="buyerPhone">Nomor telepon</label>
+                  <input id="buyerPhone" name="buyerPhone" type="tel" maxlength="40" autocomplete="off" placeholder="08...">
+                </div>
+                <div class="fld">
+                  <label for="carrier">Kurir</label>
+                  <select id="carrier" name="carrier">
+                    <option value="">Belum ditentukan</option>
+                    ${MANUAL_CARRIERS.map((name) => `<option value="${escape(name)}">${escape(name)}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <div class="flds flds--one">
+                <div class="fld">
+                  <label for="shipTo">Alamat</label>
+                  <textarea id="shipTo" name="shipTo" rows="2" maxlength="400"
+                            placeholder="Jalan, kelurahan, kecamatan, kota, provinsi, kode pos"></textarea>
                 </div>
               </div>
               <datalist id="mxcontacts">${
@@ -2081,8 +2113,22 @@ export function renderManual({
     if (e.target === codeField) codeIsOurs = false;
     total();
   });
+  /**
+   * Picking a product fills its price, once.
+   *
+   * Only into an empty field: the operator who typed a consignment discount and then
+   * corrected the product should not watch their number vanish.
+   */
+  function fillPrice(select) {
+    var row = select.closest('[data-row]');
+    var field = row.querySelector('[name="unitPrice"]');
+    var option = select.options[select.selectedIndex];
+    var price = option ? Number(option.dataset.price) : 0;
+    if (price > 0 && !field.value) field.value = price;
+  }
+
   form.addEventListener('change', function (e) {
-    if (e.target.name === 'sku') showPicture(e.target.closest('[data-row]'));
+    if (e.target.name === 'sku') { showPicture(e.target.closest('[data-row]')); fillPrice(e.target); }
     if (e.target.name === 'source') {
       customer.placeholder = e.target.dataset.label;
       refreshCode();

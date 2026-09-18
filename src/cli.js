@@ -29,6 +29,7 @@ import { removeDuplicates } from './mekari/dedupe.js';
 import { reconcileLedger } from './mekari/reconcile.js';
 import { settleOpenInvoices } from './mekari/settle.js';
 import { dailyRecap } from './mekari/recap.js';
+import { syncShopifyPrices } from './shopify/prices.js';
 import { redateInvoices } from './mekari/redate.js';
 import { repoolPayments } from './mekari/repool.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
@@ -939,6 +940,21 @@ async function cmdNotifyTest() {
  * first request and every product showed "tanpa gambar" for a week for a reason that had
  * nothing to do with the pictures.
  */
+/**
+ * Copy Shopify's prices into our own store, where the manual form can read them without
+ * waiting on Shopify - or being blocked by it.
+ */
+async function cmdShopifyPrices() {
+  const t0 = Date.now();
+  const { written, skipped, unknown, syncedAt } = await syncShopifyPrices();
+  console.log(`\n  ${written} SKU berharga dari Shopify  ·  ${skipped} varian dilewati  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
+  if (unknown.length > 0) {
+    console.log(`  ${warn(`${unknown.length} SKU master tanpa harga Shopify: ${unknown.slice(0, 6).join(', ')}${unknown.length > 6 ? '...' : ''}`)}`);
+  }
+  console.log(`  ${ok(`harga tersimpan ${new Date(syncedAt * 1000).toISOString()}`)}\n`);
+  return 0;
+}
+
 async function cmdImages() {
   const t0 = Date.now();
   const { total, changed, unknown } = await refreshImageManifest();
@@ -1481,6 +1497,7 @@ const COMMANDS = {
   'hooks:recover': cmdHooksRecover,
   'notify:test': cmdNotifyTest,
   images: cmdImages,
+  'shopify:prices': cmdShopifyPrices,
   'mekari:images': cmdMekariImages,
   'mekari:coa': cmdMekariCoa,
   'mekari:restate': cmdMekariRestate,

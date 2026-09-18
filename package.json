@@ -57,6 +57,7 @@
     "hooks:recover": "node bin/tts.mjs hooks:recover",
     "notify:test": "node bin/tts.mjs notify:test",
     "images": "node bin/tts.mjs images",
+    "shopify:prices": "node bin/tts.mjs shopify:prices",
     "mekari:images": "node bin/tts.mjs mekari:images",
     "mekari:coa": "node bin/tts.mjs mekari:coa",
     "mekari:restate": "node bin/tts.mjs mekari:restate",

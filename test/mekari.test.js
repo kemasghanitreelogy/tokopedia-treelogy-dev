@@ -299,7 +299,7 @@ test('due date is the transaction date plus the term, in WIB', () => {
 
 /* ------------------------------------------------------- transaksi manual */
 
-const { buildManualOrder, suggestCode, SOURCE_OPTIONS, SELLABLE, withAuthor } = await import('../src/mekari/manual.js');
+const { buildManualOrder, suggestCode, SOURCE_OPTIONS, SELLABLE, withAuthor, MANUAL_CARRIERS } = await import('../src/mekari/manual.js');
 
 test('the manual memo names who typed the sale in, so the Jurnal invoice carries its own provenance', () => {
   assert.equal(withAuthor('titip di toko A', 'Dewi'), 'titip di toko A - ditambahkan oleh Dewi');
@@ -1347,4 +1347,27 @@ test('reserving a sequence number under concurrency never hands out the same one
   assert.equal(await peekManualSequence(), 202, 'the counter only moves forward');
   await deleteDoc(SEQUENCE_DOC);
   await closeStore();
+});
+
+test('a manual sale can carry who the parcel goes to, and how', () => {
+  const order = buildManualOrder(manual({
+    buyer: 'Dewi Lestari', buyerPhone: '0812-3456-7890',
+    shipTo: 'Jln. Belida 1, Tenggarong, Kalimantan Timur, 75511',
+    carrier: 'Lion Parcel',
+  }));
+  assert.equal(order.buyer, 'Dewi Lestari');
+  assert.equal(order.buyerPhone, '0812-3456-7890');
+  assert.match(order.shipTo, /Tenggarong/);
+  assert.equal(order.carrier, 'Lion Parcel');
+
+  // Left empty they simply are not there; the invoice never needed them.
+  const bare = buildManualOrder(manual());
+  assert.equal(bare.buyer, '');
+  assert.equal(bare.carrier, '');
+
+  // A courier spelled by hand is refused, because three spellings are three couriers.
+  assert.throws(() => buildManualOrder(manual({ carrier: 'jne reguler' })), /tidak ada di daftar/);
+  assert.throws(() => buildManualOrder(manual({ shipTo: 'x'.repeat(401) })), /alamat terlalu panjang/);
+  assert.ok(MANUAL_CARRIERS.includes('Grab Express Instant'));
+  assert.ok(MANUAL_CARRIERS.includes('DHL Express'));
 });

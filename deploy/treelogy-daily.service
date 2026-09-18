@@ -24,6 +24,7 @@ ExecStart=/usr/bin/node bin/tts.mjs history:pull
 # pertamanya - dashboard lalu menampilkan "tanpa gambar" untuk semua produk karena alasan
 # yang sama sekali tidak ada hubungannya dengan gambar.
 ExecStart=-/usr/bin/node bin/tts.mjs images
+ExecStart=-/usr/bin/node bin/tts.mjs shopify:prices
 ExecStart=-/usr/bin/node bin/tts.mjs mekari:images --yes
 # Forecast last: it reads the history the pull just refreshed, and the stock the
 # catalogues report. Failing here must not stop the backup below it.

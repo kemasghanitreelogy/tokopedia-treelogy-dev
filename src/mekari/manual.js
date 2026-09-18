@@ -134,6 +134,22 @@ export const withAuthor = (note, addedBy) => {
   return note ? `${note} - ditambahkan oleh ${name}` : `ditambahkan oleh ${name}`;
 };
 
+/**
+ * The couriers this shop actually books for a sale it took by hand.
+ *
+ * A fixed list rather than free text: the same courier spelled three ways is three
+ * couriers to anyone reading the books back, and nobody types "Grab Express Instant"
+ * the same way twice.
+ */
+export const MANUAL_CARRIERS = [
+  'Grab Express Instant',
+  'Lion Parcel',
+  'JNE',
+  'J&T',
+  'PAXEL',
+  'DHL Express',
+];
+
 export function buildManualOrder(input) {
   const source = String(input.source ?? '').trim().toUpperCase();
   if (!isManualSource(source)) throw new InvoiceError(`sumber "${source}" bukan sumber manual`);
@@ -181,6 +197,18 @@ export function buildManualOrder(input) {
   const customer = String(input.customer ?? '').trim() || PREFIXES[source].label;
   if (customer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
 
+  // Who the parcel goes to, which is not always who the invoice is billed to: a
+  // consignment is billed to the shop and delivered to the shop's address, but a
+  // WhatsApp sale is billed to a name and delivered to a house.
+  const buyer = String(input.buyer ?? '').trim();
+  if (buyer.length > 120) throw new InvoiceError('nama penerima terlalu panjang');
+  const buyerPhone = String(input.buyerPhone ?? '').trim();
+  if (buyerPhone.length > 40) throw new InvoiceError('nomor telepon terlalu panjang');
+  const shipTo = String(input.shipTo ?? '').trim();
+  if (shipTo.length > 400) throw new InvoiceError('alamat terlalu panjang');
+  const carrier = String(input.carrier ?? '').trim();
+  if (carrier && !MANUAL_CARRIERS.includes(carrier)) throw new InvoiceError(`kurir "${carrier}" tidak ada di daftar`);
+
   return {
     channel: 'manual',
     id: code,
@@ -190,8 +218,10 @@ export function buildManualOrder(input) {
     createdAt,
     source,
     customer,
-    buyer: String(input.buyer ?? '').trim(),
-    carrier: String(input.carrier ?? '').trim(),
+    buyer,
+    buyerPhone,
+    shipTo,
+    carrier,
     tracking: '',
     total: lines.reduce((n, l) => n + (l.unitPrice - l.unitDiscount) * l.qty, 0) + shipping,
     currency: 'IDR',

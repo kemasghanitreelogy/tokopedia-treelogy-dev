@@ -159,7 +159,7 @@ const STYLE = `
 .um__smtp.is-ok{color:var(--good); border-color:color-mix(in srgb,var(--good) 40%,transparent); background:color-mix(in srgb,var(--good) 10%,transparent)}
 .um__smtp.is-off{color:var(--warn); border-color:color-mix(in srgb,var(--warn) 45%,transparent); background:color-mix(in srgb,var(--warn) 10%,transparent)}
 
-.um__invite{position:sticky; top:1rem; padding:1.25rem}
+.um__invite{position:sticky; top:var(--top-offset); padding:1.25rem}
 .um__invite-h{display:flex; gap:.75rem; align-items:center; margin-bottom:1.1rem}
 .um__invite-h h2{margin:0; font-size:1rem; font-weight:600; letter-spacing:-.01em}
 .um__invite-ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center; flex:none; color:#fff;
@@ -176,9 +176,11 @@ const STYLE = `
 .um__opt-b{display:flex; flex-direction:column; gap:.1rem; font-size:.82rem; line-height:1.35}
 .um__opt-b small{font-size:.72rem; color:var(--muted)}
 .um__go{display:inline-flex; align-items:center; justify-content:center; gap:.5rem; font:inherit; font-size:.9rem; font-weight:600;
-  padding:.65rem 1rem; min-height:44px; border-radius:10px; cursor:pointer; color:#fff; border:1px solid transparent;
-  background:linear-gradient(155deg,var(--fill-a),var(--fill-b)); transition:filter var(--t-base) var(--ease-out)}
-.um__go:hover{filter:brightness(1.12)}
+  padding:.65rem 1.1rem; min-height:46px; border-radius:999px; cursor:pointer; color:#fff; border:1px solid transparent;
+  background:linear-gradient(155deg,var(--cta-a),var(--cta-b));
+  box-shadow:0 1px 0 rgba(255,255,255,.14) inset, 0 12px 26px -14px color-mix(in srgb,var(--cta-a) 85%,transparent);
+  transition:filter var(--t-base) var(--ease-out)}
+.um__go:hover{filter:brightness(1.08)}
 .um__go:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .um__go .ico{width:18px; height:18px}
 

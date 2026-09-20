@@ -199,7 +199,7 @@ const STYLE = `
 
 .ac__day{border-top:1px solid var(--line)}
 .ac__day:first-of-type{border-top:0}
-.ac__day-h{position:sticky; top:0; z-index:2; margin:0; padding:.55rem 1rem; display:flex; align-items:center; gap:.6rem;
+.ac__day-h{position:sticky; top:calc(var(--top-offset) - .75rem); z-index:2; margin:0; padding:.55rem 1rem; display:flex; align-items:center; gap:.6rem;
   font-size:.74rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
   background:color-mix(in srgb,var(--panel-2) 92%,transparent); backdrop-filter:blur(6px); border-bottom:1px solid var(--line)}
 .ac__day-n{font-family:"Fira Code",ui-monospace,monospace; font-weight:500; letter-spacing:0; padding:.05rem .4rem; border-radius:5px;

@@ -16,25 +16,29 @@ const head = (title) => `<!doctype html><html lang="id"><head>
 <title>${escape(title)} &mdash; Omnichannel Treelogy</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="mask-icon" href="/favicon.svg" color="#526547">
-<meta name="theme-color" content="#141A17" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#F4F5F0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1E2A27" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F3F4EF" media="(prefers-color-scheme: light)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <style>
-:root{--bg:#141A17;--panel:#1B2320;--panel-2:#222B27;--line:#2E3A34;--fg:#F1F3EE;--muted:#A7B3A6;--dim:#839187;
-  --brand:#8FA97F;--fill-a:#5E7352;--fill-b:#3C4C36;--good:#6FBF8B;--warn:#E2B252;--bad:#E08573;
+:root{--bg:#121A18;--bg-2:#1E2A27;--glow:#526547;--accent:#3FB8A4;--panel:#1A2320;--panel-2:#222D29;--line:#2C3934;
+  --glass:rgba(255,255,255,.06);--glass-line:rgba(255,255,255,.1);--fg:#F1F3EE;--muted:#A7B3A6;--dim:#839187;
+  --brand:#8FA97F;--fill-a:#5E7352;--fill-b:#3C4C36;--cta-a:#C2531C;--cta-b:#9E4216;--good:#6FBF8B;--warn:#E2B252;--bad:#E08573;
   --ease-out:cubic-bezier(.25,1,.5,1);--t-fast:160ms;--t-base:240ms;color-scheme:dark}
-@media (prefers-color-scheme:light){:root{--bg:#F4F5F0;--panel:#FFF;--panel-2:#F8F8F2;--line:#E1E4DA;--fg:#1E2A24;--muted:#57655A;
-  --dim:#67776C;--brand:#526547;--fill-a:#526547;--fill-b:#3C4C36;--good:#2F7D4F;--warn:#8A5A12;--bad:#A8412E;color-scheme:light}}
+@media (prefers-color-scheme:light){:root{--bg:#E8EBE4;--bg-2:#F3F4EF;--glow:#8FA97F;--accent:#0E7A6B;--panel:#FFF;--panel-2:#F3F5EF;--line:#DADFD3;
+  --glass:rgba(255,255,255,.7);--glass-line:rgba(30,42,36,.1);--fg:#1B2621;--muted:#4F5D53;
+  --dim:#66746A;--brand:#526547;--fill-a:#526547;--fill-b:#3C4C36;--cta-a:#B9491A;--cta-b:#8F3812;--good:#2F7D4F;--warn:#8A5A12;--bad:#A8412E;color-scheme:light}}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1.5rem;background:var(--bg);color:var(--fg);
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1.5rem;color:var(--fg);background-color:var(--bg);
+  background-image:radial-gradient(70rem 34rem at 8% -12%,color-mix(in srgb,var(--glow) 30%,transparent),transparent 62%),
+    radial-gradient(48rem 26rem at 104% 4%,color-mix(in srgb,var(--accent) 12%,transparent),transparent 60%),
+    linear-gradient(180deg,var(--bg-2),var(--bg));
   font:400 15px/1.6 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-body::before{content:'';position:fixed;inset:-20% -20% auto;height:60vh;pointer-events:none;z-index:-1;
-  background:radial-gradient(60% 70% at 50% 0%,color-mix(in srgb,var(--brand) 14%,transparent),transparent 70%)}
-.card{width:100%;max-width:26rem;padding:2.25rem;background:var(--panel);border:1px solid var(--line);border-radius:18px;
-  box-shadow:0 1px 2px rgba(0,0,0,.3),0 24px 48px -28px rgba(0,0,0,.55);animation:rise 420ms var(--ease-out) both}
-.mark{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;margin:0 auto 1.1rem;color:#fff;
+.card{width:100%;max-width:26rem;padding:2.25rem;background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border:1px solid var(--glass-line);border-radius:22px;
+  box-shadow:0 1px 2px rgba(0,0,0,.3),0 30px 60px -30px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.06);animation:rise 420ms var(--ease-out) both}
+.mark{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;margin:0 auto 1.1rem;color:#fff;
   background:linear-gradient(155deg,var(--fill-a),var(--fill-b))}
 .mark .ico{width:22px;height:22px}
 h1{margin:0 0 .3rem;font-size:1.15rem;font-weight:600;text-align:center;letter-spacing:-.01em}
@@ -67,10 +71,11 @@ input[aria-invalid="true"]{border-color:color-mix(in srgb,var(--bad) 60%,transpa
 .meter[data-n="4"] i{background:var(--good)}
 .hint{margin:.35rem 0 0;font-size:.74rem;color:var(--dim);min-height:1.2em}
 .hint.is-bad{color:var(--bad)} .hint.is-ok{color:var(--good)}
-button.go{width:100%;margin-top:1.25rem;font:inherit;font-size:.95rem;font-weight:600;padding:.75rem;min-height:46px;border-radius:11px;
-  cursor:pointer;color:#fff;border:1px solid transparent;background:linear-gradient(155deg,var(--fill-a),var(--fill-b));
+button.go{width:100%;margin-top:1.25rem;font:inherit;font-size:.95rem;font-weight:600;padding:.75rem;min-height:46px;border-radius:999px;
+  cursor:pointer;color:#fff;border:1px solid transparent;background:linear-gradient(155deg,var(--cta-a),var(--cta-b));
+  box-shadow:0 1px 0 rgba(255,255,255,.14) inset,0 12px 26px -14px color-mix(in srgb,var(--cta-a) 85%,transparent);
   transition:filter var(--t-base) var(--ease-out),opacity var(--t-base)}
-button.go:hover{filter:brightness(1.12)}
+button.go:hover{filter:brightness(1.08)}
 button.go:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 button.go:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .err{margin:0 0 1rem;padding:.6rem .8rem;border-radius:10px;font-size:.84rem;color:var(--bad);display:flex;gap:.5rem;align-items:flex-start;

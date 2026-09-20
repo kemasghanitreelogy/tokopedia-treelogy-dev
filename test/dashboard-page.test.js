@@ -338,15 +338,16 @@ test('every page carries the Treelogy palette and typeface, never the old one', 
   }
 });
 
-test('a gradient that carries white text uses the deep fill, not the light sage', () => {
+test('a gradient that carries white text uses a fill that can carry it', () => {
   // White on #8FA97F is 2.58:1 - unreadable. A gradient is only as legible as its
-  // lightest stop, so any fill behind white text uses --fill-a/--fill-b. A 2px progress
+  // lightest stop, so any fill behind white text uses the deep sage (--fill-a/--fill-b)
+  // or the commit orange (--cta-a/--cta-b, 4.6:1 at its lightest stop). A 2px progress
   // bar carries no text and is exempt.
   for (const [name, html] of pages()) {
     const rules = [...html.matchAll(/\{[^{}]*linear-gradient\([^)]*\)[^{}]*\}/g)].map((m) => m[0]);
     for (const rule of rules) {
       if (!/color:\s*#fff/i.test(rule)) continue;
-      assert.match(rule, /var\(--fill-a\)/, `${name} puts white text on a non-fill gradient`);
+      assert.match(rule, /var\(--(fill|cta)-a\)/, `${name} puts white text on a non-fill gradient`);
     }
   }
 });

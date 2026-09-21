@@ -398,11 +398,13 @@ async function handleWrite(form, ip, user) {
       }
     }
     invalidate('reviews');
+    // Both readers hand back the new reviews themselves, not a count.
+    const newOf = (r) => (Array.isArray(r.added) ? r.added.length : Number(r.added) || 0);
     const said = Object.entries(outcomes).map(([channel, r]) => (r.error
       ? `${REVIEW_CHANNELS[channel].label} gagal (${r.error})`
-      : `${REVIEW_CHANNELS[channel].label} +${r.added ?? 0} baru`)).join(', ');
+      : `${REVIEW_CHANNELS[channel].label} +${newOf(r)} baru`)).join(', ');
     const failed = Object.values(outcomes).filter((r) => r.error).length;
-    const added = Object.values(outcomes).reduce((n, r) => n + (r.added ?? 0), 0);
+    const added = Object.values(outcomes).reduce((n, r) => n + (r.error ? 0 : newOf(r)), 0);
     if (failed === 2) throw new Error(said);
     return {
       view: 'reviews',
@@ -411,7 +413,7 @@ async function handleWrite(form, ip, user) {
       audit: {
         menu: 'reviews', verb: 'sync', target: 'Tokopedia + Shopee',
         summary: `Mengambil ulasan baru: ${said}`,
-        changes: Object.entries(outcomes).map(([channel, r]) => ({ field: REVIEW_CHANNELS[channel].label, to: r.error ? `gagal: ${r.error}` : `${r.total ?? 0} tersimpan, ${r.added ?? 0} baru` })),
+        changes: Object.entries(outcomes).map(([channel, r]) => ({ field: REVIEW_CHANNELS[channel].label, to: r.error ? `gagal: ${r.error}` : `${r.total ?? 0} tersimpan, ${newOf(r)} baru` })),
       },
       ...(added > 0 ? { celebrate: `${added} ulasan baru` } : {}),
     };

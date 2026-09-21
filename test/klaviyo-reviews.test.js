@@ -24,17 +24,21 @@ test('every SKU the shop has ever sold lands on one Shopify product, sets on wha
   assert.equal(klaviyoProductFor({ sku: null, productName: '(FREE GIFT - DO NOT ORDER) Treelogy Gift with Purchase' }), null, 'a gift line names no product');
 });
 
-test('the reviewer mailbox is ours, one per channel unless asked otherwise', () => {
-  assert.equal(reviewerEmail(review()), 'shopee@ulasan.treelogy.com');
-  assert.equal(reviewerEmail(review({ channel: 'tokopedia' })), 'tokopedia@ulasan.treelogy.com');
-  assert.equal(reviewerEmail(review({ channel: 'tokopedia', reviewerId: '2405911' }), { perReviewer: true }), 'tokopedia-2405911@ulasan.treelogy.com');
-  assert.equal(reviewerEmail(review({ reviewerName: 'Dewi L.' }), { perReviewer: true }), 'shopee-dewi-l@ulasan.treelogy.com');
+test('the reviewer address is ours, one per reviewer, or one per channel when asked', () => {
+  // One per channel made Klaviyo fold every star-only review into the last one it saw.
+  assert.equal(reviewerEmail(review()), 'shopee-schintyaaa23@ulasan.treelogy.com');
+  assert.equal(reviewerEmail(review({ channel: 'tokopedia', reviewerId: '2405911' })), 'tokopedia-2405911@ulasan.treelogy.com');
+  assert.equal(reviewerEmail(review({ reviewerName: 'Dewi L.' })), 'shopee-dewi-l@ulasan.treelogy.com');
+  assert.equal(reviewerEmail(review(), { perReviewer: false }), 'shopee@ulasan.treelogy.com');
+  assert.equal(reviewerEmail(review({ channel: 'tokopedia' }), { perReviewer: false }), 'tokopedia@ulasan.treelogy.com');
 });
 
 test('images are served from where they will still exist when Klaviyo fetches them', () => {
   assert.deepEqual(imageUrls(review()), ['https://mms.img.susercontent.com/a']);
   const tokped = review({ channel: 'tokopedia', images: [{ id: '200509029', thumbnail: 'https://p16-images-sign-sg.tokopedia-static.net/x?x-expires=1', full: 'https://p19-images-sign-sg.tokopedia-static.net/y?x-expires=1' }] });
-  assert.deepEqual(imageUrls(tokped, 'https://api.treelogy-services.my.id'), ['https://api.treelogy-services.my.id/api/tokopedia/media?id=200509029&s=full']);
+  // Signed, because Klaviyo fetches with no session: 209 photos were "invalid image" without it.
+  assert.deepEqual(imageUrls(tokped, 'https://api.treelogy-services.my.id', (id, size) => `sig-${id}-${size}`),
+    ['https://api.treelogy-services.my.id/api/tokopedia/media?id=200509029&s=full&sig=sig-200509029-full']);
 });
 
 test('the CSV is the template, column for column, with quotes and dates Klaviyo reads', () => {
@@ -43,11 +47,11 @@ test('the CSV is the template, column for column, with quotes and dates Klaviyo 
   assert.equal(lines[0], KLAVIYO_COLUMNS.join(','));
   assert.equal(lines.length, 3);
   const [first, second] = lines.slice(1);
-  assert.ok(first.startsWith(`${KLAVIYO_PRODUCTS.oil.id},organic-moringa-oil,OMO-60-001,Organic Moringa Cold-Pressed Seed Oil,shopee@ulasan.treelogy.com,schintyaaa23,5,,`), first);
+  assert.ok(first.startsWith(`${KLAVIYO_PRODUCTS.oil.id},organic-moringa-oil,OMO-60-001,Organic Moringa Cold-Pressed Seed Oil,shopee-schintyaaa23@ulasan.treelogy.com,schintyaaa23,5,,`), first);
   assert.ok(first.includes('"Sangat bermanfaat, ""wangi"" dan cepat meresap"'), 'quotes and commas are escaped the CSV way');
   assert.ok(first.includes(',2026-09-11 09:03:36,Published,Yes,https://mms.img.susercontent.com/a,,'), 'the date is one Klaviyo accepts');
   assert.ok(first.includes(',2026-09-12 02:34:06,ID,false,id-ID'));
-  assert.ok(second.startsWith(',,,,tokopedia@ulasan.treelogy.com,Pembeli,4,,,2025-05-12 22:02:25,Published,Yes,,,,,ID,true,id-ID'), second);
+  assert.ok(second.startsWith(',,,,tokopedia-schintyaaa23@ulasan.treelogy.com,Pembeli,4,,,2025-05-12 22:02:25,Published,Yes,,,,,ID,true,id-ID'), second);
   // A set's own SKU is not a Shopify SKU, so the product's lead SKU goes in its place.
   const set = klaviyoRows([review({ sku: 'The-Inside-&-Out60', videos: [{ id: 'v', url: 'https://cf.shopee.co.id/v.mp4' }] })])[0];
   assert.equal(set.product_handle, 'moringa-inside-out-protocol');
@@ -58,4 +62,20 @@ test('the CSV is the template, column for column, with quotes and dates Klaviyo 
   assert.equal(summary.total, 3);
   assert.equal(summary.unmapped, 1);
   assert.equal(summary.byProduct['Organic Moringa Capsules'], 1);
+});
+
+test('a signed photo URL opens for that photo and no other', async () => {
+  const { mediaSignature, mediaSignatureMatches } = await import('../src/dashboard-auth.js');
+  const had = process.env.DASHBOARD_TOKEN;
+  process.env.DASHBOARD_TOKEN = 'kunci-uji-yang-panjang';
+  try {
+    const sig = mediaSignature('200509029', 'full');
+    assert.match(sig, /^[A-Za-z0-9_-]{24}$/);
+    assert.ok(mediaSignatureMatches('200509029', 'full', sig));
+    assert.ok(!mediaSignatureMatches('200509030', 'full', sig), 'another photo');
+    assert.ok(!mediaSignatureMatches('200509029', 'thumb', sig), 'another size');
+    assert.ok(!mediaSignatureMatches('200509029', 'full', ''), 'no signature at all');
+  } finally {
+    if (had === undefined) delete process.env.DASHBOARD_TOKEN; else process.env.DASHBOARD_TOKEN = had;
+  }
 });

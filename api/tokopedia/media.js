@@ -1,4 +1,4 @@
-import { parseCookies, sessionValid, tokenMatches, COOKIE_NAME } from '../../src/dashboard-auth.js';
+import { parseCookies, sessionValid, tokenMatches, mediaSignatureMatches, COOKIE_NAME } from '../../src/dashboard-auth.js';
 import { loadAllReviews } from '../../src/reviews/combined.js';
 import { readCached, fetchMedia, attachmentIndex, safeId, safeSize } from '../../src/tokopedia/media.js';
 import { cached } from '../../src/cache.js';
@@ -19,13 +19,16 @@ export default async function handler(req, res) {
   };
 
   if (req.method !== 'GET') return fail(405, 'GET saja');
-  const session = parseCookies(req.headers.cookie)[COOKIE_NAME];
-  const key = url.searchParams.get('key');
-  if (!(await sessionValid(session)) && !(key !== null && tokenMatches(key))) return fail(401, 'butuh sesi dashboard');
-
   const id = safeId(url.searchParams.get('id'));
   const size = safeSize(url.searchParams.get('s') ?? 'thumb');
   if (!id || !size) return fail(400, 'id atau ukuran tidak valid');
+
+  // A dashboard session, the token, or a signature for this one photo (the Klaviyo
+  // import file carries those, because Klaviyo fetches with neither cookie nor key).
+  const session = parseCookies(req.headers.cookie)[COOKIE_NAME];
+  const key = url.searchParams.get('key');
+  const signed = mediaSignatureMatches(id, size, url.searchParams.get('sig'));
+  if (!signed && !(await sessionValid(session)) && !(key !== null && tokenMatches(key))) return fail(401, 'butuh sesi dashboard');
 
   let media = await readCached(id, size);
   if (!media) {
@@ -44,8 +47,8 @@ export default async function handler(req, res) {
   res.setHeader('Content-Type', media.type);
   res.setHeader('Content-Length', media.bytes.length);
   // The file under an attachment id never changes, so a day of browser cache is safe;
-  // private because the URL is behind the dashboard session.
-  res.setHeader('Cache-Control', 'private, max-age=86400');
+  // private behind the dashboard session, public when the URL carries its own signature.
+  res.setHeader('Cache-Control', `${signed ? 'public' : 'private'}, max-age=86400`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.end(media.bytes);
 }

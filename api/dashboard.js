@@ -940,7 +940,7 @@ export default async function handler(req, res) {
       // The Klaviyo file: whatever the filters left, in the import template. Logged like
       // a print, because a file of two thousand reviews left the building.
       if (url.searchParams.get('export') === 'klaviyo') {
-        const perReviewer = url.searchParams.get('email') === 'per-reviewer';
+        const perReviewer = url.searchParams.get('email') !== 'shared';
         const csv = toKlaviyoCsv(reviews, { perReviewer });
         const summary = klaviyoSummary(reviews);
         await recordActivity({

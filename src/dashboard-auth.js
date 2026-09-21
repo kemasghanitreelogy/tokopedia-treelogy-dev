@@ -64,6 +64,25 @@ export async function login(email, password) {
 }
 
 /** The bookmark key: the long random token still opens the dashboard as the owner. */
+/**
+ * A signature that lets one review photo be fetched without a session.
+ *
+ * Klaviyo fetches review images from wherever the import file points, with no cookie
+ * and no key, so the file needs a URL that is public for that one photo and useless
+ * for any other. The signature is the signing key over the attachment id and size;
+ * without the key it cannot be forged, and it says nothing about anything but that file.
+ */
+export function mediaSignature(id, size) {
+  const { signingKey } = credentials();
+  if (!signingKey) return '';
+  return crypto.createHmac('sha256', signingKey).update(`media:${id}:${size}`).digest('base64url').slice(0, 24);
+}
+
+export function mediaSignatureMatches(id, size, provided) {
+  const expected = mediaSignature(id, size);
+  return Boolean(expected) && constantTimeEqual(String(provided ?? ''), expected);
+}
+
 export function tokenMatches(provided) {
   const { signingKey } = credentials();
   if (!signingKey) return false;

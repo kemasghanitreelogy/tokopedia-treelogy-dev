@@ -1,4 +1,5 @@
 import { publicBaseUrl } from '../config.js';
+import { mediaSignature } from '../dashboard-auth.js';
 
 /**
  * Marketplace reviews, in the shape Klaviyo Reviews imports.
@@ -13,10 +14,12 @@ import { publicBaseUrl } from '../config.js';
  * Two things a marketplace never gives us are still required by the template:
  *
  * - `reviewer_email`. Tokopedia and Shopee disclose a display name and nothing else. The
- *   file therefore carries a mailbox we control, one per channel by default, so every
- *   imported review hangs off two profiles rather than two thousand invented ones: Klaviyo
- *   bills by active profile, and a review shows the reviewer's name, not the address.
- *   `perReviewer` gives each reviewer their own address under the same domain instead.
+ *   file therefore carries an address we control, one per reviewer, under a domain of
+ *   ours. One per channel was tried first and Klaviyo folded 1,513 star-only reviews into
+ *   each other as duplicates - same address, same product, same empty text - so each
+ *   reviewer gets their own. Klaviyo bills by active profile, which is why the profiles
+ *   this creates are suppressed afterwards; a review shows the reviewer's name, never the
+ *   address. `perReviewer: false` gives the one-per-channel file back.
  * - `product_id`. Klaviyo matches it against the Shopify product ID exactly. The map
  *   below is the decision of which product a marketplace SKU is a review of; a bundle or
  *   a set is credited to the product it is built around.
@@ -83,7 +86,7 @@ const CHANNEL_LABEL = { tokopedia: 'Tokopedia', shopee: 'Shopee' };
 const slug = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'anonim';
 
 /** The mailbox a review is filed under; see the header for why it is not the reviewer's. */
-export function reviewerEmail(review, { domain = 'ulasan.treelogy.com', perReviewer = false } = {}) {
+export function reviewerEmail(review, { domain = 'ulasan.treelogy.com', perReviewer = true } = {}) {
   const channel = review.channel ?? 'tokopedia';
   if (!perReviewer) return `${channel}@${domain}`;
   const who = review.reviewerId && review.reviewerId !== '0' ? review.reviewerId : slug(review.reviewerName);
@@ -92,13 +95,16 @@ export function reviewerEmail(review, { domain = 'ulasan.treelogy.com', perRevie
 
 const stamp = (iso) => (iso ? String(iso).replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '') : '');
 
-/** Image URLs Klaviyo can fetch: ours for Tokopedia (theirs expire), Shopee's own CDN for Shopee. */
-export function imageUrls(review, base = publicBaseUrl()) {
-  return (review.images ?? []).map((image) => (
-    review.channel === 'shopee' || /^https?:\/\/(mms|cf|down-)/.test(image.full ?? '')
-      ? image.full
-      : `${base}/api/tokopedia/media?id=${encodeURIComponent(image.id)}&s=full`
-  )).filter(Boolean);
+/**
+ * Image URLs Klaviyo can fetch: ours for Tokopedia (theirs expire), signed so they open
+ * without a session; Shopee's own CDN for Shopee.
+ */
+export function imageUrls(review, base = publicBaseUrl(), sign = mediaSignature) {
+  return (review.images ?? []).map((image) => {
+    if (review.channel === 'shopee' || /^https?:\/\/(mms|cf|down-)/.test(image.full ?? '')) return image.full;
+    const sig = sign(image.id, 'full');
+    return `${base}/api/tokopedia/media?id=${encodeURIComponent(image.id)}&s=full${sig ? `&sig=${sig}` : ''}`;
+  }).filter(Boolean);
 }
 
 export const KLAVIYO_COLUMNS = [
@@ -128,7 +134,7 @@ export function klaviyoRows(reviews, options = {}) {
       status: 'Published',
       // Every marketplace review sits on an order the marketplace itself verified.
       verified: 'Yes',
-      image_urls: imageUrls(review, options.base).join(','),
+      image_urls: imageUrls(review, options.base, options.sign).join(','),
       video_urls: videoUrls(review).join(','),
       reply_content: String(review.reply?.text ?? '').trim(),
       reply_date: stamp(review.reply?.at),

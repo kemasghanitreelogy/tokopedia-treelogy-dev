@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
-import { PREFIXES } from '../mekari/prefix.js';
 
 /**
  * The packing label for a Shopify order, drawn here rather than fetched.
@@ -154,8 +153,16 @@ function houseMark() {
   return houseBytes;
 }
 
-/** What the label calls the channel: the marketplace, or the source a typed-in sale was typed in for. */
-export const labelHeading = (order) => (order?.channel === 'manual' ? (PREFIXES[order.source]?.label ?? 'Manual') : 'Shopify');
+/**
+ * The word beside the mark.
+ *
+ * A marketplace parcel names its marketplace, which is what the bench sorts by. A sale
+ * typed in by hand names nothing: "WhatsApp / direct sales" is how we classify the sale
+ * in our own books, and this sheet is taped to a box a customer opens. The Treelogy seal
+ * says everything the box needs to say, and the code under the barcode already carries
+ * the source for anyone packing it.
+ */
+export const labelHeading = (order) => (order?.channel === 'manual' ? '' : 'Shopify');
 
 export const SENDER = 'treelogy.com';
 export const UNBOXING_NOTICE = 'WAJIB Video Unboxing. Tanpa video unboxing, komplain tidak diterima.';
@@ -239,7 +246,8 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
     page.drawImage(mark, { x: pad, y: y - 5, width: markWidth, height: markHeight });
     wordX = pad + markWidth + 5;
   }
-  page.drawText(fit(bold, labelHeading(order), 13, inner - (wordX - pad) - 60), { x: wordX, y, size: 13, font: bold });
+  const heading = labelHeading(order);
+  if (heading) page.drawText(fit(bold, heading, 13, inner - (wordX - pad) - 60), { x: wordX, y, size: 13, font: bold });
   rightText('Pengiriman', { size: 7, at: y + 3, color: GRAY });
   y -= 13;
   const codWidth = 52;

@@ -179,14 +179,16 @@ test('a typed-in sale prints on the same sheet, under its source and the house m
     buyer: 'Dian Novitasari', buyerPhone: '0812-0000-0000', shipTo: 'Jl. Nakula Sadewa V No 15, Salatiga, Jawa Tengah 50722', carrier: 'Lion Parcel',
     lines: [{ sku: 'OMC-180-001', name: 'Moringa Capsules - 180 caps', variant: '', qty: 1 }], finance: { shipping: 0 },
   };
-  assert.equal(labelHeading(manual), 'WhatsApp / direct sales');
+  // The box a customer opens says Treelogy and nothing about how we classify the sale.
+  assert.equal(labelHeading(manual), '');
   assert.equal(labelHeading({ channel: 'shopify' }), 'Shopify');
   const bytes = await buildShopifyLabel(manual, { pick: '000000900', printedAt: 1789199999 });
   const pdf = pdfText(bytes);
-  for (const wanted of ['WhatsApp / direct sales', 'Dian Novitasari', 'Lion Parcel', 'DP-260921-00001AD', 'Salatiga']) {
+  for (const wanted of ['Dian Novitasari', 'Lion Parcel', 'DP-260921-00001AD', 'Salatiga']) {
     assert.ok(pdf.includes(wanted), `label tidak memuat ${wanted}`);
   }
   assert.ok(!pdf.includes('Shopify'), 'a typed-in parcel does not claim to be from Shopify');
+  assert.ok(!pdf.includes('direct sales'), 'nor does it print how we classify the sale');
   const noted = pdfText(await buildShopifyLabel({ ...manual, note: 'Bungkus kado - ditambahkan oleh Rindang' }, { pick: '000000901', printedAt: 1789199999 }));
   assert.ok(noted.includes('Bungkus kado') && !noted.includes('ditambahkan oleh'), 'the author suffix stays off the box');
 

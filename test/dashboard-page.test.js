@@ -833,6 +833,17 @@ test('the process page can select everything that still makes today van', async 
   assert.ok(!allEarly.includes('data-early>'), 'tombolnya tidak muncul kalau semua sama');
 });
 
+test('a success note leaves after two seconds, an error note stays', () => {
+  const ok = renderDashboard({ orders: [order], summary: summarize([order]), ...common, flash: { kind: 'ok', text: 'tersimpan' } });
+  assert.match(ok, /<div class="alert alert--ok" data-brief role="status">/);
+  assert.ok(ok.includes("querySelectorAll('.alert[data-brief]')"), 'the note is never scheduled to leave');
+  assert.ok(ok.includes('}, 2000);'), 'two seconds, as asked');
+  assert.ok(ok.includes("searchParams.delete('done')"), 'the done flag must be stripped so a reload cannot bring it back');
+  const bad = renderDashboard({ orders: [order], summary: summarize([order]), ...common, flash: { kind: 'error', text: 'gagal' } });
+  assert.match(bad, /<div class="alert " role="status">/);
+  assert.ok(!/<div class="alert [^>]*data-brief/.test(bad), 'an error must not disappear on its own');
+});
+
 test('a saved manual sale is celebrated once, and an ordinary flash is not', () => {
   const plain = renderDashboard({ orders: [order], summary: summarize([order]), ...common,
     flash: { kind: 'ok', text: 'CS-260921-0000070 tersimpan di Jurnal senilai Rp2.380.000' } });

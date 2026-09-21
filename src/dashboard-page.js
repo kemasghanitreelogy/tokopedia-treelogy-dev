@@ -419,7 +419,7 @@ export function shell({
     .join('');
 
   const notice = flash
-    ? `<div class="alert ${flash.kind === 'error' ? '' : 'alert--ok'}">${svg(flash.kind === 'error' ? 'warn' : 'check')}<span>${escape(flash.text)}</span></div>`
+    ? `<div class="alert ${flash.kind === 'error' ? '' : 'alert--ok'}"${flash.kind === 'error' ? '' : ' data-brief'} role="status">${svg(flash.kind === 'error' ? 'warn' : 'check')}<span>${escape(flash.text)}</span></div>`
     : '';
 
   // Every error the operator can do something about gets the one action that helps:
@@ -869,6 +869,8 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 .alert--ok{border-color:color-mix(in srgb,var(--good) 40%,transparent);
   background:color-mix(in srgb,var(--good) 12%,transparent)}
 .alert--ok .ico{color:var(--good)}
+/* A success note has said its piece after two seconds; an error stays until it is read. */
+.alert.is-going{animation:rise 260ms var(--ease-out) reverse both; pointer-events:none}
 
 .edit{display:flex; gap:.3rem; align-items:center; margin:0}
 .edit input{font:inherit; font-family:"Fira Code",ui-monospace,monospace; font-size:.82rem;
@@ -1630,6 +1632,23 @@ ${celebration(flash)}
     });
   }
   window.treelogyConfirm = ask;
+
+  // A green note is a receipt, not a warning: two seconds on screen, then it leaves, and
+  // its query flag goes with it so a reload does not bring it back. Errors stay put.
+  Array.prototype.forEach.call(document.querySelectorAll('.alert[data-brief]'), function (note) {
+    var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.setTimeout(function () {
+      note.classList.add('is-going');
+      window.setTimeout(function () { if (note.parentNode) note.parentNode.removeChild(note); }, calm ? 0 : 260);
+    }, 2000);
+  });
+  try {
+    var addr = new URL(window.location.href);
+    if (addr.searchParams.has('done')) {
+      addr.searchParams.delete('done');
+      window.history.replaceState(null, '', addr.pathname + addr.search + addr.hash);
+    }
+  } catch (e) {}
 
   // The celebration closes itself, on a click, on Escape or Enter, and takes its own
   // query flag out of the address bar so a reload or the back button cannot replay it.

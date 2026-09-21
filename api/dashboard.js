@@ -10,7 +10,9 @@ import { recordActivity, readActivity, actorsIn, MENUS } from '../src/audit.js';
 import { sendMail, isSmtpConfigured } from '../src/mail/smtp.js';
 import { invitationMail } from '../src/mail/invitation.js';
 import { publicBaseUrl } from '../src/config.js';
-import { selectReviews, reviewStats } from '../src/tokopedia/reviews.js';
+import { selectReviews, reviewStats, syncReviews as syncTokopediaReviews } from '../src/tokopedia/reviews.js';
+import { syncShopeeReviews } from '../src/shopee/reviews.js';
+import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
@@ -127,7 +129,7 @@ const readCatalogSafely = () =>
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
-  label_printed: 'labels',
+  label_printed: 'labels', reviews_sync: 'reviews',
   user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
 };
 const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_status', 'user_delete']);
@@ -381,6 +383,37 @@ async function handleWrite(form, ip, user) {
         summary: `Mengubah harga ${sku} menjadi Rp${price.toLocaleString('id-ID')} di ${ok} listing${failed.length ? `, ${failed.length} gagal` : ''}`,
         changes: results.map((r) => ({ field: `harga @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status === 'failed' ? r.error : '' })),
       },
+    };
+  }
+
+  if (action === 'reviews_sync') {
+    // The same two readers the nightly job runs, in quick mode: each walks newest-first
+    // and stops at the first review it already holds, so a fresh pull is a few requests.
+    const outcomes = {};
+    for (const [channel, run] of [['tokopedia', syncTokopediaReviews], ['shopee', syncShopeeReviews]]) {
+      try {
+        outcomes[channel] = await run({ quick: true, prefetch: true });
+      } catch (error) {
+        outcomes[channel] = { error: error.message };
+      }
+    }
+    invalidate('reviews');
+    const said = Object.entries(outcomes).map(([channel, r]) => (r.error
+      ? `${REVIEW_CHANNELS[channel].label} gagal (${r.error})`
+      : `${REVIEW_CHANNELS[channel].label} +${r.added ?? 0} baru`)).join(', ');
+    const failed = Object.values(outcomes).filter((r) => r.error).length;
+    const added = Object.values(outcomes).reduce((n, r) => n + (r.added ?? 0), 0);
+    if (failed === 2) throw new Error(said);
+    return {
+      view: 'reviews',
+      message: `Ulasan diperbarui: ${said}`,
+      kind: failed ? 'error' : 'ok',
+      audit: {
+        menu: 'reviews', verb: 'sync', target: 'Tokopedia + Shopee',
+        summary: `Mengambil ulasan baru: ${said}`,
+        changes: Object.entries(outcomes).map(([channel, r]) => ({ field: REVIEW_CHANNELS[channel].label, to: r.error ? `gagal: ${r.error}` : `${r.total ?? 0} tersimpan, ${r.added ?? 0} baru` })),
+      },
+      ...(added > 0 ? { celebrate: `${added} ulasan baru` } : {}),
     };
   }
 
@@ -902,6 +935,24 @@ export default async function handler(req, res) {
         sinceEpoch: days ? Math.floor(Date.now() / 1000) - days * 86400 : undefined,
         withText: filter.text,
       }) : [];
+      // The Klaviyo file: whatever the filters left, in the import template. Logged like
+      // a print, because a file of two thousand reviews left the building.
+      if (url.searchParams.get('export') === 'klaviyo') {
+        const perReviewer = url.searchParams.get('email') === 'per-reviewer';
+        const csv = toKlaviyoCsv(reviews, { perReviewer });
+        const summary = klaviyoSummary(reviews);
+        await recordActivity({
+          actor: user, ip, menu: 'reviews', action: 'export_klaviyo', verb: 'print', target: `${reviews.length} ulasan`,
+          summary: `Mengunduh CSV Klaviyo: ${reviews.length} ulasan, ${summary.unmapped} tanpa produk`,
+          changes: Object.entries(summary.byProduct).map(([name, n]) => ({ field: name, to: n })),
+        });
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Disposition', `attachment; filename="klaviyo-reviews-${new Date().toISOString().slice(0, 10)}.csv"`);
+        res.end(csv);
+        return;
+      }
       console.log(`dashboard/reviews: ${reviews.length} of ${Object.keys(doc?.reviews ?? {}).length}, page ${paging.page}`);
       send(200, renderReviews({ user,
         doc, stats: doc ? reviewStats(doc) : null, reviews, filter, paging, baseQuery,

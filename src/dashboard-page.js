@@ -120,7 +120,7 @@ const TAB_PERMISSION = { users: 'users' };
  * Menus whose actions write something, and therefore have a log of their own. The log
  * button sits in the tab row of exactly these; a read-only menu has nothing to show.
  */
-export const LOGGED_MENUS = new Set(['process', 'labels', 'stock', 'products', 'jurnal', 'users']);
+export const LOGGED_MENUS = new Set(['process', 'labels', 'stock', 'products', 'jurnal', 'users', 'reviews']);
 
 function viewNav(current, rangeQuery, user = null, { log = false } = {}) {
   const tabs = Object.entries(VIEWS)
@@ -1121,6 +1121,11 @@ a.pager__n:focus-visible,a.pager__btn:focus-visible,a.pager__size:focus-visible{
 .rv__btn{display:inline-flex; align-items:center; gap:.35rem; font-weight:500}
 .rv__btn .ico{width:1rem; height:1rem}
 .rv__count{margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums}
+/* The two things to do with reviews sit on the slab, beside when they were last read. */
+.rv__acts{display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; padding:.6rem 0}
+.rv__sync{margin:0; display:inline-flex}
+.rv__csv{display:inline-flex; align-items:center; gap:.4rem; text-decoration:none}
+.rv__csv .ico{width:1rem; height:1rem}
 
 .rv__list{display:flex; flex-direction:column}
 .rv{position:relative; padding:1rem 1.1rem 1.05rem 1.35rem; border-bottom:1px solid var(--line); transition:background var(--t-fast) var(--ease-out)}
@@ -2743,6 +2748,7 @@ const rvIcon = {
   chevronR: '<path d="m9 5 7 7-7 7"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   thumb: '<path d="M7 11v9H4v-9h3Zm3 9h6.6a2 2 0 0 0 2-1.6l1.2-6A2 2 0 0 0 17.8 10H14V6.2A2.2 2.2 0 0 0 11.8 4L10 11v9Z"/>',
+  download: '<path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/>',
 };
 const rvSvg = (name, cls = '') =>
@@ -2959,7 +2965,16 @@ export function renderReviews({
         ${stat('Belum dibalas', String(stats.unreplied), stats.unreplied ? 'flag' : '')}
         ${stat('30 hari', `${stats.last30Days.count} · ${stats.last30Days.average ?? '—'}`, stats.last30Days.low ? 'stop' : '')}
         <span class="strip__grow"></span>
-        <span class="note">Sinkron ${escape(syncNotes)}</span>
+        <span class="rv__acts">
+          <span class="note">Sinkron ${escape(syncNotes)}</span>
+          ${csrf ? `<form method="post" action="/api/dashboard" class="rv__sync">
+            <input type="hidden" name="csrf" value="${escape(csrf)}">
+            <input type="hidden" name="view" value="reviews">
+            <button class="cta" type="submit" name="action" value="reviews_sync"
+                    data-confirm-text="Ambil ulasan baru dari Tokopedia dan Shopee sekarang? Butuh sekitar satu menit.">${svg('refresh')}<span>Ambil ulasan baru</span></button>
+          </form>` : ''}
+          <a class="chip rv__csv" href="${escape(`?${baseQuery}${baseQuery ? '&' : 'view=reviews&'}export=klaviyo`)}" download>${rvSvg('download')}Unduh CSV Klaviyo</a>
+        </span>
       </div>`,
     body: `
       <section class="rv__top">

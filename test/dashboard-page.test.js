@@ -857,6 +857,20 @@ test('a typed-in sale sits in the order list, opens, and offers its invoice', ()
   assert.ok(only.includes('CS-260921-0000125') && !only.includes(`Rincian pesanan ${order.id}`));
 });
 
+test('the reviews page offers a fresh pull and the Klaviyo file', async () => {
+  const { renderReviews } = await import('../src/dashboard-page.js');
+  const doc = { syncedAt: '2026-09-21T00:00:00.000Z', channels: {}, reviews: {} };
+  const stats = { written: { count: 0, low: 0, average: null }, last30Days: { count: 0, low: 0, average: null }, unreplied: 0, byRating: {}, bySku: {}, byChannel: {} };
+  const html = renderReviews({ doc, stats, reviews: [], baseQuery: 'view=reviews&channel=shopee', ...common });
+  assert.match(html, /name="action" value="reviews_sync"/, 'no button to pull new reviews');
+  assert.match(html, /data-confirm-text="Ambil ulasan baru/, 'a pull that reads two marketplaces asks first');
+  assert.match(html, /href="\?view=reviews&amp;channel=shopee&amp;export=klaviyo" download/, 'the file follows the filters');
+  assert.match(html, /Unduh CSV Klaviyo/);
+  // A viewer gets neither the form nor the file: no csrf, no form.
+  const viewer = renderReviews({ doc, stats, reviews: [], ...common, csrf: '' });
+  assert.ok(!viewer.includes('reviews_sync'));
+});
+
 test('a success note leaves after two seconds, an error note stays', () => {
   const ok = renderDashboard({ orders: [order], summary: summarize([order]), ...common, flash: { kind: 'ok', text: 'tersimpan' } });
   assert.match(ok, /<div class="alert alert--ok" data-brief role="status">/);

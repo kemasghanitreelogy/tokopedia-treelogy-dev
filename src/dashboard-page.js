@@ -5,7 +5,7 @@ import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
-import { orderCode } from './mekari/prefix.js';
+import { orderCode, PREFIXES } from './mekari/prefix.js';
 import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
@@ -312,6 +312,13 @@ export function pager(paged, { baseQuery, noun }) {
   </nav>`;
 }
 
+/** The tag a row wears: the marketplace, or for a typed-in sale the source it was typed in for. */
+function channelTag(order) {
+  const meta = channelMeta(order.channel);
+  const source = order.channel === 'manual' ? PREFIXES[order.source]?.label : null;
+  return `<span class="tag" style="--accent:${meta.accent}">${escape(source ?? meta.label)}</span>`;
+}
+
 function row(order, index) {
   const meta = channelMeta(order.channel);
   const stage = STAGE_META[order.stage];
@@ -322,7 +329,7 @@ function row(order, index) {
       : '<span class="dim">&mdash;</span>';
   return `<tr class="row" tabindex="0" role="button" aria-label="Rincian pesanan ${escape(order.id)}"
     data-detail="od-${index}" data-channel="${order.channel}" data-stage="${order.stage}">
-    <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
+    <td>${channelTag(order)}</td>
     <td class="mono nowrap">${escape(order.id)}</td>
     <td class="nowrap dim">${escape(dateTime(order.createdAt, order.channel))}</td>
     <td>${escape(order.buyer) || '<span class="dim">&mdash;</span>'}</td>
@@ -365,7 +372,7 @@ function orderDetail(order, index) {
 
   return `<div id="od-${index}">
     <div class="od__head">
-      <span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span>
+      ${channelTag(order)}
       <span class="pill pill--${stage.tone}">${escape(stage.label)}</span>
       <span class="od__when">${escape(dateTime(order.createdAt, order.channel))}</span>
     </div>

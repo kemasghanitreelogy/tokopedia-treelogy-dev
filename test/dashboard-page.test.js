@@ -844,7 +844,8 @@ test('a typed-in sale sits in the order list, opens, and offers its invoice', ()
   };
   const orders = [manual, order];
   const html = renderDashboard({ orders, summary: summarize(orders), ...common });
-  assert.match(html, /<span class="tag" style="--accent:#C2531C">Manual<\/span>/, 'the row names its channel');
+  assert.match(html, /<span class="tag" style="--accent:#C2531C">Consignment<\/span>/, 'the row names the source the sale was typed in for');
+  assert.ok(!/<span class="tag"[^>]*>Manual</.test(html), 'never just "Manual"');
   assert.match(html, /aria-label="Rincian pesanan CS-260921-0000125"/, 'the row opens like any other');
   assert.match(html, /href="\/api\/invoice\?channel=manual&amp;id=CS-260921-0000125"/, 'the popup offers the invoice');
   assert.match(html, /class="chip [^"]*" href="\?channel=manual" style="--chip:#C2531C"[^>]*>Manual</, 'a chip filters down to typed-in sales');

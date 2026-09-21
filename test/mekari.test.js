@@ -1350,7 +1350,13 @@ test('sequence tails are unique, readable and self-checking', async () => {
   const { encodeSequence, decodeSequence, formatManualCode, sequenceOf, SEQUENCE_MAX } = await import('../src/mekari/manual.js');
   assert.equal(encodeSequence(1).length, 7);
   assert.equal(formatManualCode('CS', '2026-09-16', 1), `CS-260916-${encodeSequence(1)}`);
-  assert.match(encodeSequence(123456), /^[0-9A-HJKMNP-TV-Z]{6}[0-9A-HJKMNP-TV-Z*~$=U]$/, 'Crockford: no I, L, O, U in the number');
+  assert.match(encodeSequence(123456), /^[0-9A-HJKMNP-TV-Z]{6}[0-9A-HJKMNP-TVW]$/, 'Crockford: no I, L, O, U in the number');
+  // Numbers 32 and 33 came out as 000010* and 000011~ and were refused as codes. Every
+  // tail has to pass the code validator, whatever the counter is at.
+  for (const n of [32, 33, 34, 35, 36, 69, 70]) {
+    assert.doesNotThrow(() => buildManualOrder(manual({ code: formatManualCode('LB', '2026-09-21', n), source: 'LB' })), `n=${n}`);
+  }
+  assert.equal(decodeSequence('000011~'), 33, 'a tail issued under the old table is still read');
 
   // Round trip over a spread of values, including the last one.
   for (const n of [1, 2, 31, 32, 33, 1000, 12_345_678, 99_999_999, SEQUENCE_MAX]) {
@@ -1371,7 +1377,11 @@ test('sequence tails are unique, readable and self-checking', async () => {
 
   // No two of the first fifty thousand numbers share a tail.
   const seen = new Set();
-  for (let n = 1; n <= 50_000; n++) seen.add(encodeSequence(n));
+  for (let n = 1; n <= 50_000; n++) {
+    const tail = encodeSequence(n);
+    assert.match(tail, /^[0-9A-Z]{7}$/, `tail ${tail} for n=${n} is not plain letters and digits`);
+    seen.add(tail);
+  }
   assert.equal(seen.size, 50_000);
 });
 

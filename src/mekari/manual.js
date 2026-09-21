@@ -65,11 +65,21 @@ export function suggestCode(prefix, existingCodes = [], now = Date.now()) {
  *
  * The number is written in Crockford base32: no I, L, O or U, so a code read over the
  * phone or off a slip is not misheard, and six symbols hold a billion values. The last
- * symbol is a check (mod 37) that catches a mistyped or transposed character, so a typo
- * fails validation instead of quietly pointing at somebody else's transaction.
+ * symbol is a check that catches a mistyped or transposed character, so a typo fails
+ * validation instead of quietly pointing at somebody else's transaction.
+ *
+ * The check is taken mod 29, not Crockford's own mod 37. His table pads the alphabet
+ * with * ~ $ = U, and a code has to survive a URL, a Jurnal custom_id and the code
+ * validator here, none of which want a dollar sign in it: numbers 32 and 33 were handed
+ * out with * and ~ on the end and both were refused at the door. 29 is prime and 32 is
+ * 3 mod 29, so a single wrong symbol and a swapped pair are still both caught, and
+ * every check symbol is a plain digit or letter.
  */
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const CHECK = `${CROCKFORD}*~$=U`;
+const CHECK_MOD = 29;
+const CHECK = CROCKFORD.slice(0, CHECK_MOD);
+// The table the first thirty-one numbers were issued with, still recognised on the way in.
+const CHECK_LEGACY = `${CROCKFORD}*~$=U`;
 export const SEQUENCE_LENGTH = 6;
 export const SEQUENCE_MAX = 32 ** SEQUENCE_LENGTH - 1; // 1,073,741,823
 
@@ -81,7 +91,7 @@ export function encodeSequence(n) {
     out = CROCKFORD[value % 32] + out;
     value = Math.floor(value / 32);
   }
-  return out.padStart(SEQUENCE_LENGTH, '0') + CHECK[n % 37];
+  return out.padStart(SEQUENCE_LENGTH, '0') + CHECK[n % CHECK_MOD];
 }
 
 /** The number behind a tail, or null when it is not one of ours or the check fails. */
@@ -96,7 +106,9 @@ export function decodeSequence(tail) {
     if (digit < 0) return null;
     n = n * 32 + digit;
   }
-  return n >= 1 && CHECK[n % 37] === s[SEQUENCE_LENGTH] ? n : null;
+  if (n < 1) return null;
+  const check = s[SEQUENCE_LENGTH];
+  return check === CHECK[n % CHECK_MOD] || check === CHECK_LEGACY[n % 37] ? n : null;
 }
 
 /** `CS-260916-00004K7` for source CS on 16 Sep 2026 with sequence number n. */

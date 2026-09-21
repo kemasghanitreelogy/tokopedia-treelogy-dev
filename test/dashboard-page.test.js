@@ -5,7 +5,7 @@ import {
   renderManual, renderForecast, renderLogin,
 } from '../src/dashboard-page.js';
 import { syncOverview } from '../src/mekari/sync.js';
-import { summarize } from '../src/omni.js';
+import { summarize, filterOrders } from '../src/omni.js';
 import { buildPicklist } from '../src/picklist.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 
@@ -831,6 +831,30 @@ test('the process page can select everything that still makes today van', async 
   // Nothing to choose between when every order is on the same side of the line.
   const allEarly = renderProcess({ orders: [at(-3600), at(-60)], ...common, csrf: 'tok', generatedAt: now });
   assert.ok(!allEarly.includes('data-early>'), 'tombolnya tidak muncul kalau semua sama');
+});
+
+test('a typed-in sale sits in the order list, opens, and offers its invoice', () => {
+  const manual = {
+    channel: 'manual', id: 'CS-260921-0000125', createdAt: 1789992000, status: 'MANUAL', stage: 'completed',
+    source: 'CS', customer: 'Toko Sehat', buyer: 'Toko Sehat', buyerPhone: '0812-3456-7890', buyerEmail: 'toko@contoh.id',
+    shipTo: 'Jln. Belida 1, Tenggarong', carrier: 'JNE', tracking: '', total: 300000, currency: 'IDR', items: 1,
+    note: 'titip - ditambahkan oleh Dewi',
+    lines: [{ sku: 'OMP-45-001', name: 'Moringa Powder - 45 gram', qty: 2 }],
+    finance: { lines: [{ sku: 'OMP-45-001', name: 'Moringa Powder - 45 gram', qty: 2, unitPrice: 150000, unitDiscount: 0 }], shipping: 0 },
+  };
+  const orders = [manual, order];
+  const html = renderDashboard({ orders, summary: summarize(orders), ...common });
+  assert.match(html, /<span class="tag" style="--accent:#C2531C">Manual<\/span>/, 'the row names its channel');
+  assert.match(html, /aria-label="Rincian pesanan CS-260921-0000125"/, 'the row opens like any other');
+  assert.match(html, /href="\/api\/invoice\?channel=manual&amp;id=CS-260921-0000125"/, 'the popup offers the invoice');
+  assert.match(html, /class="chip [^"]*" href="\?channel=manual" style="--chip:#C2531C"[^>]*>Manual</, 'a chip filters down to typed-in sales');
+  assert.ok(!/<article class="ch" style="--accent:#C2531C">/.test(html), 'no channel card: nothing is pulled or shipped for it');
+  // Its money counts with everybody else's.
+  assert.equal(summarize(orders).all.revenue, summarize([order]).all.revenue + 300000);
+  assert.equal(summarize(orders).byChannel.manual.count, 1);
+  // And the filter reaches it.
+  const only = renderDashboard({ orders: filterOrders(orders, { channel: 'manual' }), summary: summarize(orders), filter: { channel: 'manual' }, ...common });
+  assert.ok(only.includes('CS-260921-0000125') && !only.includes(`Rincian pesanan ${order.id}`));
 });
 
 test('a success note leaves after two seconds, an error note stays', () => {

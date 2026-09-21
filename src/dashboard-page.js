@@ -1,5 +1,5 @@
 import { businessToday, zoneLabel, zoneName, zoneForChannel, ZONES } from './clock.js';
-import { CHANNELS, STAGES } from './omni.js';
+import { CHANNELS, STAGES, MANUAL_CHANNEL, channelMeta } from './omni.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness } from './labels.js';
@@ -313,7 +313,7 @@ export function pager(paged, { baseQuery, noun }) {
 }
 
 function row(order, index) {
-  const meta = CHANNELS[order.channel];
+  const meta = channelMeta(order.channel);
   const stage = STAGE_META[order.stage];
   const track = order.tracking
     ? `<span class="mono">${escape(order.tracking)}</span>`
@@ -341,7 +341,7 @@ function row(order, index) {
  * here, once, which is why the dialog copies markup instead of parsing a data attribute.
  */
 function orderDetail(order, index) {
-  const meta = CHANNELS[order.channel];
+  const meta = channelMeta(order.channel);
   const stage = STAGE_META[order.stage];
   const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
   const units = lines.reduce((n, l) => n + (Number(l.qty) || 0), 0);
@@ -1724,7 +1724,7 @@ export function renderDashboard({
 }) {
   const { all, byChannel } = summary;
   const inTransit = all.stages.shipping;
-  const channel = CHANNELS[filter.channel] ? filter.channel : 'all';
+  const channel = CHANNELS[filter.channel] || filter.channel === MANUAL_CHANNEL.id ? filter.channel : 'all';
   const stage = STAGES.includes(filter.stage) ? filter.stage : 'all';
   const q = String(filter.q ?? '').trim();
 
@@ -1743,6 +1743,8 @@ export function renderDashboard({
   const filters = [
     chip('Semua kanal', channel === 'all', link({ channel: 'all' })),
     ...Object.keys(CHANNELS).map((id) => chip(escape(CHANNELS[id].label), channel === id, link({ channel: id }), CHANNELS[id].accent)),
+    // Typed-in sales get a chip but no card: there is nothing to pull or ship for them.
+    chip(escape(MANUAL_CHANNEL.label), channel === MANUAL_CHANNEL.id, link({ channel: MANUAL_CHANNEL.id }), MANUAL_CHANNEL.accent),
   ].join('');
 
   // Stage counts follow the channel chip, so "Siap kirim 11" means eleven on Shopee when
@@ -1949,7 +1951,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const early = rows.filter(({ order }) => order.createdAt < cutoff).length;
 
   const card = ({ order: o }) => {
-    const ch = CHANNELS[o.channel];
+    const ch = channelMeta(o.channel);
     return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
       data-early="${o.createdAt < cutoff ? '1' : '0'}">
       <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
@@ -2184,7 +2186,7 @@ export function renderJurnal({
   const paged = paginate(sorted, paging);
   const rows = paged.items
     .map((r) => {
-      const meta = CHANNELS[r.order.channel];
+      const meta = channelMeta(r.order.channel);
       const state = JURNAL_STATE[r.state];
       return `<tr data-state="${r.state}">
         <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
@@ -3021,7 +3023,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
 
   const rows = candidates
     .map(({ order: o, readiness }) => {
-      const meta = CHANNELS[o.channel];
+      const meta = channelMeta(o.channel);
       const stage = STAGE_META[o.stage];
       // Everything listed is printable, so everything listed starts ticked.
       ticked += 1;

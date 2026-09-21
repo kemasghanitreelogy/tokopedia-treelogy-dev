@@ -127,9 +127,22 @@ export async function loadOrders({
   };
   const inRange = (orders) => orders.filter((order) => withinDays(order, asked));
 
+  // No platform holds a typed-in sale, so a live read still asks the table for those.
+  // Best effort: a table that cannot be read costs the manual rows, never the page.
+  const manualRows = async () => {
+    if (!isSupabaseConfigured() && readStored === ordersInRange) return [];
+    try {
+      const rows = await readStored({ since: window.since, until: window.until, channels: ['manual'] });
+      return rows.filter((order) => order.channel === 'manual');
+    } catch (error) {
+      console.warn(`db: transaksi manual tidak terbaca - ${error.message}`);
+      return [];
+    }
+  };
+
   if (!isSupabaseConfigured()) {
     const live = await readLive({ range: window, maxPerPlatform, tracking });
-    return { ...live, orders: inRange(live.orders), range: asked, from: 'live' };
+    return { ...live, orders: inRange([...live.orders, ...await manualRows()]), range: asked, from: 'live' };
   }
 
   const sources = activeSources();
@@ -150,7 +163,9 @@ export async function loadOrders({
       // from when it was configured, so the same window answered from the database came back
       // with revenue the live path did not have. Two answers to one question, differing by
       // which path happened to serve it.
-      const channels = sources.flatMap((source) => SOURCE_CHANNELS[source] ?? []);
+      // Typed-in sales are written straight to the table when they are saved, so they
+      // need no coverage claim: the table is their only source.
+      const channels = [...sources.flatMap((source) => SOURCE_CHANNELS[source] ?? []), 'manual'];
       const orders = inRange(await readStored({ since: window.since, until: window.until, channels }));
       return {
         orders,
@@ -171,7 +186,7 @@ export async function loadOrders({
   // Stored as read - the wider set is genuinely what we fetched, and throwing away the
   // hour at each edge would leave a hole the next reader has to pay for again.
   await rememberOrders(live, window);
-  return { ...live, orders: inRange(live.orders), range: asked, from: 'live' };
+  return { ...live, orders: inRange([...live.orders, ...await manualRows()]), range: asked, from: 'live' };
 }
 
 /**

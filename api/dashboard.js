@@ -1,6 +1,7 @@
 import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
+import { saveOrders } from '../src/db/orders.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
@@ -462,6 +463,19 @@ async function handleWrite(form, ip, user) {
     }
     invalidate('jurnal');
     console.log(`dashboard: manual_invoice ${order.id} -> ${result.status}`);
+
+    // The order list and the invoice printer both read the orders table, and nothing
+    // else will ever put a typed-in sale there. Best effort: the sale is in Jurnal, which
+    // is the record; a table that refuses it is a warning, not a failed save.
+    if (isSupabaseConfigured()) {
+      try {
+        const saved = await saveOrders([order], { source: 'manual' });
+        if (saved.rejected.length > 0) console.warn(`dashboard: manual_invoice ${order.id} ditolak tabel pesanan - ${saved.rejected[0].error}`);
+        invalidate('orders:');
+      } catch (error) {
+        console.warn(`dashboard: manual_invoice ${order.id} tidak tersimpan ke tabel pesanan - ${error.message}`);
+      }
+    }
 
     return {
       view: 'orders',

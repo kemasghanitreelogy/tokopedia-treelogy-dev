@@ -37,7 +37,8 @@ export async function ordersForPrinting(selection, {
   const stored = hasDatabase() ? await readStored(wanted).catch(() => []) : [];
   const found = new Map(stored.map((order) => [`${order.channel}:${order.id}`, order]));
 
-  const missing = wanted.filter((row) => !found.has(`${row.channel}:${row.id}`));
+  // A typed-in sale lives only in the table; no platform can be asked for it.
+  const missing = wanted.filter((row) => !found.has(`${row.channel}:${row.id}`) && row.channel !== 'manual');
   if (missing.length === 0) {
     return { orders: [...found.values()], errors: {}, fromDb: found.size, fromPlatform: 0 };
   }

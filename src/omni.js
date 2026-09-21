@@ -25,6 +25,16 @@ export const CHANNELS = {
 };
 
 /**
+ * A sale typed in by hand is not a marketplace: nothing pulls it, nothing ships it, no
+ * label is drawn for it. It is still a sale, and it sits in the order list beside the
+ * others so it can be opened and its invoice printed. It has its own meta rather than a
+ * row in CHANNELS because everything that iterates CHANNELS - the pulls, the coverage
+ * records, the channel cards - is about a platform, and this is not one.
+ */
+export const MANUAL_CHANNEL = { id: 'manual', label: 'Manual', accent: '#C2531C' };
+export const channelMeta = (id) => CHANNELS[id] ?? (id === MANUAL_CHANNEL.id ? MANUAL_CHANNEL : { id, label: String(id), accent: '#8FA97F' });
+
+/**
  * The two platforms name the same lifecycle differently. Collapsing both into one set of
  * stages is what makes a cross-channel count meaningful.
  */
@@ -524,7 +534,7 @@ export async function fetchOrdersByIds(selection) {
 export function summarize(orders) {
   const blank = () => ({ count: 0, revenue: 0, paid: 0, actionable: 0, stages: Object.fromEntries(STAGES.map((s) => [s, 0])) });
   const all = blank();
-  const byChannel = Object.fromEntries(Object.keys(CHANNELS).map((id) => [id, blank()]));
+  const byChannel = Object.fromEntries([...Object.keys(CHANNELS), MANUAL_CHANNEL.id].map((id) => [id, blank()]));
 
   for (const order of orders) {
     for (const bucket of [all, byChannel[order.channel]]) {

@@ -90,3 +90,26 @@ test('the database path filters by platform day too, not only the live one', () 
     assert.equal(seen.range.to, '2026-09-01');
   });
 });
+
+test('a typed-in sale is read from the table on both paths, and never asked of a platform', () => {
+  return import('../src/orders-source.js').then(async ({ loadOrders }) => {
+    const at = (iso) => Math.floor(Date.parse(iso) / 1000);
+    const range = { since: at('2026-08-31T17:00:00Z'), until: at('2026-09-01T16:59:59Z'), from: '2026-09-01', to: '2026-09-01', label: '1 Sep' };
+    const manual = { channel: 'manual', id: 'CS-260901-0000012', createdAt: at('2026-09-01T05:00:00Z'), stage: 'completed', status: 'MANUAL', total: 300000 };
+    const shopee = { channel: 'shopee', id: 'A', createdAt: at('2026-09-01T04:00:00Z'), stage: 'completed', total: 1 };
+    const asked = [];
+    const readStored = async ({ channels }) => {
+      asked.push(channels);
+      return [shopee, manual].filter((o) => !channels || channels.includes(o.channel));
+    };
+
+    // The live path: the platforms answer for theirs, the table for the manual one.
+    const live = await loadOrders({ range, readStored, readLive: async () => ({ orders: [shopee], errors: {}, truncated: [] }) });
+    assert.deepEqual(live.orders.map((o) => o.id).sort(), ['A', 'CS-260901-0000012']);
+    assert.deepEqual(asked.at(-1), ['manual'], 'the live path asks the table for manual sales only');
+
+    // A table that cannot be read costs the manual rows, never the page.
+    const blind = await loadOrders({ range, readStored: async () => { throw new Error('db down'); }, readLive: async () => ({ orders: [shopee], errors: {}, truncated: [] }) });
+    assert.deepEqual(blind.orders.map((o) => o.id), ['A']);
+  });
+});

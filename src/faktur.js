@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { orderCode } from './mekari/prefix.js';
+import { termDaysFor, isAutoPaid } from './mekari/sources.js';
 import { zoneForChannel } from './clock.js';
 
 /**
@@ -152,7 +153,7 @@ export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1
   // --- three columns: who is selling, who is buying, and the invoice's own facts
   y -= 78;
   const colB = pad + 190;
-  const colLabel = pad + 372;
+  const colLabel = pad + 352;
   const colValue = right;
 
   let leftY = y;
@@ -167,14 +168,16 @@ export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1
   text('Kepada:', { x: colB, at: midY, size: 9.5, face: bold });
   text(order.buyer || order.customer || '-', { x: colB + bold.widthOfTextAtSize('Kepada: ', 9.5), at: midY, size: 9.5, face: bold });
   midY -= 14;
-  for (const line of wrap(font, order.shipTo || '', 7.5, 175, 5)) { text(line, { x: colB, at: midY, size: 7.5 }); midY -= 10; }
+  for (const line of wrap(font, order.shipTo || '', 7.5, 158, 5)) { text(line, { x: colB, at: midY, size: 7.5 }); midY -= 10; }
 
   const facts = [
     ['No. Faktur', orderCode(order)],
     ['Tanggal', dateOf(order.createdAt, order.channel)],
     ['No. Ref.', String(order.id ?? '')],
-    ['Term', order.term || 'TUNAI'],
-    ['Jatuh Tempo', dateOf(order.dueAt ?? order.createdAt, order.channel)],
+    // A marketplace sale was paid before it shipped; a typed-in sale is owed on the terms
+    // its source carries, which is what the invoice in Jurnal says too.
+    ['Term', order.term || (isAutoPaid(order) ? 'TUNAI' : `Net ${termDaysFor(order)}`)],
+    ['Jatuh Tempo', dateOf(order.dueAt ?? (isAutoPaid(order) ? order.createdAt : order.createdAt + termDaysFor(order) * 86400), order.channel)],
   ];
   let factY = y;
   for (const [label, value] of facts) {

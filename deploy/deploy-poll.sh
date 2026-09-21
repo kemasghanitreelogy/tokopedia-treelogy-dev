@@ -23,8 +23,13 @@ fi
 if [ "$LOCAL" = "$REMOTE" ]; then
   exit 0
 fi
-# A trigger written in the last ten minutes is a deploy already on its way.
-if [ -f "$TRIGGER" ] && [ "$(( $(date +%s) - $(stat -c %Y "$TRIGGER") ))" -lt 600 ]; then
+# A deploy already running, or a trigger written in the last two minutes, is one on its
+# way. Ten minutes was too long a courtesy: a deploy takes ten seconds, and three polls
+# in a row stood aside for a trigger that had long since been consumed.
+if [ "$(systemctl is-active treelogy-deploy.service 2>/dev/null)" = "activating" ]; then
+  exit 0
+fi
+if [ -f "$TRIGGER" ] && [ "$(( $(date +%s) - $(stat -c %Y "$TRIGGER") ))" -lt 120 ]; then
   exit 0
 fi
 

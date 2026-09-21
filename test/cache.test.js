@@ -53,3 +53,42 @@ test('invalidate with no prefix clears everything', async () => {
   invalidate();
   assert.equal(cacheSize(), 0);
 });
+
+test('a stale entry is served at once and refreshed behind the caller', async () => {
+  invalidate();
+  let calls = 0;
+  let release;
+  const factory = () => { calls += 1; return calls === 1 ? Promise.resolve('old') : new Promise((r) => { release = r; }); };
+  assert.equal(await cached('k', 1, factory, { staleMs: 10_000 }), 'old');
+  await new Promise((r) => setTimeout(r, 5));
+  // Past fresh: the old value comes back immediately, and one refresh has started.
+  const started = Date.now();
+  assert.equal(await cached('k', 1, factory, { staleMs: 10_000 }), 'old');
+  assert.ok(Date.now() - started < 50, 'the stale read must not wait on the refresh');
+  assert.equal(await cached('k', 1, factory, { staleMs: 10_000 }), 'old', 'a second stale read shares the one refresh');
+  assert.equal(calls, 2);
+  release('new');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(await cached('k', 1000, factory, { staleMs: 10_000 }), 'new');
+});
+
+test('a refresh that fails keeps the stale value and backs off', async () => {
+  invalidate();
+  let calls = 0;
+  const factory = () => { calls += 1; return calls === 1 ? Promise.resolve('old') : Promise.reject(new Error('db down')); };
+  assert.equal(await cached('k', 1, factory, { staleMs: 10_000 }), 'old');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(await cached('k', 1, factory, { staleMs: 10_000 }), 'old');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(await cached('k', 1, factory, { staleMs: 10_000 }), 'old', 'still served after the refresh failed');
+  assert.equal(calls, 2, 'the failed refresh is not retried on the very next read');
+});
+
+test('past its stale window an entry is fetched in the open again', async () => {
+  invalidate();
+  let calls = 0;
+  const factory = () => { calls += 1; return Promise.resolve(calls); };
+  assert.equal(await cached('k', 1, factory, { staleMs: 2 }), 1);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(await cached('k', 1, factory, { staleMs: 2 }), 2);
+});

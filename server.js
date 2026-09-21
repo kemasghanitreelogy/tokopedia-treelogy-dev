@@ -83,7 +83,22 @@ server.headersTimeout = 65 * 1000;
 
 server.listen(PORT, HOST, () => {
   console.log(`treelogy siap di http://${HOST}:${PORT} (state: ${process.env.STATE_BACKEND || 'auto'})`);
+  warmDashboard();
 });
+
+/**
+ * The two order ranges everybody opens are kept warm behind the scenes, so the first
+ * click after a quiet spell is as quick as any other. Every four minutes is inside the
+ * cache's stale window, which means a reader is never the one who pays for the refresh.
+ */
+function warmDashboard() {
+  if (process.env.DASHBOARD_WARM === '0') return;
+  import('./api/dashboard.js').then((m) => {
+    const run = () => m.warmOrders().catch((error) => console.warn(`dashboard: pemanasan gagal - ${error.message}`));
+    setTimeout(run, 2_000).unref();
+    setInterval(run, 4 * 60_000).unref();
+  }).catch((error) => console.warn(`dashboard: pemanasan tidak jalan - ${error.message}`));
+}
 
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {

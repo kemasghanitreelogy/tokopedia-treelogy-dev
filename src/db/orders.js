@@ -136,7 +136,10 @@ export async function ordersInRange({ since, until, channels = null } = {}) {
   if (Array.isArray(channels) && channels.length > 0) {
     params.channel = `in.(${channels.map((c) => `"${c}"`).join(',')})`;
   }
-  const rows = await selectAll('orders', params);
+  // A dashboard read that has not answered in eight seconds is not going to; the caller
+  // has a cached window or four platforms to fall back on, and thirty seconds of
+  // skeleton, three times over, is what "stuck" looked like from the operator's chair.
+  const rows = await selectAll('orders', params, { timeout: 8_000, retries: 2 });
   return rows.map((row) => row.payload).filter(Boolean);
 }
 

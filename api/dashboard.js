@@ -78,13 +78,46 @@ const ORDERS_TTL_MS = 45_000;
  * seconds of the buyer paying, and the whole point is that the screen shows it. Five
  * seconds still collapses the burst of requests a single page load makes.
  */
-const DB_ORDERS_TTL_MS = 5_000;
+const DB_ORDERS_TTL_MS = 15_000;
 const ordersTtl = () => (isSupabaseConfigured() ? DB_ORDERS_TTL_MS : ORDERS_TTL_MS);
+/**
+ * How long past fresh a value is still handed out while a refresh runs behind it.
+ *
+ * Fifteen seconds of fresh is the price of a screen that shows a webhook's write
+ * promptly. Ten minutes of stale-while-refreshing is what keeps a click from ever
+ * waiting on Sydney: the reader gets the last answer at once and the next reader gets
+ * the newer one. A write still invalidates outright, so what somebody just changed is
+ * read afresh, not served from before the change.
+ */
+const STALE_MS = 10 * 60_000;
+const SWR = { staleMs: STALE_MS };
 const CATALOG_TTL_MS = 60_000;
 const LEDGER_TTL_MS = 60_000;
 // Pictures change when somebody edits a listing, which is rarely; five minutes is plenty.
 const IMAGES_TTL_MS = 5 * 60_000;
-const imagesByKey = () => cached('images', IMAGES_TTL_MS, () => loadImageManifest().then((m) => m.images ?? {}).catch(() => ({})));
+const imagesByKey = () => cached('images', IMAGES_TTL_MS, () => loadImageManifest().then((m) => m.images ?? {}).catch(() => ({})), SWR);
+
+/** The orders behind one range, from the cache when it has them and refreshed behind the reader when it is time. */
+const ordersFor = (range) => cached(
+  // Keyed by the range's identity, not its computed bounds: a rolling preset recomputes
+  // `since`/`until` from Date.now() on every request, so timestamps would make the key
+  // unique each time and the cache would never hit.
+  `orders:${range.preset ?? `${range.from}:${range.to}`}`,
+  ordersTtl(),
+  () => loadOrders({ range, tracking: true }),
+  SWR,
+);
+
+/**
+ * Keep the two ranges everybody opens warm, so the first click of the morning is as
+ * quick as the tenth. Called by the server on a timer shorter than the stale window,
+ * which means the entries never fall out of it and are refreshed behind the scenes.
+ */
+export async function warmOrders() {
+  for (const preset of ['7d', 'today']) {
+    await ordersFor(resolveRange({ preset })).catch((error) => console.warn(`dashboard: pemanasan ${preset} gagal - ${error.message}`));
+  }
+}
 
 const catalogComplete = (catalog) => Object.keys(catalog.errors ?? {}).length === 0;
 const readCatalogSafely = () =>
@@ -779,8 +812,8 @@ export default async function handler(req, res) {
 
     if (view === 'stock') {
       const [catalog, ledger] = await Promise.all([
-        cached('catalog', CATALOG_TTL_MS, readCatalogSafely),
-        cached('ledger', LEDGER_TTL_MS, () => loadLedger().catch(() => null)),
+        cached('catalog', CATALOG_TTL_MS, readCatalogSafely, SWR),
+        cached('ledger', LEDGER_TTL_MS, () => loadLedger().catch(() => null), SWR),
       ]);
       const plan = ledger && Object.keys(catalog.errors ?? {}).length === 0
         ? planSync({ ledger, catalog })
@@ -796,8 +829,8 @@ export default async function handler(req, res) {
 
     if (view === 'products') {
       const [catalog, ledger] = await Promise.all([
-        cached('catalog', CATALOG_TTL_MS, readCatalogSafely),
-        cached('ledger', LEDGER_TTL_MS, () => loadLedger().catch(() => null)),
+        cached('catalog', CATALOG_TTL_MS, readCatalogSafely, SWR),
+        cached('ledger', LEDGER_TTL_MS, () => loadLedger().catch(() => null), SWR),
       ]);
       // A plan built from a partial catalogue could zero live SKUs, so it is only
       // computed when both channels answered.
@@ -815,7 +848,7 @@ export default async function handler(req, res) {
     }
 
     if (view === 'jurnal' && url.searchParams.get('add') === '1') {
-      const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })));
+      const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })), SWR);
       const used = manualCodes(ledger);
       const source = url.searchParams.get('source') ?? 'CS';
       // The contact list is a convenience, not a requirement: a Jurnal that will not
@@ -832,7 +865,7 @@ export default async function handler(req, res) {
         contacts, existingCodes: used, images: await imagesByKey(),
         // Shopify's own prices, read from our store rather than from Shopify: the form
         // must open at the same speed whether or not Shopify is answering today.
-        prices: await cached('shopify-prices', 5 * 60_000, () => priceBySku().catch(() => ({}))),
+        prices: await cached('shopify-prices', 5 * 60_000, () => priceBySku().catch(() => ({})), SWR),
         live: process.env.MEKARI_SYNC_LIVE === '1',
       }));
       return;
@@ -841,7 +874,7 @@ export default async function handler(req, res) {
     // The forecast is a document written by a nightly job; the page only reads it, so it
     // costs one lookup and never waits on a marketplace.
     if (view === 'forecast') {
-      const forecast = await cached('forecast', 60_000, () => loadForecast().catch(() => null));
+      const forecast = await cached('forecast', 60_000, () => loadForecast().catch(() => null), SWR);
       console.log(`dashboard/forecast: ${forecast?.rows?.length ?? 0} sku`);
       send(200, renderForecast({ user,
         forecast, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
@@ -852,7 +885,7 @@ export default async function handler(req, res) {
     // Reviews are documents the nightly syncs wrote; reading them costs two lookups and
     // never touches a marketplace from a web request.
     if (view === 'reviews') {
-      const doc = await cached('reviews', 60_000, () => loadAllReviews().catch(() => null));
+      const doc = await cached('reviews', 60_000, () => loadAllReviews().catch(() => null), SWR);
       const channelParam = url.searchParams.get('channel') ?? '';
       const filter = {
         channel: REVIEW_CHANNELS[channelParam] ? channelParam : '',
@@ -877,22 +910,17 @@ export default async function handler(req, res) {
       return;
     }
 
-    const wantsTracking = view !== 'picklist' && view !== 'jurnal';
-    // Keyed by the range's identity, not its computed bounds: a rolling preset recomputes
-    // `since`/`until` from Date.now() on every request, so timestamps would make the key
-    // unique each time and the cache would never hit.
-    const rangeKey = range.preset ?? `${range.from}:${range.to}`;
-    const data = await cached(
-      `orders:${rangeKey}:${wantsTracking}`,
-      ordersTtl(),
-      () => loadOrders({ range, tracking: wantsTracking }),
-    );
+    // One entry per range for every menu: the picklist and the ledger used to ask for a
+    // copy without tracking numbers and paid for a second database read to get it.
+    const started = Date.now();
+    const data = await ordersFor(range);
+    const took = () => `${Date.now() - started}ms`;
 
     if (view === 'labels') {
       // Shopify prints are remembered here, not there; the page cannot tell what still
       // needs a label without it.
       const printed = await printedLabels().catch(() => ({}));
-      console.log(`dashboard/labels: ${data.orders.length} orders in range`);
+      console.log(`dashboard/labels: ${data.orders.length} orders in range (${took()})`);
       send(200, renderLabels({ user,
         ...data, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed,
         showReprints: url.searchParams.get('reprint') === '1',
@@ -903,14 +931,14 @@ export default async function handler(req, res) {
     if (view === 'process') {
       // Arranging a Shopify order calls nothing, so only this says it has been done.
       const arranged = await arrangedOrders().catch(() => ({}));
-      console.log(`dashboard/process: ${data.orders.length} orders in range`);
+      console.log(`dashboard/process: ${data.orders.length} orders in range (${took()})`);
       send(200, renderProcess({ user, ...data, csrf, flash, arranged }));
       return;
     }
 
     if (view === 'jurnal') {
       const [ledger, heartbeat] = await Promise.all([
-        cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} }))),
+        cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })), SWR),
         // Not cached: its whole point is to say what happened in the last few minutes.
         loadHeartbeat(),
       ]);
@@ -926,7 +954,7 @@ export default async function handler(req, res) {
 
     if (view === 'picklist') {
       const picklist = buildPicklist(data.orders);
-      console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus`);
+      console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);
       send(200, renderPicklist({ user, ...data, picklist }));
       return;
     }
@@ -938,7 +966,7 @@ export default async function handler(req, res) {
       q: url.searchParams.get('q') ?? '',
     };
     const orders = filterOrders(data.orders, filter);
-    console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'}`);
+    console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'} (${took()})`);
     send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery, flash }));
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);

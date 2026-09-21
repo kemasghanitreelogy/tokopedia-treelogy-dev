@@ -79,3 +79,12 @@ test('a signed photo URL opens for that photo and no other', async () => {
     if (had === undefined) delete process.env.DASHBOARD_TOKEN; else process.env.DASHBOARD_TOKEN = had;
   }
 });
+
+test('a repeat rating of the same product by the same buyer is not folded away', () => {
+  const twice = [review({ id: 'a', text: '' }), review({ id: 'b', text: '' }), review({ id: 'c', text: '' }), review({ id: 'd', text: 'beda' })];
+  const rows = klaviyoRows(twice);
+  assert.deepEqual(rows.map((r) => r.reviewer_email), [
+    'shopee-schintyaaa23@ulasan.treelogy.com', 'shopee-schintyaaa23-2@ulasan.treelogy.com', 'shopee-schintyaaa23-3@ulasan.treelogy.com',
+    'shopee-schintyaaa23@ulasan.treelogy.com',
+  ]);
+});

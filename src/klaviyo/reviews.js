@@ -115,17 +115,30 @@ export const KLAVIYO_COLUMNS = [
 /** Video URLs as the marketplaces host them; Tokopedia's are signed and may lapse, Shopee's do not. */
 export const videoUrls = (review) => (review.videos ?? []).map((v) => v?.url).filter(Boolean);
 
-/** One row per review, in the template's columns. Reviews without a product become store reviews. */
+/**
+ * One row per review, in the template's columns. Reviews without a product become store reviews.
+ *
+ * Klaviyo folds two reviews with the same address, product and text into one. A repeat
+ * buyer who rates the same product again without a word is exactly that - 239 of them
+ * on the second import - so the second and later such reviews get a numbered address,
+ * and every rating the buyer left is counted.
+ */
 export function klaviyoRows(reviews, options = {}) {
+  const seen = new Map();
   return reviews.map((review) => {
     const product = klaviyoProductFor(review);
+    let email = reviewerEmail(review, options);
+    const key = `${email}|${product?.id ?? ''}|${String(review.text ?? '').trim()}`;
+    const times = (seen.get(key) ?? 0) + 1;
+    seen.set(key, times);
+    if (times > 1) email = email.replace('@', `-${times}@`);
     return {
       product_id: product?.id ?? '',
       product_handle: product?.handle ?? '',
       // The review's own SKU when Shopify lists it, otherwise the product's lead SKU.
       product_sku: product ? (SHOPIFY_SKUS.has(review.sku ?? '') ? review.sku : product.sku) : '',
       product_name: product?.name ?? '',
-      reviewer_email: reviewerEmail(review, options),
+      reviewer_email: email,
       reviewer_name: review.anonymous ? 'Pembeli' : (review.reviewerName || 'Pembeli'),
       rating: Number(review.rating) || 0,
       review_title: '',

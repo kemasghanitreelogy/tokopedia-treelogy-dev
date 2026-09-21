@@ -106,12 +106,31 @@ export function joinWrapped(lines, width) {
     if (startsPunct) continue;
     if (!hard || ended || caseTurn) out += ' ';
   }
-  return out
+  return tidy(out);
+}
+
+/**
+ * Region words that Shopee writes in capitals, one after another, so a wrap between two
+ * of them cannot be told from a wrap inside one: "KOTA JAKARTASELATAN", "JAWATIMUR".
+ * A known word glued to the next capital gets its space back. Kotabaru, Kotawaringin and
+ * Kotamobagu are one word and are left alone.
+ */
+const REGION_WORD = /\b(KOTA(?!BARU|WARINGIN|MOBAGU)|KAB\.|JAWA|DKI|SUMATERA|SULAWESI|KALIMANTAN|KEPULAUAN|NUSA|MALUKU|PAPUA|JAKARTA(?=SELATAN|PUSAT|TIMUR|UTARA|BARAT))(?=[A-Z])/g;
+
+/** The reading errors that happen every day, put right. */
+export function tidy(text) {
+  return String(text ?? '')
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:])/g, '$1')
+    // A pipe is never in an address; it is a capital I that Tesseract lost the serifs of.
+    .replace(/\|/g, 'I')
     // The one abbreviation on nearly every Indonesian address, and the one Tesseract
     // misreads: a lower-case l beside a capital J comes out as a capital I.
     .replace(/\bJI\.?(?=\s)/g, 'Jl.')
+    .replace(REGION_WORD, '$1 ')
+    // A capital I at the start of a word reads as a lower-case l: "lffan", "lndah".
+    // Only before a consonant, where no Indonesian word starts with an l.
+    .replace(/\bl(?=[bcdfghjkmnpqrstvwxz][a-z])/g, 'I')
     .trim();
 }
 

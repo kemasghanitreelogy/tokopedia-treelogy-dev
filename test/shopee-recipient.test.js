@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pngWidth, linesFromTsv, joinWrapped, readRecipientImages, fetchRecipientImages,
+  pngWidth, linesFromTsv, joinWrapped, tidy, readRecipientImages, fetchRecipientImages,
   captureShopeeRecipients, loadShopeeRecipients, applyShopeeRecipients, RECIPIENT_DOC,
 } from '../src/shopee/recipient.js';
 import { deleteDoc } from '../src/store/index.js';
@@ -48,6 +48,21 @@ test('a word that ended at the edge is told apart from one that was cut', () => 
   // And the cuts that must stay cuts.
   assert.equal(joinWrapped([{ text: 'dah), KOTA MAKAS', right: 216 }, { text: 'SAR, TAMALATE', right: 150 }], 227), 'dah), KOTA MAKASSAR, TAMALATE');
   assert.equal(joinWrapped([{ text: 'Jalan Andi Tonro V B', right: 226 }, { text: 'lok A3', right: 60 }], 227), 'Jalan Andi Tonro V Blok A3');
+});
+
+test('the everyday misreads are put right', () => {
+  // Every one of these came off a real label on the first day.
+  assert.equal(tidy('lffan Darmawan'), 'Iffan Darmawan');
+  assert.equal(tidy('Jalan Pantai |ndah Kapuk No. 25'), 'Jalan Pantai Indah Kapuk No. 25');
+  assert.equal(tidy('SENEN, |D, 10430'), 'SENEN, ID, 10430');
+  assert.equal(tidy('KOTA JAKARTASELATAN, PASAR MINGGU, DK| JAKARTA'), 'KOTA JAKARTA SELATAN, PASAR MINGGU, DKI JAKARTA');
+  assert.equal(tidy('WIYUNG, JAWATIMUR, ID'), 'WIYUNG, JAWA TIMUR, ID');
+  assert.equal(tidy('KOTABATAM, LUBUK BAJA'), 'KOTA BATAM, LUBUK BAJA');
+  assert.equal(tidy('KAB.BEKASI, KARANGBAHAGIA'), 'KAB. BEKASI, KARANGBAHAGIA');
+  // And what must stay as it is.
+  assert.equal(tidy('KAB. KOTABARU, KALIMANTAN SELATAN'), 'KAB. KOTABARU, KALIMANTAN SELATAN');
+  assert.equal(tidy('KOTA BALIKPAPAN'), 'KOTA BALIKPAPAN');
+  assert.equal(tidy('lala shop, Jl. Lobak III'), 'lala shop, Jl. Lobak III');
 });
 
 test('a short line broke at a space and gets one back', () => {

@@ -280,7 +280,10 @@ export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1
   let noteY = y - 28;
   text('Catatan :', { at: noteY, size: 8, face: bold });
   noteY -= 22;
-  for (const line of wrap(font, order.note || '', 7.5, cols[5] - pad - 10, 6)) {
+  // The memo in Jurnal ends with who typed the sale in; that is for the books, not
+  // for the customer holding this page.
+  const customerNote = String(order.note ?? '').replace(/\s*-?\s*ditambahkan oleh .*$/i, '').trim();
+  for (const line of wrap(font, customerNote, 7.5, cols[5] - pad - 10, 6)) {
     text(line, { at: noteY, size: 7.5 });
     noteY -= 10;
   }

@@ -127,3 +127,11 @@ test('a voucher taken off the whole basket is shown as the discount, so the rows
   assert.ok(pdf.includes('68.750,00'), 'the voucher is the discount');
   assert.ok(pdf.includes('416.250,00'), 'and the total is what was paid');
 });
+
+test('the note on the invoice never says who typed the sale in', async () => {
+  const pdf = pdfText(await buildFaktur(order({ channel: 'manual', id: 'DP-260921-00001AD', note: 'WhatsApp Order - ditambahkan oleh Rindang' }), { printedAt: 1789199999 }));
+  assert.ok(pdf.includes('WhatsApp Order'), 'the note itself stays');
+  assert.ok(!pdf.includes('ditambahkan oleh'), 'the author suffix is for Jurnal, not the customer');
+  const bare = pdfText(await buildFaktur(order({ channel: 'manual', id: 'DP-260921-00001AD', note: 'ditambahkan oleh Rindang' }), { printedAt: 1789199999 }));
+  assert.ok(!bare.includes('Rindang'));
+});

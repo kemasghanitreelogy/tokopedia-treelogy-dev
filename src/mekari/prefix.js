@@ -88,6 +88,37 @@ export function orderPrefix(order) {
  * Shopify's own name already starts with a #, which would read as SHF-#10848; the hash
  * carries no information once the prefix says where the order came from, so it goes.
  */
+/**
+ * Words that only say which source a typed-in sale came from.
+ *
+ * Keyed by prefix so the test is narrow: "WhatsApp Order" is boilerplate on a DP sale
+ * and an instruction on nobody else's.
+ */
+const SOURCE_WORDS = {
+  CS: ['consignment', 'konsinyasi', 'titipan'],
+  LB: ['labrisa'],
+  DP: ['whatsapp', 'wa', 'directsales', 'directsale', 'direct'],
+  DW: ['walkin', 'walkinorder', 'offline'],
+  WS: ['wholesale', 'grosir'],
+};
+
+/**
+ * The note as a customer-facing document should print it.
+ *
+ * Two things come off. The memo carries "- ditambahkan oleh X" so the books know who
+ * typed the sale in; an invoice and a parcel label are read by the customer, and that
+ * is not their business. And a note that says nothing but where the sale came from -
+ * "WhatsApp Order" on a WhatsApp sale - is a filing habit, not an instruction: the code
+ * printed under the barcode already says as much. Anything else is printed whole, on
+ * purpose: a note with a real instruction in it must never be edited down by guesswork.
+ */
+export function customerNote(order) {
+  const note = String(order?.note ?? '').replace(/\s*-?\s*ditambahkan oleh .*$/i, '').trim();
+  if (!note || order?.channel !== 'manual') return note;
+  const flat = note.toLowerCase().replace(/\b(order|orderan|sales?)\b/g, '').replace(/[^a-z]+/g, '');
+  return (SOURCE_WORDS[order.source] ?? []).includes(flat) ? '' : note;
+}
+
 export function orderCode(order) {
   if (order.channel === 'manual') return String(order.id ?? '');
   const bare = String(order.id ?? '').replace(/^#/, '');

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
+import { customerNote } from '../mekari/prefix.js';
 
 /**
  * The packing label for a Shopify order, drawn here rather than fetched.
@@ -16,6 +17,8 @@ import { wibDate } from '../range.js';
  */
 
 const GRAY = rgb(0.42, 0.42, 0.42);
+// The one coloured thing on the sheet: a packing instruction the bench must not miss.
+const RED = rgb(0.78, 0.13, 0.11);
 const BLACK = rgb(0, 0, 0);
 
 /* ------------------------------------------------------------------ Code 128 */
@@ -347,10 +350,8 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
   y -= 11;
   page.drawText('Catatan', { x: pad + 2, y, size: 6.5, font, color: GRAY });
   page.drawText(': ', { x: pad + 36, y, size: 6.5, font, color: GRAY });
-  // The label rides on the parcel to the customer, so the memo's "who typed this in"
-  // stays in the books and off the box.
-  const packerNote = String(order.note ?? '').replace(/\s*-?\s*ditambahkan oleh .*$/i, '').trim();
-  page.drawText(fit(font, packerNote, 6.5, inner * 0.55), { x: pad + 44, y, size: 6.5, font });
+  const packerNote = customerNote(order);
+  page.drawText(fit(bold, packerNote, 6.5, inner * 0.55), { x: pad + 44, y, size: 6.5, font: bold, color: RED });
   rightText(`Total Qty : ${total}`, { size: 6.5, at: y, face: bold });
   y -= 5;
   line(y);

@@ -191,6 +191,10 @@ test('a typed-in sale prints on the same sheet, under its source and the house m
   assert.ok(!pdf.includes('direct sales'), 'nor does it print how we classify the sale');
   const noted = pdfText(await buildShopifyLabel({ ...manual, note: 'Bungkus kado - ditambahkan oleh Rindang' }, { pick: '000000901', printedAt: 1789199999 }));
   assert.ok(noted.includes('Bungkus kado') && !noted.includes('ditambahkan oleh'), 'the author suffix stays off the box');
+  // The instruction is the one coloured thing on the sheet, so the bench cannot miss it.
+  assert.match(noted, /0\.78 0\.13 0\.11 rg/, 'the note is drawn in red');
+  // And a note that only names the source is not an instruction at all.
+  assert.ok(!pdf.includes('WhatsApp Order'), 'the filing habit stays off the box');
 
   // The sheet resolves it like a Shopify parcel, keyed by channel and id.
   const sheet = await buildLabelSheet({

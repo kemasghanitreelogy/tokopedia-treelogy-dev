@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PREFIXES, MANUAL_SOURCES, orderPrefix, orderCode, shopifyPrefix, isManualSource } from '../src/mekari/prefix.js';
+import { PREFIXES, MANUAL_SOURCES, orderPrefix, orderCode, shopifyPrefix, isManualSource, customerNote } from '../src/mekari/prefix.js';
 import { SOURCES, sourceOf } from '../src/mekari/sources.js';
 import { customIdFor } from '../src/mekari/invoice.js';
 
@@ -138,4 +138,24 @@ test('the codes on the two sides of a Shopify order differ, and only one of them
   const undetected = { ...detected, gateways: [] };
   assert.notEqual(orderCode(detected), orderCode(undetected));
   assert.equal(customIdFor(detected), customIdFor(undetected), 'kunci berubah saat deteksi gateway gagal');
+});
+
+test('a customer-facing note drops the books\' bookkeeping and the filing habit', () => {
+  const dp = (note) => customerNote({ channel: 'manual', source: 'DP', note });
+  // Who typed it in belongs in Jurnal, never on a page the customer holds.
+  assert.equal(dp('Bungkus kado - ditambahkan oleh Rindang'), 'Bungkus kado');
+  assert.equal(dp('ditambahkan oleh Rindang'), '');
+  // A note that only names the source says nothing the code under the barcode does not.
+  assert.equal(dp('WhatsApp Order'), '');
+  assert.equal(dp('whatsapp'), '');
+  assert.equal(customerNote({ channel: 'manual', source: 'CS', note: 'Consignment' }), '');
+  assert.equal(customerNote({ channel: 'manual', source: 'DW', note: 'Walk-in' }), '');
+  // The same words on another source are somebody telling us something.
+  assert.equal(customerNote({ channel: 'manual', source: 'CS', note: 'WhatsApp Order' }), 'WhatsApp Order');
+  // A real instruction is never edited down, even when it starts with the habit.
+  assert.equal(dp('WhatsApp Order, bungkus kado'), 'WhatsApp Order, bungkus kado');
+  assert.equal(dp('titip di toko A, tempo 7 hari'), 'titip di toko A, tempo 7 hari');
+  // Marketplace notes are the buyer's own words and are left alone.
+  assert.equal(customerNote({ channel: 'shopify', note: 'Tolong bubble wrap' }), 'Tolong bubble wrap');
+  assert.equal(customerNote({}), '');
 });

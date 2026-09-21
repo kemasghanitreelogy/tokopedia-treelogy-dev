@@ -881,8 +881,11 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   cursor:pointer; border:1px solid var(--line); background:var(--panel-2); color:var(--muted);
   transition:color var(--t-base) var(--ease-out),border-color var(--t-base) var(--ease-out)}
 .edit button:hover{color:var(--fg); border-color:var(--brand)}
-.apply{display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; padding:1rem;
-  border-top:1px solid var(--line)}
+/* The commit bar follows the list down the page: on a thirty-label day the button is
+   never something you have to scroll back for. */
+.apply{position:sticky; bottom:0; z-index:5; display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; padding:1rem;
+  border-top:1px solid var(--line); background:color-mix(in srgb,var(--panel) 82%,transparent);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px)}
 .apply button{font:inherit; font-size:.85rem; font-weight:600; padding:.55rem 1.25rem; min-height:42px;
   border-radius:999px; cursor:pointer; color:#fff; border:1px solid transparent;
   background:linear-gradient(155deg,var(--cta-a),var(--cta-b));
@@ -957,7 +960,7 @@ select.dr__in{width:auto; text-align:left; cursor:pointer}
 /* ---- filters + table ---- */
 .panel{background:var(--glass); backdrop-filter:blur(var(--blur)) saturate(1.2); -webkit-backdrop-filter:blur(var(--blur)) saturate(1.2);
   border:1px solid var(--glass-line); border-radius:var(--radius);
-  box-shadow:var(--shadow), inset 0 1px 0 rgba(255,255,255,.04); overflow:hidden}
+  box-shadow:var(--shadow), inset 0 1px 0 rgba(255,255,255,.04); overflow:clip}
 .filters{display:flex; flex-wrap:wrap; gap:.45rem; padding:1rem; border-bottom:1px solid var(--line); align-items:center}
 .chip{font:inherit; font-size:.8rem; padding:.4rem .85rem; min-height:34px; border-radius:999px; cursor:pointer;
   border:1px solid var(--glass-line); background:var(--glass); color:var(--muted); transition:color .2s,border-color .2s,background .2s}

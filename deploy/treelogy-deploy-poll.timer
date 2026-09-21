@@ -1,0 +1,11 @@
+# /etc/systemd/system/treelogy-deploy-poll.timer
+[Unit]
+Description=Treelogy: setiap 3 menit, pastikan main yang di GitHub sudah terpasang
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

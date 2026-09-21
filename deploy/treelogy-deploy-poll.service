@@ -1,0 +1,11 @@
+# /etc/systemd/system/treelogy-deploy-poll.service  (dijalankan treelogy-deploy-poll.timer)
+[Unit]
+Description=Treelogy: cek apakah webhook deploy terlewat
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+ExecStart=/opt/treelogy/app/deploy/deploy-poll.sh

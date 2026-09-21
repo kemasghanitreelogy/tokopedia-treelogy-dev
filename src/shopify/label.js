@@ -339,7 +339,10 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
   y -= 11;
   page.drawText('Catatan', { x: pad + 2, y, size: 6.5, font, color: GRAY });
   page.drawText(': ', { x: pad + 36, y, size: 6.5, font, color: GRAY });
-  page.drawText(fit(font, order.note || '', 6.5, inner * 0.55), { x: pad + 44, y, size: 6.5, font });
+  // The label rides on the parcel to the customer, so the memo's "who typed this in"
+  // stays in the books and off the box.
+  const packerNote = String(order.note ?? '').replace(/\s*-?\s*ditambahkan oleh .*$/i, '').trim();
+  page.drawText(fit(font, packerNote, 6.5, inner * 0.55), { x: pad + 44, y, size: 6.5, font });
   rightText(`Total Qty : ${total}`, { size: 6.5, at: y, face: bold });
   y -= 5;
   line(y);

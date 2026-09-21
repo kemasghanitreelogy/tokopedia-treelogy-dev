@@ -187,6 +187,8 @@ test('a typed-in sale prints on the same sheet, under its source and the house m
     assert.ok(pdf.includes(wanted), `label tidak memuat ${wanted}`);
   }
   assert.ok(!pdf.includes('Shopify'), 'a typed-in parcel does not claim to be from Shopify');
+  const noted = pdfText(await buildShopifyLabel({ ...manual, note: 'Bungkus kado - ditambahkan oleh Rindang' }, { pick: '000000901', printedAt: 1789199999 }));
+  assert.ok(noted.includes('Bungkus kado') && !noted.includes('ditambahkan oleh'), 'the author suffix stays off the box');
 
   // The sheet resolves it like a Shopify parcel, keyed by channel and id.
   const sheet = await buildLabelSheet({

@@ -312,7 +312,12 @@ export function pager(paged, { baseQuery, noun }) {
   </nav>`;
 }
 
-/** The tag a row wears: the marketplace, or for a typed-in sale the source it was typed in for. */
+/**
+ * The tag a row wears: the marketplace, or for a typed-in sale the source it was typed
+ * in for. Every list that shows a channel goes through here - orders, the popup, the
+ * worklist, the Jurnal ledger, the label queue - because "Manual" tells the operator
+ * nothing and "WhatsApp / direct sales" tells them where the parcel came from.
+ */
 function channelTag(order) {
   const meta = channelMeta(order.channel);
   const source = order.channel === 'manual' ? PREFIXES[order.source]?.label : null;
@@ -320,7 +325,6 @@ function channelTag(order) {
 }
 
 function row(order, index) {
-  const meta = channelMeta(order.channel);
   const stage = STAGE_META[order.stage];
   const track = order.tracking
     ? `<span class="mono">${escape(order.tracking)}</span>`
@@ -348,7 +352,6 @@ function row(order, index) {
  * here, once, which is why the dialog copies markup instead of parsing a data attribute.
  */
 function orderDetail(order, index) {
-  const meta = channelMeta(order.channel);
   const stage = STAGE_META[order.stage];
   const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
   const units = lines.reduce((n, l) => n + (Number(l.qty) || 0), 0);
@@ -1969,14 +1972,13 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const early = rows.filter(({ order }) => order.createdAt < cutoff).length;
 
   const card = ({ order: o }) => {
-    const ch = channelMeta(o.channel);
     return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
       data-early="${o.createdAt < cutoff ? '1' : '0'}">
       <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
         aria-label="Pilih ${escape(o.id)}">
       <span class="wo__body">
         <span class="wo__top">
-          <span class="tag" style="--accent:${ch.accent}">${escape(ch.label)}</span>
+          ${channelTag(o)}
           <span class="wo__when">${escape(dateTime(o.createdAt, o.channel))}</span>
         </span>
         <span class="wo__id mono">${escape(o.id)}</span>
@@ -2204,10 +2206,9 @@ export function renderJurnal({
   const paged = paginate(sorted, paging);
   const rows = paged.items
     .map((r) => {
-      const meta = channelMeta(r.order.channel);
       const state = JURNAL_STATE[r.state];
       return `<tr data-state="${r.state}">
-        <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
+        <td>${channelTag(r.order)}</td>
         <td class="mono nowrap">${escape(orderCode(r.order))}</td>
         <td class="nowrap dim">${escape(dateTime(r.order.createdAt, r.order.channel))}</td>
         <td class="num mono">${r.total ? escape(rupiah(r.total)) : '<span class="dim">&mdash;</span>'}</td>
@@ -3051,7 +3052,6 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
 
   const rows = candidates
     .map(({ order: o, readiness }) => {
-      const meta = channelMeta(o.channel);
       const stage = STAGE_META[o.stage];
       // Everything listed is printable, so everything listed starts ticked.
       ticked += 1;
@@ -3061,7 +3061,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
       return `<tr>
         <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${checked}
           aria-label="Cetak label ${escape(o.id)}"></td>
-        <td><span class="tag" style="--accent:${meta.accent}">${escape(meta.label)}</span></td>
+        <td>${channelTag(o)}</td>
         <td>
           <span class="mono nowrap">${escape(o.id)}</span>
           <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>

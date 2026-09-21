@@ -833,6 +833,28 @@ test('the process page can select everything that still makes today van', async 
   assert.ok(!allEarly.includes('data-early>'), 'tombolnya tidak muncul kalau semua sama');
 });
 
+test('every list names the source a typed-in sale came from, never just "Manual"', () => {
+  const manual = {
+    channel: 'manual', id: 'DP-260921-00001AD', source: 'DP', createdAt: 1789992000, status: 'MANUAL', stage: 'completed',
+    customer: 'Dian Novitasari', buyer: 'Dian Novitasari', buyerPhone: '0812-0000-0000', shipTo: 'Jl. Nakula Sadewa V, Salatiga',
+    carrier: 'Lion Parcel', tracking: '', total: 795000, currency: 'IDR', items: 1, lines: [],
+    finance: { lines: [{ sku: 'OMC-180-001', name: 'Moringa Capsules', qty: 1, unitPrice: 795000, unitDiscount: 0 }], shipping: 0 },
+  };
+  const pagesWithManual = [
+    ['orders', renderDashboard({ orders: [manual], summary: summarize([manual]), ...common })],
+    ['labels', labelPage([manual])],
+    ['jurnal', renderJurnal({ overview: jurnalOverview({ orders: [manual] }), live: false, depositTo: null, configured: true, ...common })],
+  ];
+  for (const [name, html] of pagesWithManual) {
+    assert.match(html, /<span class="tag" style="--accent:#C2531C">WhatsApp \/ direct sales<\/span>/, `${name} tidak menyebut sumbernya`);
+    assert.ok(!/<span class="tag"[^>]*>Manual</.test(html), `${name} masih menulis "Manual"`);
+  }
+
+  // A source we do not recognise still gets a tag rather than an empty cell.
+  const odd = renderDashboard({ orders: [{ ...manual, source: 'ZZ' }], summary: summarize([manual]), ...common });
+  assert.match(odd, /<span class="tag" style="--accent:#C2531C">Manual<\/span>/);
+});
+
 test('a typed-in sale sits in the order list, opens, and offers its invoice', () => {
   const manual = {
     channel: 'manual', id: 'CS-260921-0000125', createdAt: 1789992000, status: 'MANUAL', stage: 'completed',

@@ -114,3 +114,16 @@ test('a discounted line shows its discount, so the table and the total agree', a
   assert.ok(pdf.includes('973.250,00'), 'jumlah baris sudah dipotong');
   assert.ok(!pdf.includes('1.145.000,00\n'), 'harga penuh tidak menjadi subtotal');
 });
+
+test('a voucher taken off the whole basket is shown as the discount, so the rows add up', async () => {
+  // Shopee: one line at 485.000 with no line discount, a 68.750 voucher on the order,
+  // 416.250 paid. The invoice used to print Sub Total 485.000, Diskon 0, Grand Total
+  // 416.250 - three numbers that could not all be true.
+  const bytes = await buildFaktur(order({
+    channel: 'shopee', id: '260921JXKTVPFW', total: 416250,
+    finance: { lines: [{ sku: 'OMP-45-001', name: 'Moringa Powder 45g', qty: 1, unitPrice: 485000, unitDiscount: 0 }], shipping: 0 },
+  }), { printedAt: 1789199999 });
+  const pdf = pdfText(bytes);
+  assert.ok(pdf.includes('68.750,00'), 'the voucher is the discount');
+  assert.ok(pdf.includes('416.250,00'), 'and the total is what was paid');
+});

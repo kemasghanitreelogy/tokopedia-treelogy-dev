@@ -243,6 +243,11 @@ export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1
   // --- what it comes to
   const shipping = Number(order.finance?.shipping) || 0;
   const grand = Number(order.total) || subtotal + shipping;
+  // What the lines add up to and what the buyer paid can differ by an order-level
+  // voucher the platform took off the whole basket rather than off a line. A document
+  // whose rows do not add up to its total is one nobody trusts, so the gap is shown
+  // for what it is.
+  const discount = Math.max(0, subtotal + shipping - grand);
 
   y -= 16;
   rightOf('Total Qty', { x: cols[2] - 6, at: y, size: 8, face: bold });
@@ -250,7 +255,7 @@ export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1
 
   const summary = [
     ['Sub Total', money(subtotal), false],
-    ['Diskon', money(0), false],
+    ['Diskon', money(discount), false],
     ['Diskon Lainnya', money(0), false],
     ['Potongan Biaya', money(0), false],
     ['Pajak', money(0), false],

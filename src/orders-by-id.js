@@ -1,6 +1,7 @@
 import { ordersByIds } from './db/orders.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { fetchOrdersByIds } from './omni.js';
+import { loadShopeeRecipients, applyShopeeRecipients } from './shopee/recipient.js';
 
 /**
  * The orders behind a selection, as fast as they can honestly be had.
@@ -27,7 +28,9 @@ export async function ordersForPrinting(selection, {
   readStored = ordersByIds,
   readLive = fetchOrdersByIds,
   hasDatabase = isSupabaseConfigured,
+  readRecipients = loadShopeeRecipients,
 } = {}) {
+  const named = async (orders) => applyShopeeRecipients(orders, await readRecipients().catch(() => null));
   const wanted = selection
     .map(({ channel, id }) => ({ channel: String(channel ?? ''), id: String(id ?? '') }))
     .filter((row) => row.channel && row.id);
@@ -40,14 +43,14 @@ export async function ordersForPrinting(selection, {
   // A typed-in sale lives only in the table; no platform can be asked for it.
   const missing = wanted.filter((row) => !found.has(`${row.channel}:${row.id}`) && row.channel !== 'manual');
   if (missing.length === 0) {
-    return { orders: [...found.values()], errors: {}, fromDb: found.size, fromPlatform: 0 };
+    return { orders: await named([...found.values()]), errors: {}, fromDb: found.size, fromPlatform: 0 };
   }
 
   const live = await readLive(missing).catch((error) => ({ orders: [], errors: { all: error.message } }));
   for (const order of live.orders) found.set(`${order.channel}:${order.id}`, order);
 
   return {
-    orders: [...found.values()],
+    orders: await named([...found.values()]),
     errors: live.errors ?? {},
     fromDb: found.size - live.orders.length,
     fromPlatform: live.orders.length,

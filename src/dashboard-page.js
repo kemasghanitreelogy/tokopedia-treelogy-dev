@@ -373,6 +373,7 @@ function orderDetail(order, index) {
 
     <dl class="od__grid">
       ${field('Pembeli', order.buyer)}
+      ${field('Username Shopee', order.buyerUsername, true)}
       ${field('Telepon', order.buyerPhone, true)}
       ${field('Email', order.buyerEmail)}
       ${field('Kurir', order.carrier)}

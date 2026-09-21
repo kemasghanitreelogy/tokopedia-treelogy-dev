@@ -5,6 +5,7 @@ import { ordersInRange, readCoverage, recordCoverage, saveOrders, coversRange } 
 import { resolveRange } from './range.js';
 import { withinDays, ZONE_SPREAD_SECONDS } from './clock.js';
 import { cached, invalidate } from './cache.js';
+import { loadShopeeRecipients, applyShopeeRecipients } from './shopee/recipient.js';
 
 /**
  * Where a reader gets its orders: the database when it can answer, the platforms when it
@@ -106,9 +107,13 @@ export async function loadOrders({
   // 1 September window came back with 84 orders where the day holds 59.
   readStored = ordersInRange,
   readLive = collectOrders,
+  readRecipients = loadShopeeRecipients,
   ...rest
 } = {}) {
   const asked = range ?? resolveRange(rest);
+  // Shopee's masked buyers, named from what was captured while their parcels were
+  // printable. One read of a small document, applied on every path out of here.
+  const named = async (orders) => applyShopeeRecipients(orders, await readRecipients().catch(() => null));
 
   // Fetched an hour wide on both ends, then filtered by each platform's own calendar day.
   //
@@ -142,7 +147,7 @@ export async function loadOrders({
 
   if (!isSupabaseConfigured()) {
     const live = await readLive({ range: window, maxPerPlatform, tracking });
-    return { ...live, orders: inRange([...live.orders, ...await manualRows()]), range: asked, from: 'live' };
+    return { ...live, orders: await named(inRange([...live.orders, ...await manualRows()])), range: asked, from: 'live' };
   }
 
   const sources = activeSources();
@@ -166,7 +171,7 @@ export async function loadOrders({
       // Typed-in sales are written straight to the table when they are saved, so they
       // need no coverage claim: the table is their only source.
       const channels = [...sources.flatMap((source) => SOURCE_CHANNELS[source] ?? []), 'manual'];
-      const orders = inRange(await readStored({ since: window.since, until: window.until, channels }));
+      const orders = await named(inRange(await readStored({ since: window.since, until: window.until, channels })));
       return {
         orders,
         errors: {},
@@ -186,7 +191,7 @@ export async function loadOrders({
   // Stored as read - the wider set is genuinely what we fetched, and throwing away the
   // hour at each edge would leave a hole the next reader has to pay for again.
   await rememberOrders(live, window);
-  return { ...live, orders: inRange([...live.orders, ...await manualRows()]), range: asked, from: 'live' };
+  return { ...live, orders: await named(inRange([...live.orders, ...await manualRows()])), range: asked, from: 'live' };
 }
 
 /**

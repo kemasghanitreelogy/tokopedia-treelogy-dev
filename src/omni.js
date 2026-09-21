@@ -5,6 +5,7 @@ import { refreshAccessToken as refreshTikTokToken, persistTokens, hydrateFromBun
 import { accessTokenExpired } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi, getOrderList } from './shopee/client.js';
+import { captureShopeeRecipients } from './shopee/recipient.js';
 import { resolveRange, chunkRange } from './range.js';
 import { fetchOrders as fetchShopifyOrders } from './shopify/shop.js';
 import { isShopifyConfigured } from './shopify/config.js';
@@ -227,8 +228,10 @@ export function mapShopeeOrder(o) {
     carrier: o.shipping_carrier ?? '',
     tracking: '',
     buyer: o.buyer_username ?? '',
-    // Shopee masks the whole address - every field comes back as "****" - so there is
-    // nothing to carry here beyond the username.
+    // Shopee masks the whole address here - every field comes back as "****" - so the
+    // detail carries only the username. The name, phone and address are captured
+    // separately from the shipping-document feed while the parcel is printable, and
+    // put back on the order by applyShopeeRecipients wherever orders are read.
     buyerEmail: '',
     buyerPhone: '',
     shipTo: '',
@@ -417,6 +420,8 @@ export async function fetchShopeeOrders({ since, until, max, tracking = true }) 
     .filter((o) => Number(o.create_time) >= since && Number(o.create_time) <= until)
     .map(mapShopeeOrder);
 
+  // Whoever is in the printable window right now gets named; nothing here can fail the read.
+  await captureShopeeRecipients(orders, { config, auth }).catch((error) => console.warn(`shopee/recipient: ${error.message}`));
   if (tracking) await attachShopeeTracking(config, auth, orders);
 
   return { orders, shop, refreshed, truncated: summaries.length > max };
@@ -506,7 +511,9 @@ export async function fetchOrdersByIds(selection) {
             'order_status,shipping_carrier,buyer_username,create_time,package_list,item_list,total_amount',
         }).then((r) => r.response.order_list ?? []),
       );
-      return pages.flat().map(mapShopeeOrder);
+      const orders = pages.flat().map(mapShopeeOrder);
+      await captureShopeeRecipients(orders, { config, auth }).catch((error) => console.warn(`shopee/recipient: ${error.message}`));
+      return orders;
     })(),
     (async () => {
       if (shopifyIds.length === 0 || !isShopifyConfigured()) return [];

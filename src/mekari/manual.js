@@ -121,7 +121,7 @@ const money = (value, field) => {
 /**
  * Turn submitted form fields into the order shape the rest of the system already speaks.
  *
- * @param {{source, code, date, customer, note, shipping, paid, depositTo, lines, addedBy?: string}} input
+ * @param {{source, code, date, customer?, buyer?, buyerPhone?, buyerEmail?, shipTo?, carrier?, note, shipping, paid, depositTo, lines, addedBy?: string}} input
  *   `addedBy` is the name of the person who typed the sale in. It is stamped on the end of
  *   the note - which is what Jurnal shows as the memo - so the invoice itself says who
  *   entered it, not just the activity log here.
@@ -207,16 +207,21 @@ export function buildManualOrder(input) {
   });
 
   const shipping = money(input.shipping ?? 0, 'ongkir');
-  const customer = String(input.customer ?? '').trim() || PREFIXES[source].label;
-  if (customer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
 
-  // Who the parcel goes to, which is not always who the invoice is billed to: a
-  // consignment is billed to the shop and delivered to the shop's address, but a
-  // WhatsApp sale is billed to a name and delivered to a house.
+  // One customer, typed once. The name on the form is the contact the invoice is raised
+  // against in Jurnal and the name on the parcel; left empty, the source itself is the
+  // customer, which is what a consignment shop's monthly invoice wants anyway.
   const buyer = String(input.buyer ?? '').trim();
-  if (buyer.length > 120) throw new InvoiceError('nama penerima terlalu panjang');
+  if (buyer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
+  const customer = String(input.customer ?? '').trim() || buyer || PREFIXES[source].label;
+  if (customer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
   const buyerPhone = String(input.buyerPhone ?? '').trim();
   if (buyerPhone.length > 40) throw new InvoiceError('nomor telepon terlalu panjang');
+  const buyerEmail = String(input.buyerEmail ?? '').trim();
+  if (buyerEmail.length > 120) throw new InvoiceError('email terlalu panjang');
+  // Jurnal validates the email itself and rejects the whole invoice over it, so a typo
+  // is caught here where the operator can still fix it.
+  if (buyerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail)) throw new InvoiceError(`email "${buyerEmail}" tidak valid`);
   const shipTo = String(input.shipTo ?? '').trim();
   if (shipTo.length > 400) throw new InvoiceError('alamat terlalu panjang');
   const carrier = String(input.carrier ?? '').trim();
@@ -233,6 +238,7 @@ export function buildManualOrder(input) {
     customer,
     buyer,
     buyerPhone,
+    buyerEmail,
     shipTo,
     carrier,
     tracking: '',

@@ -2327,11 +2327,6 @@ export function renderManual({
                   <input id="date" name="date" type="date" value="${escape(today)}" max="${escape(today)}" required>
                 </div>
                 <div class="fld">
-                  <label for="customer">Pelanggan</label>
-                  <input id="customer" name="customer" list="mxcontacts" maxlength="120"
-                         placeholder="${escape(chosen.label)}" data-customer>
-                </div>
-                <div class="fld">
                   <label for="shipping">Ongkir</label>
                   <input id="shipping" name="shipping" type="number" value="0" min="0" step="1" inputmode="numeric">
                 </div>
@@ -2342,12 +2337,18 @@ export function renderManual({
               <h3 class="fset__h">Pelanggan</h3>
               <div class="flds">
                 <div class="fld">
-                  <label for="buyer">Nama penerima</label>
-                  <input id="buyer" name="buyer" maxlength="120" autocomplete="off" placeholder="Nama di paket">
+                  <label for="buyer">Nama pelanggan</label>
+                  <input id="buyer" name="buyer" list="mxcontacts" maxlength="120" autocomplete="off"
+                         placeholder="Nama orang atau toko" data-customer>
+                  <span class="fld__hint" data-customer-hint>Kosong: ditagih atas nama ${escape(chosen.label)}</span>
                 </div>
                 <div class="fld">
                   <label for="buyerPhone">Nomor telepon</label>
                   <input id="buyerPhone" name="buyerPhone" type="tel" maxlength="40" autocomplete="off" placeholder="08...">
+                </div>
+                <div class="fld">
+                  <label for="buyerEmail">Email</label>
+                  <input id="buyerEmail" name="buyerEmail" type="email" maxlength="120" autocomplete="off" placeholder="nama@contoh.id">
                 </div>
                 <div class="fld">
                   <label for="carrier">Kurir</label>
@@ -2408,7 +2409,7 @@ export function renderManual({
   var lines = document.getElementById('lines');
   var template = lines.firstElementChild.cloneNode(true);
   var codeField = form.querySelector('[data-code]');
-  var customer = form.querySelector('[data-customer]');
+  var customerHint = form.querySelector('[data-customer-hint]');
   var dateField = form.querySelector('input[name="date"]');
   var shipField = form.querySelector('input[name="shipping"]');
   var go = document.getElementById('mxgo');
@@ -2582,7 +2583,8 @@ export function renderManual({
   form.addEventListener('change', function (e) {
     if (e.target.name === 'sku') { showPicture(e.target.closest('[data-row]')); fillPrice(e.target); }
     if (e.target.name === 'source') {
-      customer.placeholder = e.target.dataset.label;
+      // An empty name bills the source itself, and the hint says which.
+      if (customerHint) customerHint.textContent = 'Kosong: ditagih atas nama ' + e.target.dataset.label;
       refreshCode();
     }
     if (e.target === dateField) refreshCode();

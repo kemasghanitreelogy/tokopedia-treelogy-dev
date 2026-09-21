@@ -262,7 +262,10 @@ export function buildInvoice({ order, accounts = null }) {
     tags: [source.tag],
     // The buyer's name is masked by the marketplaces, so it belongs in the memo rather
     // than as a contact that could never be reached.
-    memo: [channel, code, order.note].filter(Boolean).join(' · '),
+    // A typed-in sale also carries the phone number here: the invoice has no field for
+    // it, and the contact only takes one the day it is created.
+    memo: [channel, code, order.note, order.channel === 'manual' && order.buyerPhone ? `Telp ${order.buyerPhone}` : '']
+      .filter(Boolean).join(' · '),
   };
 
   // Each of these is sent only when the platform actually disclosed it. An empty field

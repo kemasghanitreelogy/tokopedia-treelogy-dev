@@ -764,8 +764,13 @@ test('the manual form asks who the parcel goes to, and fills a price when one is
     live: true, seqTail: '0000001', prices: { 'OMP-45-001': 199000 }, ...common,
   });
 
-  assert.match(html, /<label for="buyer">Nama penerima<\/label>/);
+  // One customer, typed once: the name on the parcel is the contact the invoice bills,
+  // so the second "Pelanggan" box that used to sit under Detail is gone.
+  assert.ok(!html.includes('name="customer"'), 'kolom pelanggan ganda masih ada');
+  assert.match(html, /<label for="buyer">Nama pelanggan<\/label>/);
+  assert.match(html, /<input id="buyer" name="buyer" list="mxcontacts"/, 'kontak Jurnal yang sudah ada tetap bisa dipilih');
   assert.match(html, /<label for="buyerPhone">Nomor telepon<\/label>/);
+  assert.match(html, /<input id="buyerEmail" name="buyerEmail" type="email"/);
   assert.match(html, /<label for="shipTo">Alamat<\/label>/);
   assert.match(html, /<textarea id="shipTo" name="shipTo"/);
 

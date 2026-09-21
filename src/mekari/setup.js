@@ -1,5 +1,5 @@
 import { mekari } from './client.js';
-import { CUSTOMER_NAMES, productNameFor } from './invoice.js';
+import { CUSTOMER_NAMES, productNameFor, fitAddress } from './invoice.js';
 import { PRODUCTS } from '../master.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 
@@ -219,14 +219,23 @@ export async function ensureReady({ dryRun = true, readyAt = null } = {}) {
  * before writing matters more here than for the four fixed channels: two contacts with
  * the same display name would quietly split that customer's history in two.
  */
-export async function ensureContact(name, { deadlineAt = null, receivableId = null } = {}) {
+export async function ensureContact(name, { deadlineAt = null, receivableId = null, details = null, request = mekari } = {}) {
   const wanted = String(name ?? '').trim();
   if (!wanted) throw new Error('nama pelanggan kosong');
   if (knownContacts.has(wanted)) return { name: wanted, created: false };
   if (isReadOnly()) throw new ReadOnlyError(`kontak ${wanted}`);
 
+  // What the operator typed about a new customer goes onto the contact card, in the
+  // fields Jurnal's contact schema actually has (mobile, email, address, billing_address).
+  // Only on creation: a contact that already exists keeps what finance has curated, and
+  // the invoice itself still carries the address and email of this particular sale.
+  const card = {};
+  if (details?.phone) card.mobile = String(details.phone).trim().slice(0, 40);
+  if (details?.email) card.email = String(details.email).trim();
+  if (details?.address) { card.address = fitAddress(details.address); card.billing_address = card.address; }
+
   try {
-    await mekari({
+    await request({
       method: 'POST',
       path: CONTACTS_PATH,
       deadlineAt,
@@ -235,6 +244,7 @@ export async function ensureContact(name, { deadlineAt = null, receivableId = nu
           display_name: wanted,
           is_customer: true,
           is_vendor: false,
+          ...card,
           // The receivable an invoice lands in is a property of the *contact*, not of the
           // invoice - Jurnal's sales invoice payload has no account field at all, which
           // is why splitting A/R by source has to happen here, at the moment the buyer is

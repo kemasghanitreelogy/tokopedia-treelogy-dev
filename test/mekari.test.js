@@ -339,6 +339,46 @@ test('without a customer the source itself is the customer', () => {
   assert.equal(built.sales_invoice.person_name, 'Consignment');
 });
 
+test('the name typed once is both the contact billed and the name on the parcel', () => {
+  const order = buildManualOrder(manual({ customer: '', buyer: 'Dewi Lestari', buyerPhone: '0812-3456-7890', buyerEmail: 'dewi@contoh.id',
+    shipTo: 'Jln. Belida 1, Tenggarong', carrier: 'JNE' }));
+  assert.equal(order.customer, 'Dewi Lestari');
+  const invoice = buildInvoice({ order }).sales_invoice;
+  assert.equal(invoice.person_name, 'Dewi Lestari');
+  assert.equal(invoice.email, 'dewi@contoh.id');
+  assert.equal(invoice.shipping_address, 'Jln. Belida 1, Tenggarong');
+  assert.equal(invoice.address, 'Jln. Belida 1, Tenggarong');
+  assert.equal(invoice.ship_via, 'JNE');
+  assert.equal(invoice.is_shipped, true);
+  // The invoice has no phone field, so the number rides in the memo where it can be read.
+  assert.match(invoice.memo, /Telp 0812-3456-7890/);
+
+  assert.throws(() => buildManualOrder(manual({ buyerEmail: 'bukan-email' })), /email .* tidak valid/);
+  assert.ok(!buildInvoice({ order: buildManualOrder(manual()) }).sales_invoice.memo.includes('Telp'), 'tanpa telepon, memo tidak menyebutnya');
+});
+
+test('a new contact is created with the phone, email and address the operator typed', async () => {
+  const { ensureContact } = await import('../src/mekari/setup.js');
+  const calls = [];
+  const request = async (req) => { calls.push(req); return { person: { id: 1 } }; };
+  process.env.STOCK_SYNC_LIVE = process.env.STOCK_SYNC_LIVE || '';
+  const name = `Uji Kontak ${Date.now()}`;
+  await ensureContact(name, { request, receivableId: 77,
+    details: { phone: '0812-3456-7890', email: 'dewi@contoh.id', address: 'Jln. Belida 1, Tenggarong' } });
+  assert.equal(calls.length, 1);
+  const person = calls[0].body.person;
+  assert.equal(person.display_name, name);
+  assert.equal(person.mobile, '0812-3456-7890');
+  assert.equal(person.email, 'dewi@contoh.id');
+  assert.equal(person.address, 'Jln. Belida 1, Tenggarong');
+  assert.equal(person.billing_address, 'Jln. Belida 1, Tenggarong');
+  assert.equal(person.default_ar_account_id, 77);
+  assert.equal(person.is_customer, true);
+  // A name already known is never posted twice, whatever details come with it.
+  await ensureContact(name, { request, details: { phone: '000' } });
+  assert.equal(calls.length, 1);
+});
+
 test('the note reaches the invoice memo', () => {
   const built = buildInvoice({ order: buildManualOrder(manual({ note: 'titip di toko A' })) });
   assert.match(built.sales_invoice.memo, /titip di toko A/);

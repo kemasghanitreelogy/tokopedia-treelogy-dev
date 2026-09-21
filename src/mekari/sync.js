@@ -701,7 +701,12 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
  * same total check, same idempotency key - because a manual sale is a sale.
  */
 export async function postManual({ order, accounts = null, dryRun = true }) {
-  if (!dryRun && order.customer) await ensureContact(order.customer, { receivableId: await receivableIdFor(order) });
+  if (!dryRun && order.customer) {
+    await ensureContact(order.customer, {
+      receivableId: await receivableIdFor(order),
+      details: { phone: order.buyerPhone, email: order.buyerEmail, address: order.shipTo },
+    });
+  }
   const result = await runSync({ orders: [order], accounts, dryRun, limit: 1, lock: false });
   return result.results[0] ?? { status: 'failed', error: 'tidak ada yang diproses' };
 }

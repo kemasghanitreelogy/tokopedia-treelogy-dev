@@ -467,7 +467,10 @@ async function handleWrite(form, ip, user) {
       view: 'orders',
       message: result.status === 'exists'
         ? `${order.id} sudah ada di Jurnal, tidak dibuat dua kali`
-        : `${order.id} tersimpan di Jurnal senilai ${built.expectedTotal.toLocaleString('id-ID')}`,
+        : `${order.id} tersimpan di Jurnal senilai Rp${built.expectedTotal.toLocaleString('id-ID')}`,
+      // A sale typed in by hand is the one write on this dashboard that is entirely the
+      // operator's own work, so it gets the one moment of celebration.
+      celebrate: result.status === 'exists' ? null : 'Tersimpan di Jurnal',
       audit: {
         menu: 'jurnal', verb: 'add', target: order.id,
         summary: `Menambah transaksi manual ${order.id} (${order.source}) untuk ${order.customer} senilai Rp${built.expectedTotal.toLocaleString('id-ID')}${result.status === 'exists' ? ' (sudah ada di Jurnal)' : ''}`,
@@ -634,7 +637,8 @@ export default async function handler(req, res) {
     try {
       const outcome = await handleWrite(form, ip, user);
       if (outcome.audit) await recordActivity({ actor: user, ip, action, status: 'ok', ...outcome.audit });
-      redirect(`${PATH}?view=${outcome.view}&${outcome.kind === 'error' ? 'error' : 'done'}=${encodeURIComponent(outcome.message)}`);
+      redirect(`${PATH}?view=${outcome.view}&${outcome.kind === 'error' ? 'error' : 'done'}=${encodeURIComponent(outcome.message)}${
+        outcome.celebrate ? `&yay=${encodeURIComponent(outcome.celebrate)}` : ''}`);
     } catch (error) {
       console.error(`dashboard: write failed - ${error.message}`);
       await recordActivity({
@@ -718,7 +722,8 @@ export default async function handler(req, res) {
   const baseQuery = withoutPaging(url.searchParams);
 
   const flash = url.searchParams.get('done')
-    ? { kind: 'ok', text: url.searchParams.get('done') }
+    ? { kind: 'ok', text: url.searchParams.get('done'),
+        celebrate: url.searchParams.get('yay') ? { title: url.searchParams.get('yay') } : null }
     : url.searchParams.get('error')
       ? { kind: 'error', text: url.searchParams.get('error') }
       : null;
@@ -919,7 +924,7 @@ export default async function handler(req, res) {
     };
     const orders = filterOrders(data.orders, filter);
     console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'}`);
-    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery }));
+    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery, flash }));
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);
     send(502, dashboardError('Could not load orders', error.message));

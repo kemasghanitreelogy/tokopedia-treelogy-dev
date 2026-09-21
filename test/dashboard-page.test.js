@@ -828,6 +828,27 @@ test('the process page can select everything that still makes today van', async 
   assert.ok(!allEarly.includes('data-early>'), 'tombolnya tidak muncul kalau semua sama');
 });
 
+test('a saved manual sale is celebrated once, and an ordinary flash is not', () => {
+  const plain = renderDashboard({ orders: [order], summary: summarize([order]), ...common,
+    flash: { kind: 'ok', text: 'CS-260921-0000070 tersimpan di Jurnal senilai Rp2.380.000' } });
+  assert.ok(!plain.includes('id="yay"'), 'a plain success flash must not throw confetti');
+
+  const party = renderDashboard({ orders: [order], summary: summarize([order]), ...common,
+    flash: { kind: 'ok', text: 'CS-260921-0000070 tersimpan di Jurnal senilai Rp2.380.000', celebrate: { title: 'Tersimpan di Jurnal' } } });
+  assert.match(party, /<div class="yay" id="yay" role="status"/, 'the celebration overlay is missing');
+  assert.match(party, /<h2 class="yay__title">Tersimpan di Jurnal<\/h2>/);
+  assert.ok(party.includes('CS-260921-0000070 tersimpan di Jurnal senilai Rp2.380.000'), 'the overlay repeats what was saved');
+  // Deterministic confetti: the same burst every time, built on the server.
+  const particles = party.match(/class="pt pt--(dot|chip|arc)"/g) ?? [];
+  assert.equal(particles.length, 52);
+  assert.equal(party.match(/class="pt pt--/g).length, renderDashboard({ orders: [order], summary: summarize([order]), ...common,
+    flash: { kind: 'ok', text: 'x', celebrate: { title: 'y' } } }).match(/class="pt pt--/g).length);
+  // It leaves on its own, and it takes its own query flag out of the address bar.
+  assert.ok(party.includes("searchParams.delete('yay')"), 'the yay flag must be stripped so a reload cannot replay it');
+  assert.ok(party.includes('prefers-reduced-motion: reduce'), 'the celebration ignores the motion preference');
+  assert.match(party, /id="yay-ok"/, 'there is no way to dismiss it by hand');
+});
+
 test('every page carries one confirmation dialog, and nothing falls back to the browser', () => {
   for (const [name, html] of pages()) {
     if (name === 'login') continue;

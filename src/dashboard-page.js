@@ -162,6 +162,50 @@ function stat(label, value, tone = '') {
   </span>`;
 }
 
+/**
+ * The moment after a save lands: a green disc, a check that draws itself, and a burst
+ * of confetti that flies out and falls away. Two and a half seconds, then gone.
+ *
+ * Every particle is a pure function of its index - angle, speed, size, spin and colour
+ * all come from one seeded hash - so the burst is the same shape every time and the
+ * markup can be written on the server. The flight is two nested transforms: the outer
+ * span carries the sideways throw and the fade, the inner one carries the rise, the
+ * apex and the fall, so a thrown chip reads as thrown rather than as slid.
+ */
+const CONFETTI = ['#FF6B7A', '#FFB020', '#6CB8FF', '#B79CFF', '#45D19B'];
+const CONFETTI_KINDS = ['dot', 'chip', 'arc', 'dot', 'chip', 'arc', 'dot'];
+function confetti(count = 28, { seed = 0, reach = 1, wait = 0 } = {}) {
+  const prand = (n) => { const x = Math.sin(n * 127.1 + 311.7 + seed) * 43758.5453; return x - Math.floor(x); };
+  return Array.from({ length: count }, (_, i) => {
+    const angle = (i / count) * Math.PI * 2 + (prand(i * 3 + 1) - 0.5) * 0.7;
+    const speed = (105 + prand(i * 3 + 2) * 115) * reach;
+    const x = Math.cos(angle) * speed;
+    const y = Math.sin(angle) * speed * 0.85 - 30;
+    const size = 6 + prand(i * 3 + 3) * 9;
+    const spin = (prand(i * 7 + 5) - 0.5) * 900;
+    const delay = wait + Math.round(prand(i * 11 + 9) * 110);
+    return `<span class="pt pt--${CONFETTI_KINDS[(i + seed) % CONFETTI_KINDS.length]}" style="--x:${x.toFixed(0)}px;--y:${
+      y.toFixed(0)}px;--s:${size.toFixed(0)}px;--r:${spin.toFixed(0)}deg;--d:${delay}ms;--c:${CONFETTI[(i + seed) % CONFETTI.length]}"><i></i></span>`;
+  }).join('');
+}
+
+function celebration(flash) {
+  if (!flash?.celebrate) return '';
+  return `<div class="yay" id="yay" role="status" aria-live="polite">
+  <div class="yay__card">
+    <div class="yay__stage" aria-hidden="true">
+      <span class="yay__ring"></span><span class="yay__ring yay__ring--2"></span>
+      <span class="yay__glow"></span>
+      <div class="yay__field">${confetti(30)}${confetti(22, { seed: 3, reach: 1.45, wait: 520 })}</div>
+      <div class="yay__disc"><svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"><path class="yay__check" d="M13.5 25l8 8 14-17"/></svg></div>
+    </div>
+    <h2 class="yay__title">${escape(flash.celebrate.title)}</h2>
+    <p class="yay__text">${escape(flash.text)}</p>
+    <button class="yay__ok" type="button" id="yay-ok">Lanjut</button>
+  </div>
+</div>`;
+}
+
 function kpiCard({ iconName, label, value, tone = '' }) {
   return `<article class="kpi ${tone}">
     <span class="kpi__ico">${svg(iconName)}</span>
@@ -1341,6 +1385,55 @@ a.rv__product:hover{color:var(--accent)}
 .cf--bad .cf__yes{background:linear-gradient(155deg,color-mix(in srgb,var(--bad) 80%,#000),color-mix(in srgb,var(--bad) 55%,#000)); box-shadow:none}
 .cf__no:focus-visible,.cf__yes:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 
+/* --- the moment after a save: one beat of celebration, then back to work.
+   Choreography on one clock: veil 0ms, disc settles from 80ms, check draws from 380ms,
+   confetti leaves at 300ms as the check lands, words rise from 520ms, gone at 3.2s. --- */
+@keyframes yay-disc{from{opacity:0; transform:scale(.55)}to{opacity:1; transform:none}}
+@keyframes yay-ring{from{opacity:.55; transform:scale(.7)}to{opacity:0; transform:scale(1.7)}}
+@keyframes yay-draw{to{stroke-dashoffset:0}}
+@keyframes yay-glow{0%{opacity:0; transform:scale(.6)}35%{opacity:.9}100%{opacity:0; transform:scale(1.9)}}
+@keyframes yay-x{0%{opacity:0}8%{opacity:1}72%{opacity:1}100%{opacity:0; transform:translateX(var(--x))}}
+@keyframes yay-y{0%{transform:translateY(0) scale(0) rotate(0); animation-timing-function:cubic-bezier(.2,.8,.3,1)}
+  10%{transform:translateY(calc(var(--y) * .3)) scale(1) rotate(calc(var(--r) * .1))}
+  42%{transform:translateY(var(--y)) scale(1) rotate(calc(var(--r) * .45)); animation-timing-function:cubic-bezier(.5,0,.85,.4)}
+  100%{transform:translateY(calc(var(--y) + 170px)) scale(.9) rotate(var(--r))}}
+.yay{position:fixed; inset:0; z-index:70; display:grid; place-items:center; padding:1rem;
+  background:color-mix(in srgb,#0A0F0D 58%,transparent); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  animation:veil 240ms var(--ease-out) both}
+.yay.is-out{animation:veil 260ms var(--ease-out) reverse both; pointer-events:none}
+.yay__card{width:min(24rem,calc(100vw - 2rem)); padding:1.6rem 1.6rem 1.5rem; text-align:center; border-radius:26px;
+  border:1px solid var(--glass-line); background:color-mix(in srgb,var(--panel) 90%,transparent);
+  backdrop-filter:blur(24px) saturate(1.4); -webkit-backdrop-filter:blur(24px) saturate(1.4);
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.07);
+  animation:pop 320ms var(--ease-out) both}
+.yay__stage{position:relative; width:168px; height:168px; margin:.2rem auto .9rem; display:grid; place-items:center}
+.yay__disc{position:relative; z-index:2; width:118px; height:118px; border-radius:50%; display:grid; place-items:center;
+  background:#45D19B; box-shadow:0 18px 40px -16px rgba(69,209,155,.75), inset 0 1px 0 rgba(255,255,255,.35);
+  animation:yay-disc 520ms cubic-bezier(.16,1,.3,1) 80ms both}
+.yay__disc svg{width:64px; height:64px}
+.yay__check{stroke-dasharray:36; stroke-dashoffset:36; animation:yay-draw 420ms var(--ease-out) 380ms forwards}
+.yay__ring{position:absolute; z-index:1; width:118px; height:118px; border-radius:50%; border:2px solid #45D19B;
+  animation:yay-ring 900ms var(--ease-out) 320ms both}
+.yay__ring--2{animation-delay:480ms}
+.yay__glow{position:absolute; z-index:0; width:150px; height:150px; border-radius:50%;
+  background:radial-gradient(circle,rgba(69,209,155,.55),rgba(255,176,32,.25) 55%,transparent 72%);
+  animation:yay-glow 1100ms var(--ease-out) 300ms both}
+.yay__field{position:absolute; z-index:1; left:50%; top:50%; width:0; height:0; pointer-events:none}
+.pt{position:absolute; left:0; top:0; display:block; width:var(--s); height:var(--s); margin:calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+  opacity:0; animation:yay-x 1150ms cubic-bezier(.15,.6,.35,1) calc(300ms + var(--d)) both; will-change:transform,opacity}
+.pt i{display:block; width:100%; height:100%; animation:yay-y 1150ms calc(300ms + var(--d)) both; will-change:transform}
+.pt--dot i{border-radius:50%; background:var(--c)}
+.pt--chip i{border-radius:2px; background:var(--c); height:60%}
+.pt--arc i{border-radius:50%; border:3px solid transparent; border-top-color:var(--c); border-right-color:var(--c); background:none}
+.yay__title{margin:0; font-size:1.35rem; font-weight:600; letter-spacing:-.025em; animation:rise 360ms var(--ease-out) 520ms both}
+.yay__text{margin:.4rem 0 0; font-size:.88rem; line-height:1.5; color:var(--muted); overflow-wrap:anywhere; animation:rise 360ms var(--ease-out) 580ms both}
+.yay__ok{margin-top:1.25rem; width:100%; font:inherit; font-size:.9rem; font-weight:600; min-height:46px; padding:.7rem; border-radius:999px;
+  cursor:pointer; color:#fff; border:1px solid transparent; background:linear-gradient(155deg,var(--fill-a),var(--fill-b));
+  animation:rise 360ms var(--ease-out) 640ms both; transition:filter var(--t-fast) var(--ease-out)}
+.yay__ok:hover{filter:brightness(1.1)}
+.yay__ok:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+@media (prefers-reduced-motion:reduce){ .yay__field{display:none} .yay__check{stroke-dashoffset:0} }
+
 /* --- who is signed in: a small identity chip that doubles as a link to their own trail --- */
 .who{display:inline-flex; align-items:center; gap:.5rem; padding:.2rem .75rem .2rem .2rem; min-height:38px; border-radius:999px;
   border:1px solid transparent; background:transparent; text-decoration:none; color:inherit;
@@ -1383,6 +1476,7 @@ ${style}
     <p class="loader__note"><span class="loader__dots" aria-hidden="true"><i></i><i></i><i></i></span><span id="loader-text">Memuat…</span></p>
   </div>
 </div>
+${celebration(flash)}
 <div class="wrap">
   <header class="top">
     <a class="brandline" href="?view=orders" aria-label="Treelogy, ke halaman pesanan">
@@ -1537,6 +1631,33 @@ ${style}
   }
   window.treelogyConfirm = ask;
 
+  // The celebration closes itself, on a click, on Escape or Enter, and takes its own
+  // query flag out of the address bar so a reload or the back button cannot replay it.
+  var yay = document.getElementById('yay');
+  if (yay) {
+    var yayOk = document.getElementById('yay-ok');
+    var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var yayGone = false;
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+    try {
+      var here = new URL(window.location.href);
+      if (here.searchParams.has('yay')) {
+        here.searchParams.delete('yay');
+        window.history.replaceState(null, '', here.pathname + here.search + here.hash);
+      }
+    } catch (e) {}
+    function yayClose() {
+      if (yayGone) return;
+      yayGone = true;
+      yay.classList.add('is-out');
+      window.setTimeout(function () { if (yay.parentNode) yay.parentNode.removeChild(yay); }, calm ? 0 : 280);
+    }
+    yayOk.addEventListener('click', yayClose);
+    yay.addEventListener('click', function (e) { if (e.target === yay) yayClose(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' || e.key === 'Enter') yayClose(); });
+    window.setTimeout(yayClose, calm ? 1800 : 3200);
+  }
+
   /*
    * Everything that asks before it writes, asked in one place.
    *
@@ -1580,7 +1701,7 @@ ${script}
  */
 export function renderDashboard({
   orders, summary, errors, range, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
-  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null,
+  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null, flash = null,
 }) {
   const { all, byChannel } = summary;
   const inTransit = all.stages.shipping;
@@ -1625,7 +1746,7 @@ export function renderDashboard({
   const paged = paginate(orders, paging);
   const noun = q || channel !== 'all' || stage !== 'all' ? 'pesanan cocok' : 'pesanan';
 
-  return shell({ user,
+  return shell({ user, flash,
     title: 'Omnichannel Orders',
     range, errors, truncated, maxPerPlatform, shopeeShop, generatedAt,
     view: 'orders',

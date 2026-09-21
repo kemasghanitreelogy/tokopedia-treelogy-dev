@@ -43,11 +43,16 @@ test('the CSV is the template, column for column, with quotes and dates Klaviyo 
   assert.equal(lines[0], KLAVIYO_COLUMNS.join(','));
   assert.equal(lines.length, 3);
   const [first, second] = lines.slice(1);
-  assert.ok(first.startsWith(`${KLAVIYO_PRODUCTS.oil.id},Organic Moringa Cold-Pressed Seed Oil,shopee@ulasan.treelogy.com,schintyaaa23,5,,`));
+  assert.ok(first.startsWith(`${KLAVIYO_PRODUCTS.oil.id},organic-moringa-oil,OMO-60-001,Organic Moringa Cold-Pressed Seed Oil,shopee@ulasan.treelogy.com,schintyaaa23,5,,`), first);
   assert.ok(first.includes('"Sangat bermanfaat, ""wangi"" dan cepat meresap"'), 'quotes and commas are escaped the CSV way');
-  assert.ok(first.includes(',2026-09-11 09:03:36,Published,Yes,https://mms.img.susercontent.com/a,'), 'the date is one Klaviyo accepts');
-  assert.ok(first.includes(',2026-09-12 02:34:06,ID,false'));
-  assert.ok(second.startsWith(',,tokopedia@ulasan.treelogy.com,Pembeli,4,,,2025-05-12 22:02:25,Published,Yes,,,,ID,true'), 'no product: a store review under a neutral name');
+  assert.ok(first.includes(',2026-09-11 09:03:36,Published,Yes,https://mms.img.susercontent.com/a,,'), 'the date is one Klaviyo accepts');
+  assert.ok(first.includes(',2026-09-12 02:34:06,ID,false,id-ID'));
+  assert.ok(second.startsWith(',,,,tokopedia@ulasan.treelogy.com,Pembeli,4,,,2025-05-12 22:02:25,Published,Yes,,,,,ID,true,id-ID'), second);
+  // A set's own SKU is not a Shopify SKU, so the product's lead SKU goes in its place.
+  const set = klaviyoRows([review({ sku: 'The-Inside-&-Out60', videos: [{ id: 'v', url: 'https://cf.shopee.co.id/v.mp4' }] })])[0];
+  assert.equal(set.product_handle, 'moringa-inside-out-protocol');
+  assert.equal(set.product_sku, 'Inside-Out-Protocol');
+  assert.equal(set.video_urls, 'https://cf.shopee.co.id/v.mp4');
 
   const summary = klaviyoSummary([review(), review({ sku: 'OMC-90-001' }), review({ sku: null, productName: 'Gift' })]);
   assert.equal(summary.total, 3);

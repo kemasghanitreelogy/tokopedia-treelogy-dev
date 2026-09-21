@@ -24,16 +24,23 @@ import { publicBaseUrl } from '../config.js';
 
 /** Shopify product IDs, from the live catalogue on 2026-09-21. Lower IDs are the storefront originals. */
 export const KLAVIYO_PRODUCTS = {
-  powder: { id: '8641940390076', name: 'Organic Moringa Powder' },
-  oil: { id: '8641972207804', name: 'Organic Moringa Cold-Pressed Seed Oil' },
-  capsules: { id: '8642235236540', name: 'Organic Moringa Capsules' },
-  ritual: { id: '8709764841660', name: 'Moringa Ritual Set' },
-  scoop: { id: '9043106922684', name: 'Bamboo Scoop' },
-  whisk: { id: '9043110133948', name: 'Bamboo Whisk' },
-  discovery: { id: '9074141200572', name: 'The Discovery Pack' },
-  insideOut: { id: '9291531649212', name: 'Inside Out Moringa Protocol' },
-  pouch: { id: '9487891071164', name: 'Travel Pouch' },
+  powder: { id: '8641940390076', handle: 'organic-moringa-powder', sku: 'OMP-45-001', name: 'Organic Moringa Powder' },
+  oil: { id: '8641972207804', handle: 'organic-moringa-oil', sku: 'OMO-30-001', name: 'Organic Moringa Cold-Pressed Seed Oil' },
+  capsules: { id: '8642235236540', handle: 'organic-moringa-capsules', sku: 'OMC-90-001', name: 'Organic Moringa Capsules' },
+  ritual: { id: '8709764841660', handle: 'moringa-ritual-set', sku: 'MRS-001', name: 'Moringa Ritual Set' },
+  scoop: { id: '9043106922684', handle: 'bamboo-scoop', sku: 'Bamboo-Scoop', name: 'Bamboo Scoop' },
+  whisk: { id: '9043110133948', handle: 'bamboo-whisk', sku: 'Bamboo-Whisk', name: 'Bamboo Whisk' },
+  discovery: { id: '9074141200572', handle: 'the-discovery-pack', sku: 'Discovery-Pack', name: 'The Discovery Pack' },
+  insideOut: { id: '9291531649212', handle: 'moringa-inside-out-protocol', sku: 'Inside-Out-Protocol', name: 'Inside Out Moringa Protocol' },
+  pouch: { id: '9487891071164', handle: 'travel-pouch', sku: 'GFT-POUCH-001', name: 'Travel Pouch' },
 };
+
+/** The SKUs Shopify itself lists, so a review's own SKU can be sent when Shopify would recognise it. */
+const SHOPIFY_SKUS = new Set([
+  'OMP-45-001', 'OMP-90-001', 'OMP-180-001', 'OMO-30-001', 'OMO-60-001', 'OMC-90-001', 'OMC-180-001', 'OMC-270-001',
+  'MRS-001', 'MRS-002', 'MRS-003', 'MRS-004', 'Bamboo-Scoop', 'Bamboo-Whisk', 'Discovery-Pack',
+  'Inside-Out-Protocol', 'Inside-Out-60-Protocol180+30', 'GFT-POUCH-001', 'GFT-MYST-001',
+]);
 
 /** Which product a SKU is a review of. Sets and bundles go to the product they are built around. */
 const SKU_PRODUCT = {
@@ -95,9 +102,12 @@ export function imageUrls(review, base = publicBaseUrl()) {
 }
 
 export const KLAVIYO_COLUMNS = [
-  'product_id', 'product_name', 'reviewer_email', 'reviewer_name', 'rating', 'review_title', 'review_content',
-  'review_date', 'status', 'verified', 'image_urls', 'reply_content', 'reply_date', 'reviewer_location', 'is_store_review',
+  'product_id', 'product_handle', 'product_sku', 'product_name', 'reviewer_email', 'reviewer_name', 'rating', 'review_title', 'review_content',
+  'review_date', 'status', 'verified', 'image_urls', 'video_urls', 'reply_content', 'reply_date', 'reviewer_location', 'is_store_review', 'locale',
 ];
+
+/** Video URLs as the marketplaces host them; Tokopedia's are signed and may lapse, Shopee's do not. */
+export const videoUrls = (review) => (review.videos ?? []).map((v) => v?.url).filter(Boolean);
 
 /** One row per review, in the template's columns. Reviews without a product become store reviews. */
 export function klaviyoRows(reviews, options = {}) {
@@ -105,6 +115,9 @@ export function klaviyoRows(reviews, options = {}) {
     const product = klaviyoProductFor(review);
     return {
       product_id: product?.id ?? '',
+      product_handle: product?.handle ?? '',
+      // The review's own SKU when Shopify lists it, otherwise the product's lead SKU.
+      product_sku: product ? (SHOPIFY_SKUS.has(review.sku ?? '') ? review.sku : product.sku) : '',
       product_name: product?.name ?? '',
       reviewer_email: reviewerEmail(review, options),
       reviewer_name: review.anonymous ? 'Pembeli' : (review.reviewerName || 'Pembeli'),
@@ -116,10 +129,12 @@ export function klaviyoRows(reviews, options = {}) {
       // Every marketplace review sits on an order the marketplace itself verified.
       verified: 'Yes',
       image_urls: imageUrls(review, options.base).join(','),
+      video_urls: videoUrls(review).join(','),
       reply_content: String(review.reply?.text ?? '').trim(),
       reply_date: stamp(review.reply?.at),
       reviewer_location: 'ID',
       is_store_review: product ? 'false' : 'true',
+      locale: 'id-ID',
       channel: CHANNEL_LABEL[review.channel ?? 'tokopedia'] ?? review.channel,
     };
   });

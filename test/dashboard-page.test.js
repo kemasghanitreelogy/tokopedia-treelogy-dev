@@ -871,6 +871,12 @@ test('the reviews page offers a fresh pull and the Klaviyo file', async () => {
   assert.ok(!viewer.includes('reviews_sync'));
 });
 
+test('a download link never arms the skeleton', () => {
+  // The Klaviyo CSV is a download: the page stays, so a loader armed for it would stay too.
+  const html = renderDashboard({ orders: [order], summary: summarize([order]), ...common });
+  assert.ok(html.includes("if (link.hasAttribute('download')) return;"), 'the loader must ignore download links');
+});
+
 test('a success note leaves after two seconds, an error note stays', () => {
   const ok = renderDashboard({ orders: [order], summary: summarize([order]), ...common, flash: { kind: 'ok', text: 'tersimpan' } });
   assert.match(ok, /<div class="alert alert--ok" data-brief role="status">/);

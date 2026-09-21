@@ -1559,6 +1559,8 @@ ${celebration(flash)}
   document.addEventListener('click', function (e) {
     var link = e.target.closest('a[href]');
     if (!link || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || link.target === '_blank') return;
+    // A download never leaves this page, so a skeleton armed for it would never be put away.
+    if (link.hasAttribute('download')) return;
     var href = link.getAttribute('href');
     if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0) return;
     beginNavigation(link.classList.contains('viewtab') ? 'Memuat ' + link.textContent.trim() + '…' : 'Memuat…');

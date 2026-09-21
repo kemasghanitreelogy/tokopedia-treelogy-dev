@@ -11,19 +11,21 @@ import { callShopApi } from './client.js';
  * it is withheld from the API in a form a machine can read.
  *
  * The one endpoint that still discloses it is the shipping-document data feed, meant for
- * apps that draw their own labels: it answers with the name, the phone and the address as
- * small PNG images, one per field, and only while the parcel is in the printable window
- * (arranged, not yet collected). Past that it refuses with error_status.
+ * apps that draw their own labels: it answers with the name and the address as small PNG
+ * images, one per field, and only while the parcel is in the printable window (arranged,
+ * not yet collected). Past that it refuses with error_status. The phone is on offer too,
+ * but Shopee masks it to its last two digits even there ("******03"), so it is not asked for.
  *
  * So the recipient is captured during that window, read off the images with Tesseract,
- * and kept here by order number. The address image wraps by pixel, mid-word, which is
- * why the lines are joined by measuring them: a line that runs to the edge broke inside
- * a word and gets no space; a short one broke at one and does.
+ * and kept here by order number. Both images wrap by pixel, mid-word - a long name runs
+ * onto a second line just as an address does - which is why the lines are joined by
+ * measuring them: a line that runs to the edge broke inside a word and gets no space; a
+ * short one broke at one and does.
  */
 
 export const RECIPIENT_DOC = 'shopee/recipients.json';
 const EMPTY = { recipients: {} };
-const KEYS = ['name', 'phone', 'full_address'];
+const KEYS = ['name', 'full_address'];
 /** Statuses in which Shopee will hand out the shipping document data. */
 export const CAPTURABLE = new Set(['PROCESSED']);
 const CONCURRENCY = 3;
@@ -47,7 +49,9 @@ export function pngWidth(png) {
 export function tesseract(png, { psm = 7, tsv = false, timeoutMs = 15_000 } = {}) {
   return new Promise((resolve, reject) => {
     const args = ['stdin', 'stdout', '--psm', String(psm), ...(tsv ? ['tsv'] : [])];
-    const child = spawn('tesseract', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // One thread each. Tesseract spawns a thread per core by default, and three of them
+    // side by side on four cores turned a 120ms read into a minute of thrashing.
+    const child = spawn('tesseract', args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, OMP_THREAD_LIMIT: '1' } });
     const out = [];
     const err = [];
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('tesseract melewati batas waktu')); }, timeoutMs);
@@ -91,27 +95,42 @@ export function joinWrapped(lines, width) {
   for (const [index, line] of lines.entries()) {
     out += line.text;
     if (index === lines.length - 1) break;
+    const next = lines[index + 1].text;
     const hard = width > 0 && line.right >= width - EDGE_PX;
-    if (!hard) out += ' ';
+    // A line that reached the edge usually broke inside a word. Not always: a word that
+    // ended right at the edge looks the same, so the letters decide the rest - a comma or
+    // a full stop at the end, or a lower-case letter running into a capital, is a space.
+    const ended = /[,.;:)]$/.test(line.text);
+    const caseTurn = /[a-z]$/.test(line.text) && /^[A-Z]/.test(next);
+    const startsPunct = /^[,.;:)]/.test(next);
+    if (startsPunct) continue;
+    if (!hard || ended || caseTurn) out += ' ';
   }
-  return out.replace(/\s+/g, ' ').replace(/\s+([,.;:])/g, '$1').trim();
+  return out
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:])/g, '$1')
+    // The one abbreviation on nearly every Indonesian address, and the one Tesseract
+    // misreads: a lower-case l beside a capital J comes out as a capital I.
+    .replace(/\bJI\.?(?=\s)/g, 'Jl.')
+    .trim();
 }
 
-const cleanName = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
-const cleanPhone = (text) => String(text ?? '').replace(/[^0-9+()\- ]/g, '').replace(/\s+/g, ' ').trim();
+/** One wrapped image to one line of text, with its boxes deciding the joins. */
+async function readBlock(png, ocr) {
+  const tsv = await ocr(png, { psm: 6, tsv: true });
+  return joinWrapped(linesFromTsv(tsv), pngWidth(png));
+}
 
 /**
- * Read the three images into text.
- * @param {{name?: Buffer, phone?: Buffer, address?: Buffer}} images
+ * Read the images into text.
+ * @param {{name?: Buffer, address?: Buffer}} images
  */
 export async function readRecipientImages(images, { ocr = tesseract } = {}) {
   const out = { name: '', phone: '', address: '' };
-  if (images.name) out.name = cleanName(await ocr(images.name, { psm: 7 }));
-  if (images.phone) out.phone = cleanPhone(await ocr(images.phone, { psm: 7 }));
-  if (images.address) {
-    const tsv = await ocr(images.address, { psm: 6, tsv: true });
-    out.address = joinWrapped(linesFromTsv(tsv), pngWidth(images.address));
-  }
+  // The name is read as a block too: "Deazy Christine Sebayang" arrives on two lines,
+  // and a single-line read of that image loses its first word.
+  if (images.name) out.name = await readBlock(images.name, ocr);
+  if (images.address) out.address = await readBlock(images.address, ocr);
   return out;
 }
 
@@ -123,7 +142,7 @@ export async function fetchRecipientImages(config, auth, orderSn, { call = callS
   });
   const fields = result?.response?.recipient_address_info ?? [];
   const byKey = Object.fromEntries(fields.map((f) => [f.key, decodePng(f.image)]));
-  return { name: byKey.name ?? null, phone: byKey.phone ?? null, address: byKey.full_address ?? null };
+  return { name: byKey.name ?? null, address: byKey.full_address ?? null };
 }
 
 export async function loadShopeeRecipients() {

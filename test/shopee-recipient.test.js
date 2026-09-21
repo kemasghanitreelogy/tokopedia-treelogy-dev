@@ -39,6 +39,17 @@ test('a pixel-wrapped address is rejoined into the string it was rendered from',
     'Jalan Andi Tonro V Blok A3 No.18a, Parang Tambung, Tamalate (Perm pondok indah), KOTA MAKASSAR, TAMALATE, SULAWESI SELATAN, ID, 90223');
 });
 
+test('a word that ended at the edge is told apart from one that was cut', () => {
+  // Real misjoins from the first day: a comma at the edge, and a lower-case run into a capital.
+  assert.equal(joinWrapped([{ text: 'KOTA JAKARTA SELATAN,', right: 220 }, { text: 'JAGAKARSA, DKI JAKARTA', right: 150 }], 227),
+    'KOTA JAKARTA SELATAN, JAGAKARSA, DKI JAKARTA');
+  assert.equal(joinWrapped([{ text: 'JI. Komp. Bappenas', right: 218 }, { text: 'Siaga Raya No.22', right: 150 }], 227),
+    'Jl. Komp. Bappenas Siaga Raya No.22');
+  // And the cuts that must stay cuts.
+  assert.equal(joinWrapped([{ text: 'dah), KOTA MAKAS', right: 216 }, { text: 'SAR, TAMALATE', right: 150 }], 227), 'dah), KOTA MAKASSAR, TAMALATE');
+  assert.equal(joinWrapped([{ text: 'Jalan Andi Tonro V B', right: 226 }, { text: 'lok A3', right: 60 }], 227), 'Jalan Andi Tonro V Blok A3');
+});
+
 test('a short line broke at a space and gets one back', () => {
   const lines = [{ text: 'Jl. Raya Kuta No. 5,', right: 150 }, { text: 'Badung, Bali', right: 100 }];
   assert.equal(joinWrapped(lines, 227), 'Jl. Raya Kuta No. 5, Badung, Bali');
@@ -46,21 +57,22 @@ test('a short line broke at a space and gets one back', () => {
   assert.equal(pngWidth(Buffer.from('not a png')), 0);
 });
 
-test('the three images become a name, a phone and an address', async () => {
+const NAME_TSV = [TSV_HEADER,
+  word(1, 1, 1, 1, 1, 60, 'Deazy'), word(1, 1, 1, 2, 68, 84, 'Christine'), word(1, 1, 1, 3, 160, 64, 'Seb'),
+  word(1, 2, 1, 1, 1, 70, 'ayang'),
+].join('\n');
+
+test('the images become a name and an address, both read as wrapped blocks', async () => {
   const calls = [];
-  const ocr = async (image, opts) => {
-    calls.push(opts);
-    if (opts.tsv) return ADDRESS_TSV;
-    return image.length === 33 && opts.psm === 7 && calls.length === 1 ? ' Stefani Wijaya \n' : ' 0812-3456 7890\n';
-  };
-  const text = await readRecipientImages({ name: png(227), phone: png(227), address: png(227) }, { ocr });
-  assert.equal(text.name, 'Stefani Wijaya');
-  assert.equal(text.phone, '0812-3456 7890');
+  const ocr = async (image, opts) => { calls.push(opts); return calls.length === 1 ? NAME_TSV : ADDRESS_TSV; };
+  const text = await readRecipientImages({ name: png(227), address: png(227) }, { ocr });
+  assert.equal(text.name, 'Deazy Christine Sebayang', 'a long name wraps onto a second line and comes back whole');
+  assert.equal(text.phone, '', 'Shopee masks the phone to two digits even here, so it is not read');
   assert.match(text.address, /^Jalan Andi Tonro V Blok A3/);
-  assert.deepEqual(calls.map((c) => c.psm), [7, 7, 6], 'lines for name and phone, a block with boxes for the address');
+  assert.deepEqual(calls.map((c) => [c.psm, c.tsv]), [[6, true], [6, true]]);
 });
 
-test('the shipping-document feed is asked for exactly the three fields, and decoded', async () => {
+test('the shipping-document feed is asked for the name and the address, and decoded', async () => {
   let sent = null;
   const call = async (config, path, auth, params, body) => {
     sent = { path, body };
@@ -70,7 +82,7 @@ test('the shipping-document feed is asked for exactly the three fields, and deco
   };
   const images = await fetchRecipientImages({}, {}, '260921JXKTVPFW', { call });
   assert.equal(sent.path, '/api/v2/logistics/get_shipping_document_data_info');
-  assert.deepEqual(sent.body, { order_sn: '260921JXKTVPFW', recipient_address_info: [{ key: 'name' }, { key: 'phone' }, { key: 'full_address' }] });
+  assert.deepEqual(sent.body, { order_sn: '260921JXKTVPFW', recipient_address_info: [{ key: 'name' }, { key: 'full_address' }] });
   assert.equal(pngWidth(images.name), 227);
   assert.equal(pngWidth(images.address), 227);
 });
@@ -87,7 +99,8 @@ test('capture names what is printable, skips what is known, and never throws for
     if (body.order_sn === 'B') { const e = new Error('cannot be printed now'); e.code = 'error_status'; throw e; }
     return { response: { recipient_address_info: [{ key: 'name', image: dataUri(png(227)) }, { key: 'phone', image: dataUri(png(227)) }, { key: 'full_address', image: dataUri(png(227)) }] } };
   };
-  const ocr = async (image, opts) => (opts.tsv ? ADDRESS_TSV : opts.psm === 7 ? 'Stefani Wijaya' : '');
+  let reads = 0;
+  const ocr = async () => { reads += 1; return reads % 2 === 1 ? [TSV_HEADER, word(1, 1, 1, 1, 1, 60, 'Stefani'), word(1, 1, 1, 2, 70, 60, 'Wijaya')].join('\n') : ADDRESS_TSV; };
   const tally = await captureShopeeRecipients(orders, { config: {}, auth: {}, call, ocr, now: 1_790_000_000 });
   assert.deepEqual(tally, { captured: 1, skipped: 2, failed: 1 });
 

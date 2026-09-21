@@ -215,6 +215,16 @@ function financeFromTikTok(order) {
   };
 }
 
+/** One capture at a time, behind the read that noticed the orders; overlapping reads share it. */
+let recipientCapture = null;
+function captureShopeeRecipientsBehind(orders, session) {
+  if (recipientCapture) return;
+  recipientCapture = captureShopeeRecipients(orders, session)
+    .then((tally) => { if (tally.captured > 0) console.log(`shopee/recipient: ${tally.captured} nama tersimpan`); })
+    .catch((error) => console.warn(`shopee/recipient: ${error.message}`))
+    .finally(() => { recipientCapture = null; });
+}
+
 /** One Shopee order detail in the shared shape; see mapTikTokOrder for why it is shared. */
 export function mapShopeeOrder(o) {
   return {
@@ -420,8 +430,10 @@ export async function fetchShopeeOrders({ since, until, max, tracking = true }) 
     .filter((o) => Number(o.create_time) >= since && Number(o.create_time) <= until)
     .map(mapShopeeOrder);
 
-  // Whoever is in the printable window right now gets named; nothing here can fail the read.
-  await captureShopeeRecipients(orders, { config, auth }).catch((error) => console.warn(`shopee/recipient: ${error.message}`));
+  // Whoever is in the printable window right now gets named - behind this read, not in
+  // front of it: the OCR takes a second an order and a page must not wait for it. The
+  // names land on the next read, which the cache makes soon.
+  captureShopeeRecipientsBehind(orders, { config, auth });
   if (tracking) await attachShopeeTracking(config, auth, orders);
 
   return { orders, shop, refreshed, truncated: summaries.length > max };
@@ -512,7 +524,7 @@ export async function fetchOrdersByIds(selection) {
         }).then((r) => r.response.order_list ?? []),
       );
       const orders = pages.flat().map(mapShopeeOrder);
-      await captureShopeeRecipients(orders, { config, auth }).catch((error) => console.warn(`shopee/recipient: ${error.message}`));
+      captureShopeeRecipientsBehind(orders, { config, auth });
       return orders;
     })(),
     (async () => {

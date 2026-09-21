@@ -343,8 +343,8 @@ async function handleWrite(form, ip, user) {
     // ledger existed have to be able to say so, or they ask for a label forever.
     const ids = form.getAll('order')
       .map((value) => String(value))
-      .filter((value) => value.startsWith('shopify:'))
-      .map((value) => value.slice('shopify:'.length));
+      .filter((value) => value.startsWith('shopify:') || value.startsWith('manual:'))
+      .map((value) => value.slice(value.indexOf(':') + 1));
     if (ids.length === 0) throw new Error('tidak ada pesanan Shopify yang dipilih');
     if (ids.length > 200) throw new Error('terlalu banyak sekaligus');
 

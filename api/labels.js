@@ -18,7 +18,7 @@ import { recordActivity } from '../src/audit.js';
 
 // Selections are posted as "channel:id" pairs; anything else is ignored rather than trusted.
 // Shopify names an order "#10926", so the id charset carries the hash it prints with.
-const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify):([A-Za-z0-9_#-]{1,64})$/;
+const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify|manual):([A-Za-z0-9_#-]{1,64})$/;
 const MAX_LABELS = 100;
 
 export default async function handler(req, res) {
@@ -100,7 +100,7 @@ export default async function handler(req, res) {
         if (orders.length === 0 && Object.keys(errors).length > 0) {
           throw new Error(Object.values(errors)[0]);
         }
-        return orders.filter((o) => o.channel === 'shopify');
+        return orders.filter((o) => o.channel === 'shopify' || o.channel === 'manual');
       },
     });
 

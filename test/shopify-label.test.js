@@ -5,6 +5,7 @@ import {
   reservePickNumbers, PRINTED_DOC, PICK_DOC, UNBOXING_NOTICE,
 } from '../src/shopify/label.js';
 import { buildLabelSheet, labelReadiness } from '../src/labels.js';
+import { labelHeading } from '../src/shopify/label.js';
 import { deleteDoc, closeStore } from '../src/store/index.js';
 import zlib from 'node:zlib';
 
@@ -170,4 +171,30 @@ test('a whole run is one document, with the mark embedded once rather than once 
   const text = pdfText(many);
   assert.ok(text.includes('PICK-000000000'));
   assert.ok(text.includes('PICK-000000019'));
+});
+
+test('a typed-in sale prints on the same sheet, under its source and the house mark', async () => {
+  const manual = {
+    channel: 'manual', id: 'DP-260921-00001AD', source: 'DP', createdAt: 1789992000, total: 795000,
+    buyer: 'Dian Novitasari', buyerPhone: '0812-0000-0000', shipTo: 'Jl. Nakula Sadewa V No 15, Salatiga, Jawa Tengah 50722', carrier: 'Lion Parcel',
+    lines: [{ sku: 'OMC-180-001', name: 'Moringa Capsules - 180 caps', variant: '', qty: 1 }], finance: { shipping: 0 },
+  };
+  assert.equal(labelHeading(manual), 'WhatsApp / direct sales');
+  assert.equal(labelHeading({ channel: 'shopify' }), 'Shopify');
+  const bytes = await buildShopifyLabel(manual, { pick: '000000900', printedAt: 1789199999 });
+  const pdf = pdfText(bytes);
+  for (const wanted of ['WhatsApp / direct sales', 'Dian Novitasari', 'Lion Parcel', 'DP-260921-00001AD', 'Salatiga']) {
+    assert.ok(pdf.includes(wanted), `label tidak memuat ${wanted}`);
+  }
+  assert.ok(!pdf.includes('Shopify'), 'a typed-in parcel does not claim to be from Shopify');
+
+  // The sheet resolves it like a Shopify parcel, keyed by channel and id.
+  const sheet = await buildLabelSheet({
+    orders: [{ id: 'DP-260921-00001AD', channel: 'manual' }, { id: 'DP-missing', channel: 'manual' }],
+    size: '100x150',
+    resolveShopify: async () => [manual],
+  });
+  assert.equal(sheet.pageCount, 1);
+  assert.deepEqual(sheet.printed, ['DP-260921-00001AD']);
+  assert.deepEqual(sheet.failures, [{ id: 'DP-missing', channel: 'manual', reason: 'transaksi manual tidak ditemukan' }]);
 });

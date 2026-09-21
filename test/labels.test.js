@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
-import { LABEL_SIZES, DEFAULT_SIZE, mergeLabels, labelSizeMm, PRINTABLE_STAGES } from '../src/labels.js';
+import { LABEL_SIZES, DEFAULT_SIZE, mergeLabels, labelSizeMm, PRINTABLE_STAGES, labelReadiness } from '../src/labels.js';
 
 /**
  * A real PDF of the given size. Pages carry actual content because pdf-lib refuses to
@@ -155,4 +155,12 @@ test('every verdict carries a reason a human can act on', async () => {
     const { note } = labelReadiness(order);
     assert.ok(note && note.length > 5, `${order.channel}/${order.status} has no usable note`);
   }
+});
+
+test('a typed-in sale with an address is a label we draw; without one it is nothing', () => {
+  assert.equal(labelReadiness({ channel: 'manual', id: 'DP-1', stage: 'completed', shipTo: 'Jl. Nakula 5, Salatiga' }).state, 'needsPrint');
+  assert.equal(labelReadiness({ channel: 'manual', id: 'DP-1', stage: 'completed', shipTo: 'Jl. Nakula 5, Salatiga' }, { 'DP-1': { at: 1 } }).state, 'reprint');
+  const walkIn = labelReadiness({ channel: 'manual', id: 'DW-1', stage: 'completed', shipTo: '' });
+  assert.equal(walkIn.state, 'none');
+  assert.match(walkIn.note, /tanpa alamat/);
 });

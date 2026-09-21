@@ -345,6 +345,15 @@ export function labelReadiness(order, printed = {}) {
     return { state: 'none', note: 'sudah selesai, tidak perlu label' };
   }
 
+  // A sale typed in by hand has no marketplace and no waybill either; its label is the
+  // same sheet Shopify's is, drawn from what the operator typed. Without an address there
+  // is nothing to put on it - a walk-in who carried the goods out needs no label.
+  if (order.channel === 'manual') {
+    if (!String(order.shipTo ?? '').trim()) return { state: 'none', note: 'tanpa alamat, tidak perlu label' };
+    if (printed[order.id]) return { state: 'reprint', note: 'sudah dicetak' };
+    return { state: 'needsPrint', note: 'siap dicetak' };
+  }
+
   if (order.channel === 'shopee') {
     if (order.status === 'PROCESSED') return { state: 'needsPrint', note: 'siap dicetak' };
     if (['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED'].includes(order.status)) {
@@ -383,9 +392,11 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
     .filter((o) => o.stage && !PRINTABLE_STAGES.has(o.stage))
     .map((o) => ({ id: o.id, channel: o.channel, reason: `status ${o.status} tidak bisa dicetak` }));
 
-  const tiktok = printable.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
+  const drawn = (o) => o.channel === 'shopify' || o.channel === 'manual';
+  const tiktok = printable.filter((o) => o.channel !== 'shopee' && !drawn(o));
   const shopee = printable.filter((o) => o.channel === 'shopee');
-  const shopify = printable.filter((o) => o.channel === 'shopify');
+  // Shopify parcels and typed-in sales are drawn by us, on the same sheet.
+  const shopify = printable.filter(drawn);
 
   const [tiktokResult, shopeeResult, shopifyResult] = await Promise.all([
     fetchTikTokLabels(tiktok, resolvePackages).catch((error) => ({
@@ -431,15 +442,16 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
 async function drawShopifyLabels(selection, resolveShopify) {
   if (selection.length === 0) return { pages: [], printed: [], failures: [] };
   if (!resolveShopify) {
-    return { pages: [], printed: [], failures: selection.map((o) => ({ id: o.id, channel: 'shopify', reason: 'data pesanan tidak tersedia' })) };
+    return { pages: [], printed: [], failures: selection.map((o) => ({ id: o.id, channel: o.channel, reason: 'data pesanan tidak tersedia' })) };
   }
 
   const full = await resolveShopify(selection);
-  const byId = new Map(full.map((o) => [o.id, o]));
-  const found = selection.filter((o) => byId.has(o.id));
+  const byId = new Map(full.map((o) => [`${o.channel}:${o.id}`, o]));
+  const keyOf = (o) => `${o.channel}:${o.id}`;
+  const found = selection.filter((o) => byId.has(keyOf(o)));
   const failures = selection
-    .filter((o) => !byId.has(o.id))
-    .map((o) => ({ id: o.id, channel: 'shopify', reason: 'pesanan tidak ditemukan di Shopify' }));
+    .filter((o) => !byId.has(keyOf(o)))
+    .map((o) => ({ id: o.id, channel: o.channel, reason: o.channel === 'manual' ? 'transaksi manual tidak ditemukan' : 'pesanan tidak ditemukan di Shopify' }));
 
   // Reserved together so a batch of ten gets ten consecutive numbers, and an abandoned
   // print leaves a gap rather than handing the next print the same number.
@@ -447,9 +459,9 @@ async function drawShopifyLabels(selection, resolveShopify) {
   try {
     // One document for the whole run: the fonts and the Shopify mark are embedded once
     // rather than once per parcel, which is most of what a hundred labels used to cost.
-    const bytes = await buildShopifyLabels(found.map((row, index) => ({ order: byId.get(row.id), pick: picks[index] })));
+    const bytes = await buildShopifyLabels(found.map((row, index) => ({ order: byId.get(keyOf(row)), pick: picks[index] })));
     return {
-      pages: [{ bytes, order: { id: found[0].id, channel: 'shopify' } }],
+      pages: [{ bytes, order: { id: found[0].id, channel: found[0].channel } }],
       printed: found.map((row) => row.id),
       failures,
     };
@@ -459,7 +471,7 @@ async function drawShopifyLabels(selection, resolveShopify) {
     return {
       pages: [],
       printed: [],
-      failures: [...failures, ...found.map((row) => ({ id: row.id, channel: 'shopify', reason: error.message }))],
+      failures: [...failures, ...found.map((row) => ({ id: row.id, channel: row.channel, reason: error.message }))],
     };
   }
 }

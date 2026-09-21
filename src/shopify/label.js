@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
+import { PREFIXES } from '../mekari/prefix.js';
 
 /**
  * The packing label for a Shopify order, drawn here rather than fetched.
@@ -136,13 +137,25 @@ function fit(font, text, size, width) {
  * the label still prints; it just wears the word alone.
  */
 const MARK_PATH = new URL('./shopify-mark.png', import.meta.url);
+const HOUSE_MARK_PATH = new URL('../treelogy-mark.png', import.meta.url);
 let markBytes;
+let houseBytes;
 function shopifyMark() {
   if (markBytes === undefined) {
     try { markBytes = fs.readFileSync(MARK_PATH); } catch { markBytes = null; }
   }
   return markBytes;
 }
+/** The Treelogy seal, for a parcel that was sold by hand and belongs to no marketplace. */
+function houseMark() {
+  if (houseBytes === undefined) {
+    try { houseBytes = fs.readFileSync(HOUSE_MARK_PATH); } catch { houseBytes = null; }
+  }
+  return houseBytes;
+}
+
+/** What the label calls the channel: the marketplace, or the source a typed-in sale was typed in for. */
+export const labelHeading = (order) => (order?.channel === 'manual' ? (PREFIXES[order.source]?.label ?? 'Manual') : 'Shopify');
 
 export const SENDER = 'treelogy.com';
 export const UNBOXING_NOTICE = 'WAJIB Video Unboxing. Tanpa video unboxing, komplain tidak diterima.';
@@ -175,16 +188,20 @@ export async function buildShopifyLabels(jobs, { printedAt = Math.floor(Date.now
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
-  const raw = shopifyMark();
-  let mark = null;
-  if (raw) {
-    // Embedded once for the run: the same image object is referenced by every page.
-    try { mark = await pdf.embedPng(raw); } catch { mark = null; }
-  }
+  // Embedded once for the run: the same image object is referenced by every page that
+  // wears it. A run of typed-in parcels never embeds the Shopify mark, and vice versa.
+  const embed = async (raw) => { if (!raw) return null; try { return await pdf.embedPng(raw); } catch { return null; } };
+  const wantsHouse = jobs.some((job) => job.order?.channel === 'manual');
+  const wantsShopify = jobs.some((job) => job.order?.channel !== 'manual');
+  const marks = {
+    shopify: wantsShopify ? await embed(shopifyMark()) : null,
+    house: wantsHouse ? await embed(houseMark()) : null,
+  };
 
   for (const job of jobs) {
     drawLabel(pdf.addPage([width, height]), {
-      order: job.order, pick: job.pick, printedAt, font, bold, mark, width, height,
+      order: job.order, pick: job.pick, printedAt, font, bold, width, height,
+      mark: job.order?.channel === 'manual' ? marks.house : marks.shopify,
     });
   }
   return pdf.save();
@@ -222,7 +239,7 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
     page.drawImage(mark, { x: pad, y: y - 5, width: markWidth, height: markHeight });
     wordX = pad + markWidth + 5;
   }
-  page.drawText('Shopify', { x: wordX, y, size: 13, font: bold });
+  page.drawText(fit(bold, labelHeading(order), 13, inner - (wordX - pad) - 60), { x: wordX, y, size: 13, font: bold });
   rightText('Pengiriman', { size: 7, at: y + 3, color: GRAY });
   y -= 13;
   const codWidth = 52;
@@ -269,12 +286,15 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
 
   let rightY = y;
   const rightWidth = right - rightX;
+  const weight = Number(order.weightGram) || 0;
   for (const [key, value] of [
     ['Dari', SENDER],
+    // A typed-in parcel names the courier it goes out with; Shopify's is booked later.
+    ...(order.carrier ? [['Kurir', order.carrier]] : []),
     ['Asuransi', '0'],
     ['Biaya Kirim', rupiah(order.finance?.shipping ?? 0)],
     ['Total Biaya', rupiah(order.total ?? 0)],
-    ['Berat', `${(Number(order.weightGram) || 0).toLocaleString('id-ID')} Gram`],
+    ['Berat', weight ? `${weight.toLocaleString('id-ID')} Gram` : '-'],
   ]) {
     keyed(rightX, key, fit(bold, value, 6.5, rightWidth - 52), rightY, 48);
     rightY -= 9;

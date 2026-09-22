@@ -95,7 +95,21 @@ export async function planArrangement(orders, { read = shippingMethods } = {}) {
   return read(shopee.map((o) => o.id), { config, auth });
 }
 
-/** TikTok / Tokopedia: mark the package ready to ship, which is what mints the waybill. */
+/**
+ * TikTok / Tokopedia: mark the package ready to ship, which is what mints the waybill.
+ *
+ * No handover method and no pickup slot go out with this, unlike the Shopee path, and
+ * that is a gap rather than a decision. Probed against the live shop on 2026-09-22:
+ * a package carries `handover_method`, and Tokopedia's instant couriers are pickups the
+ * same way Shopee's are - Instant/Grab, Instant/Gojek and Same day/Paxel all come back
+ * PICKUP, against DROP_OFF for J&T and JNE. Each also carries `pickup_slot`, and on
+ * every one of ours it reads `{start_time: 0, end_time: 0}`: no window was ever chosen,
+ * the courier simply came. The slots live behind
+ * GET /fulfillment/202309/packages/{package_id}/handover_time_slots, which exists (a
+ * wrong path answers 36009009; this one answers 105005) but which this app has no scope
+ * for. Until that scope is granted and the app reauthorized, there is nothing to ask the
+ * operator and nothing to send, so this stays as it is rather than guessing a body shape.
+ */
 export async function tiktokReadyToShip(order) {
   guard(`RTS ${order.id}`);
   if (!order.packageId) throw new Error('pesanan belum punya paket');

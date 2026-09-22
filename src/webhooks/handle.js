@@ -88,6 +88,14 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   if (!order) return { status: 'ignored', reason: 'pesanan tidak ditemukan di platform' };
   await rememberOrder(order, { source: `webhook:${channel}` });
 
+  // The order has just changed in the database, so every cached list of orders is now a
+  // description of the past. Without this the push was only half a push: the row was
+  // written within seconds of the buyer paying, and the screen kept serving the snapshot
+  // from before it - handing one reader the old list and starting a refresh for whoever
+  // came next. An order paid at 15:18 could sit unseen until somebody happened to load
+  // the page twice. `jurnal` is invalidated further down for its own reasons.
+  invalidate('orders');
+
   if (!isMekariConfigured()) return { status: 'ignored', reason: 'kredensial Mekari belum diisi' };
 
   const ledger = await loadSyncLedger();

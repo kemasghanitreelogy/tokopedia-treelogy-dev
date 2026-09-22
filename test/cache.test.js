@@ -92,3 +92,19 @@ test('past its stale window an entry is fetched in the open again', async () => 
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(await cached('k', 1, factory, { staleMs: 2 }), 2);
 });
+
+test('clearing "orders" clears every list a push has just made wrong', async () => {
+  // The keys the dashboard actually uses: one entry per range, plus the worklists.
+  invalidate();
+  const keys = ['orders:today', 'orders:7d', 'orders:2026-09-01:2026-09-22', 'orders:outstanding'];
+  await Promise.all(keys.map((key) => cached(key, 60_000, async () => key)));
+  await cached('jurnal', 60_000, async () => 'ledger');
+  await cached('reviews', 60_000, async () => 'reviews');
+  assert.equal(cacheSize(), keys.length + 2);
+
+  invalidate('orders');
+  // A push changes an order, so every cached list of orders is now a description of the
+  // past - including the worklists, which is where a newly paid order has to appear.
+  assert.equal(cacheSize(), 2, 'hanya jurnal dan reviews yang tersisa');
+  assert.equal(await cached('jurnal', 60_000, async () => 'baru'), 'ledger', 'yang lain tidak ikut dibuang');
+});

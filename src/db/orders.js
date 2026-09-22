@@ -143,6 +143,44 @@ export async function ordersInRange({ since, until, channels = null } = {}) {
   return rows.map((row) => row.payload).filter(Boolean);
 }
 
+/** Stages that still owe somebody an action: something to arrange, to pick, to print. */
+export const OUTSTANDING_STAGES = ['unpaid', 'to_ship', 'shipping'];
+/** Channels whose orders are work whatever their stage says; a typed-in sale is done the moment it is typed. */
+export const OUTSTANDING_CHANNELS = ['manual'];
+/**
+ * How far back a worklist looks. Nothing waiting is older than this; a row that still
+ * says "to ship" after four months is a read we never got, not work somebody owes.
+ */
+export const OUTSTANDING_DAYS = 120;
+
+const quoted = (value) => `"${String(value).replace(/"/g, '')}"`;
+
+/**
+ * Everything that still needs doing, whatever day it was placed.
+ *
+ * The worklists - Proses, Picklist, Label - are not reports: an order placed on Friday
+ * that nobody arranged is still work on Monday, and a date window is precisely the thing
+ * that hides it. So they ask by stage instead, which the table is indexed for
+ * (stage, created_at desc), and which returns the hundred-odd rows that are actually
+ * open rather than the six thousand a wide window would carry.
+ */
+export async function ordersOutstanding({
+  stages = OUTSTANDING_STAGES,
+  channels = OUTSTANDING_CHANNELS,
+  since = Math.floor(Date.now() / 1000) - OUTSTANDING_DAYS * 86400,
+  ...options
+} = {}) {
+  const clauses = [`stage.in.(${stages.map(quoted).join(',')})`];
+  if (channels.length > 0) clauses.push(`channel.in.(${channels.map(quoted).join(',')})`);
+  const rows = await selectAll('orders', {
+    select: 'payload',
+    created_at: `gte.${iso(since)}`,
+    or: `(${clauses.join(',')})`,
+    order: 'created_at.desc,channel.asc,id.asc',
+  }, { timeout: 8_000, retries: 2, ...options });
+  return rows.map((row) => row.payload).filter(Boolean);
+}
+
 /** A single order by its platform id, or null. */
 export async function orderById(channel, id) {
   const rows = await selectAll('orders', {

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coversRange, STALE_AFTER_MS, DB_HISTORY_START, DB_HISTORY_START_EPOCH } from '../src/db/orders.js';
+import {
+  coversRange, STALE_AFTER_MS, DB_HISTORY_START, DB_HISTORY_START_EPOCH, ordersOutstanding,
+} from '../src/db/orders.js';
 import { isSupabaseConfigured, loadSupabaseConfig, SupabaseError, PAGE_SIZE } from '../src/db/client.js';
 import { SOURCE_CHANNELS, activeSources } from '../src/orders-source.js';
 import { wibDate } from '../src/range.js';
@@ -541,4 +543,27 @@ test('a rejected order that can be placed costs only its own source', async () =
   } finally {
     restore();
   }
+});
+
+test('a worklist is asked for by stage, not by day, and keeps typed-in sales', async () => {
+  // Proses, Picklist and Label ask "what is still owed", and the day an order arrived has
+  // nothing to do with the answer. The floor is only there so a row we stopped hearing
+  // about cannot haunt the bench forever.
+  const seen = [];
+  const restore = stubFetch(async (url) => {
+    seen.push(String(url));
+    return answer([{ payload: { channel: 'shopify', id: '#1', stage: 'to_ship' } }]);
+  });
+  try {
+    const rows = await ordersOutstanding({ since: 1_779_000_000, config: FAKE });
+    assert.deepEqual(rows.map((o) => o.id), ['#1']);
+  } finally {
+    restore();
+  }
+  const url = new URL(seen[0]);
+  assert.equal(url.searchParams.get('or'), '(stage.in.("unpaid","to_ship","shipping"),channel.in.("manual"))',
+    'a typed-in sale is work the moment it exists, whatever its stage says');
+  assert.equal(url.searchParams.get('created_at'), 'gte.2026-05-17T06:40:00.000Z');
+  assert.equal(url.searchParams.get('order'), 'created_at.desc,channel.asc,id.asc');
+  assert.equal(url.searchParams.get('select'), 'payload');
 });

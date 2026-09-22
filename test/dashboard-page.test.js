@@ -330,6 +330,25 @@ test('stale data is labelled, never passed off as current', () => {
   assert.ok(html.includes('WIB'), 'and when it was taken');
 });
 
+test('a worklist carries no date filter, and says what it does cover', () => {
+  // An order placed on Friday that nobody arranged is still work on Monday, so the three
+  // pages that exist to empty a queue are not filtered by day at all.
+  for (const [name, html] of [
+    ['process', renderProcess({ orders: [order], ...common })],
+    ['picklist', renderPicklist({ picklist: buildPicklist([order]), ...common })],
+    ['labels', renderLabels({ orders: [order], sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, ...common })],
+  ]) {
+    assert.ok(!html.includes('class="daterange"'), `${name} masih menyaring per tanggal`);
+    assert.ok(!html.includes('class="wins"'), `${name} masih menawarkan rentang cepat`);
+    assert.match(html, /class="sub">[^<]*semua yang/, `${name} tidak menyebut cakupannya`);
+  }
+
+  // The order list is the one page a date range belongs on.
+  const orders = renderDashboard({ orders: [order], summary: summarize([order]), ...common });
+  assert.ok(orders.includes('class="daterange"'), 'daftar pesanan kehilangan rentang tanggalnya');
+  assert.ok(orders.includes('class="wins"'));
+});
+
 test('every page carries the Treelogy palette and typeface, never the old one', () => {
   for (const [name, html] of pages()) {
     assert.ok(html.includes('family=Inter'), `${name} is not on the brand typeface`);

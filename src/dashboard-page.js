@@ -412,7 +412,7 @@ function orderDetail(order, index) {
 
 export function shell({
   title, range, errors = {}, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
-  view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null,
+  view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null, scope = null,
   stale = false, staleSince = null, user = null, style = '', log = false,
 }) {
   const who = user
@@ -1516,7 +1516,7 @@ ${celebration(flash)}
   <section class="pagehead">
     <div class="pagehead__t">
       <h1>${escape(title)}</h1>
-      <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: zoneName() }))} ${zoneLabel()}</p>
+      <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(scope ?? range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: zoneName() }))} ${zoneLabel()}</p>
     </div>
     ${rangeControls || nav.actions ? `<div class="pagehead__acts">${rangeControls}${nav.actions}</div>` : ''}
   </section>
@@ -2018,6 +2018,9 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     title: 'Proses Pesanan',
     range, errors, shopeeShop, generatedAt,
     view: 'process',
+    // A worklist, not a report: it shows everything still waiting, so a date filter here
+    // would only hide work. See loadOutstanding.
+    hideRangeControls: true, scope: 'semua yang belum diatur',
     flash,
     kpis: `<div class="strip">
       ${stat('Perlu diatur', String(rows.length), rows.length > 0 ? 'flag' : 'ok')}
@@ -2125,6 +2128,7 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
     shopeeShop,
     generatedAt,
     view: 'picklist',
+    hideRangeControls: true, scope: 'semua yang perlu dipetik',
     kpis: `
       <div class="strip">
         ${stat('Unit dipetik', String(picklist.unitCount))}
@@ -3082,6 +3086,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     title: 'Cetak Label',
     range, errors, shopeeShop, generatedAt,
     view: 'labels',
+    hideRangeControls: true, scope: 'semua yang perlu dicetak',
     flash,
     kpis: `
       <div class="strip">

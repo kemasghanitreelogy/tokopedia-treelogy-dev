@@ -113,3 +113,35 @@ test('a typed-in sale is read from the table on both paths, and never asked of a
     assert.deepEqual(blind.orders.map((o) => o.id), ['A']);
   });
 });
+
+test('a worklist reads what is open, and a database that will not answer does not empty it', async () => {
+  const { loadOutstanding } = await import('../src/orders-source.js');
+  const open = [
+    { channel: 'shopify', id: '#10971', stage: 'to_ship', createdAt: 1_789_000_000, buyer: 'Hj Ineu' },
+    { channel: 'shopee', id: 'SP1', stage: 'to_ship', createdAt: 1_779_000_000, buyer: 'namaakun' },
+  ];
+  let liveReads = 0;
+
+  const fromDb = await loadOutstanding({
+    hasDatabase: () => true,
+    readOutstanding: async () => open,
+    readLive: async () => { liveReads += 1; return { orders: [], errors: {}, truncated: [] }; },
+    readRecipients: async () => ({ SP1: { name: 'Stefani Wijaya' } }),
+  });
+  // Nothing is dropped for being old: the second order is four months back and still open.
+  assert.deepEqual(fromDb.orders.map((o) => o.id), ['#10971', 'SP1']);
+  assert.equal(fromDb.from, 'db');
+  assert.equal(liveReads, 0, 'the platforms are not asked when the table can answer');
+  assert.equal(fromDb.orders[1].buyer, 'Stefani Wijaya', 'a Shopee buyer is still named');
+  assert.equal(fromDb.orders[1].buyerUsername, 'namaakun');
+
+  const blind = await loadOutstanding({
+    hasDatabase: () => true,
+    readOutstanding: async () => { throw new Error('db down'); },
+    readLive: async () => { liveReads += 1; return { orders: open, errors: {}, truncated: [] }; },
+    readRecipients: async () => ({}),
+  });
+  assert.deepEqual(blind.orders.map((o) => o.id), ['#10971', 'SP1']);
+  assert.equal(blind.from, 'live');
+  assert.equal(liveReads, 1);
+});

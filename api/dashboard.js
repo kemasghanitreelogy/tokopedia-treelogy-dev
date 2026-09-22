@@ -1,5 +1,5 @@
 import { collectOrders, summarize } from '../src/omni.js';
-import { loadOrders, rememberOrders } from '../src/orders-source.js';
+import { loadOrders, loadOutstanding, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
 import { saveOrders } from '../src/db/orders.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
@@ -111,14 +111,23 @@ const ordersFor = (range) => cached(
 );
 
 /**
- * Keep the two ranges everybody opens warm, so the first click of the morning is as
- * quick as the tenth. Called by the server on a timer shorter than the stale window,
- * which means the entries never fall out of it and are refreshed behind the scenes.
+ * The worklists - what is still to arrange, to pick, to print - regardless of the day it
+ * was ordered. The three pages that exist to empty a queue must never be filtered by
+ * date, or Friday's unarranged order is invisible on Monday.
+ */
+const OUTSTANDING_VIEWS = new Set(['process', 'picklist', 'labels']);
+const outstandingOrders = () => cached('orders:outstanding', ordersTtl(), loadOutstanding, SWR);
+
+/**
+ * Keep what everybody opens warm, so the first click of the morning is as quick as the
+ * tenth. Called by the server on a timer shorter than the stale window, which means the
+ * entries never fall out of it and are refreshed behind the scenes.
  */
 export async function warmOrders() {
   for (const preset of ['7d', 'today']) {
     await ordersFor(resolveRange({ preset })).catch((error) => console.warn(`dashboard: pemanasan ${preset} gagal - ${error.message}`));
   }
+  await outstandingOrders().catch((error) => console.warn(`dashboard: pemanasan daftar pekerjaan gagal - ${error.message}`));
 }
 
 const catalogComplete = (catalog) => Object.keys(catalog.errors ?? {}).length === 0;
@@ -964,18 +973,19 @@ export default async function handler(req, res) {
     }
 
     // One entry per range for every menu: the picklist and the ledger used to ask for a
-    // copy without tracking numbers and paid for a second database read to get it.
+    // copy without tracking numbers and paid for a second database read to get it. The
+    // worklists ignore the range entirely and read by stage instead.
     const started = Date.now();
-    const data = await ordersFor(range);
+    const data = OUTSTANDING_VIEWS.has(view) ? await outstandingOrders() : await ordersFor(range);
     const took = () => `${Date.now() - started}ms`;
 
     if (view === 'labels') {
       // Shopify prints are remembered here, not there; the page cannot tell what still
       // needs a label without it.
       const printed = await printedLabels().catch(() => ({}));
-      console.log(`dashboard/labels: ${data.orders.length} orders in range (${took()})`);
+      console.log(`dashboard/labels: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderLabels({ user,
-        ...data, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed,
+        ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed,
         showReprints: url.searchParams.get('reprint') === '1',
       }));
       return;
@@ -984,8 +994,8 @@ export default async function handler(req, res) {
     if (view === 'process') {
       // Arranging a Shopify order calls nothing, so only this says it has been done.
       const arranged = await arrangedOrders().catch(() => ({}));
-      console.log(`dashboard/process: ${data.orders.length} orders in range (${took()})`);
-      send(200, renderProcess({ user, ...data, csrf, flash, arranged }));
+      console.log(`dashboard/process: ${data.orders.length} orders outstanding (${took()})`);
+      send(200, renderProcess({ user, ...data, range, csrf, flash, arranged }));
       return;
     }
 
@@ -1008,7 +1018,7 @@ export default async function handler(req, res) {
     if (view === 'picklist') {
       const picklist = buildPicklist(data.orders);
       console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);
-      send(200, renderPicklist({ user, ...data, picklist }));
+      send(200, renderPicklist({ user, ...data, range, picklist }));
       return;
     }
 

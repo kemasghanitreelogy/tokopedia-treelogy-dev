@@ -1,7 +1,7 @@
 import { collectOrders } from './omni.js';
 import { isShopifyConfigured } from './shopify/config.js';
 import { isSupabaseConfigured } from './db/client.js';
-import { ordersInRange, readCoverage, recordCoverage, saveOrders, coversRange } from './db/orders.js';
+import { ordersInRange, ordersOutstanding, readCoverage, recordCoverage, saveOrders, coversRange } from './db/orders.js';
 import { resolveRange } from './range.js';
 import { withinDays, ZONE_SPREAD_SECONDS } from './clock.js';
 import { cached, invalidate } from './cache.js';
@@ -192,6 +192,48 @@ export async function loadOrders({
   // hour at each edge would leave a hole the next reader has to pay for again.
   await rememberOrders(live, window);
   return { ...live, orders: await named(inRange([...live.orders, ...await manualRows()])), range: asked, from: 'live' };
+}
+
+/**
+ * Everything still open, for the pages that exist to close it.
+ *
+ * `loadOrders` answers "what happened in this window", which is the right question for
+ * the order list and the books. Proses, Picklist and Label ask a different one - "what
+ * is still owed" - and the day an order arrived has nothing to do with the answer. This
+ * reads by stage, so those pages carry no date filter at all and nothing waiting can
+ * fall off the back of a window.
+ *
+ * Without a database the platforms still know, over a month-wide read; that is the one
+ * case where a window remains, because a marketplace cannot be asked "show me whatever
+ * is unfinished" in one call.
+ */
+export async function loadOutstanding({
+  maxPerPlatform = 3000,
+  readOutstanding = ordersOutstanding,
+  readLive = collectOrders,
+  readRecipients = loadShopeeRecipients,
+  hasDatabase = isSupabaseConfigured,
+  now = Date.now(),
+} = {}) {
+  const named = async (orders) => applyShopeeRecipients(orders, await readRecipients().catch(() => null));
+
+  if (hasDatabase()) {
+    try {
+      const orders = await readOutstanding();
+      return {
+        orders: await named(orders),
+        errors: {}, truncated: [], maxPerPlatform, shopeeShop: null, generatedAt: Date.now(), from: 'db',
+      };
+    } catch (error) {
+      // A database that will not answer must not empty the packing bench's worklist.
+      console.warn(`db: daftar pekerjaan tidak terbaca, membaca langsung dari platform - ${error.message}`);
+    }
+  }
+
+  const window = resolveRange({ preset: '30d', now });
+  const live = await readLive({ range: window, maxPerPlatform, tracking: true });
+  await rememberOrders(live, window).catch(() => {});
+  return { ...live, orders: await named(live.orders), from: 'live' };
 }
 
 /**

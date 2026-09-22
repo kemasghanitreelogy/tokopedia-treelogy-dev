@@ -7,3 +7,7 @@ node_modules/
 
 # local state store (sqlite) - real ledger data, never committed
 state/
+
+# exported spreadsheets - real buyer names, addresses and order values.
+# A file already tracked stays tracked; this is about the ones we generate.
+*.xlsx

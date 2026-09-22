@@ -286,3 +286,25 @@ test('asking for every product is the same as asking for none of them in particu
   assert.equal(buildExport({ orders: [stranger], dataset: 'product' }).rows.length, 1);
   assert.equal(buildExport({ orders: [stranger], dataset: 'product', products: ['OMP-90-001'] }).rows.length, 0);
 });
+
+test('a workbook can carry more than one tab, each with its own rows', () => {
+  const second = { ...sheet, name: 'Pesanan', rows: [{ sku: 'X', name: 'y', qty: 9, revenue: 1, at: { n: 1, s: 'z' } }] };
+  const files = unzip(toXlsx([sheet, second]));
+  assert.ok(files['xl/worksheets/sheet1.xml'] && files['xl/worksheets/sheet2.xml']);
+  assert.match(files['xl/workbook.xml'], /name="Produk" sheetId="1" r:id="rId1"/);
+  assert.match(files['xl/workbook.xml'], /name="Pesanan" sheetId="2" r:id="rId2"/);
+  // Styles must not reuse a worksheet's relationship id, or the workbook will not open.
+  assert.match(files['xl/_rels/workbook.xml.rels'], /Id="rId3"[^>]*styles\.xml/);
+  assert.match(files['[Content_Types].xml'], /sheet2\.xml/);
+  assert.match(files['xl/worksheets/sheet2.xml'], /<v>9<\/v>/);
+});
+
+test('two tabs asking for the same name do not collide', () => {
+  const files = unzip(toXlsx([sheet, { ...sheet }]));
+  assert.match(files['xl/workbook.xml'], /name="Produk"/);
+  assert.match(files['xl/workbook.xml'], /name="Produk 2"/);
+});
+
+test('one sheet still works exactly as it did', () => {
+  assert.deepEqual(toXlsx(sheet), toXlsx([sheet]));
+});

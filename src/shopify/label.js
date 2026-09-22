@@ -304,7 +304,9 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
     ...(order.carrier ? [['Kurir', order.carrier]] : []),
     ['Asuransi', '0'],
     ['Biaya Kirim', rupiah(order.finance?.shipping ?? 0)],
-    ['Total Biaya', rupiah(order.total ?? 0)],
+    // No order total. Every sheet this function draws is marked NON COD, so nobody
+    // collects that number - it only prints what the parcel is worth on the outside of
+    // the box, for the courier and everyone the box passes to read.
     ['Berat', weight ? `${weight.toLocaleString('id-ID')} Gram` : '-'],
   ]) {
     keyed(rightX, key, fit(bold, value, 6.5, rightWidth - 52), rightY, 48);

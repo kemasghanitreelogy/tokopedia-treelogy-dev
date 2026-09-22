@@ -195,6 +195,12 @@ test('a typed-in sale prints on the same sheet, under its source and the house m
   assert.match(noted, /0\.78 0\.13 0\.11 rg/, 'the note is drawn in red');
   // And a note that only names the source is not an instruction at all.
   assert.ok(!pdf.includes('WhatsApp Order'), 'the filing habit stays off the box');
+  // Nobody collects on a NON COD parcel, so what the box is worth is nobody's business
+  // on the way there. The shipping fee stays: it is what the courier is owed.
+  assert.ok(pdf.includes('NON COD'));
+  assert.ok(!pdf.includes('Total Biaya'), 'the value of the goods stays off the outside of the box');
+  assert.ok(!pdf.includes('795.000'), 'nor does the number itself appear anywhere');
+  assert.ok(pdf.includes('Biaya Kirim'));
 
   // The sheet resolves it like a Shopify parcel, keyed by channel and id.
   const sheet = await buildLabelSheet({

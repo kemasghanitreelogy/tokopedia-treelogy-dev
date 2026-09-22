@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
-import { LABEL_SIZES, DEFAULT_SIZE, mergeLabels, labelSizeMm, PRINTABLE_STAGES, labelReadiness } from '../src/labels.js';
+import {
+  LABEL_SIZES, DEFAULT_SIZE, mergeLabels, labelSizeMm, PRINTABLE_STAGES, labelReadiness, TIKTOK_DOCUMENT_TYPE,
+} from '../src/labels.js';
 
 /**
  * A real PDF of the given size. Pages carry actual content because pdf-lib refuses to
@@ -163,4 +165,12 @@ test('a typed-in sale with an address is a label we draw; without one it is noth
   const walkIn = labelReadiness({ channel: 'manual', id: 'DW-1', stage: 'completed', shipTo: '' });
   assert.equal(walkIn.state, 'none');
   assert.match(walkIn.note, /tanpa alamat/);
+});
+
+test('the TikTok waybill is fetched with the packing slip attached to it', () => {
+  // Same A6 page, same barcode, but the slip under the waybill names every line, its
+  // SKU and its quantity. Asking for the bare SHIPPING_LABEL sent parcels to the bench
+  // with nothing on them saying what to put in the box. The value is the one the API
+  // itself lists as allowed; a typo here fails the whole print run with 36009004.
+  assert.equal(TIKTOK_DOCUMENT_TYPE, 'SHIPPING_LABEL_AND_PACKING_SLIP');
 });

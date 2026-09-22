@@ -78,7 +78,18 @@ async function fetchBytes(url, init = {}) {
  * One document per package. `document_size` A6 is the thermal-friendly form; the API
  * refuses outright until shipping has been arranged, which is a real state, not an error
  * to retry.
+ *
+ * SHIPPING_LABEL_AND_PACKING_SLIP, not SHIPPING_LABEL. Same A6 page, same waybill and
+ * barcode, but TikTok adds the packing slip underneath: the collection deadline, a row
+ * per line with name, SKU, seller SKU and quantity, a quantity total, and the order and
+ * package ids. Plain SHIPPING_LABEL leaves the packer to guess what goes in the box,
+ * which is the one thing a label is for. Shopee needs no equivalent - its thermal
+ * waybill already carries the item table. The types the API will accept, as it lists
+ * them itself: SHIPPING_LABEL, PACKING_SLIP, SHIPPING_LABEL_AND_PACKING_SLIP,
+ * SHIPPING_LABEL_PICTURE, HAZMAT_LABEL, INVOICE_LABEL.
  */
+export const TIKTOK_DOCUMENT_TYPE = 'SHIPPING_LABEL_AND_PACKING_SLIP';
+
 async function fetchTikTokLabels(orders, resolvePackages) {
   if (orders.length === 0) return { pages: [], failures: [] };
   const config = loadConfig();
@@ -100,7 +111,7 @@ async function fetchTikTokLabels(orders, resolvePackages) {
       config,
       method: 'GET',
       path: `/fulfillment/202309/packages/${order.packageId}/shipping_documents`,
-      query: { document_type: 'SHIPPING_LABEL', document_size: 'A6' },
+      query: { document_type: TIKTOK_DOCUMENT_TYPE, document_size: 'A6' },
     });
     if (!data.doc_url) throw new Error('API tidak mengembalikan doc_url');
     return { order, bytes: await fetchBytes(data.doc_url) };

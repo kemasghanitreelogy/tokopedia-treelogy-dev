@@ -1,5 +1,6 @@
 import { businessToday, zoneLabel, zoneName, zoneForChannel, ZONES } from './clock.js';
-import { CHANNELS, STAGES, MANUAL_CHANNEL, channelMeta } from './omni.js';
+import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omni.js';
+import { DATASETS, EXPORT_CHANNELS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness } from './labels.js';
@@ -22,16 +23,6 @@ export const escape = (value) =>
   );
 
 const rupiah = (n) => 'Rp' + Math.round(n).toLocaleString('id-ID');
-
-const STAGE_META = {
-  unpaid: { label: 'Belum bayar', tone: 'warn' },
-  to_ship: { label: 'Siap kirim', tone: 'act' },
-  shipping: { label: 'Dikirim', tone: 'info' },
-  delivered: { label: 'Terkirim', tone: 'good' },
-  completed: { label: 'Selesai', tone: 'done' },
-  cancelled: { label: 'Batal', tone: 'bad' },
-  returned: { label: 'Retur', tone: 'bad' },
-};
 
 const todayWib = businessToday;
 
@@ -94,6 +85,7 @@ icon.pencil = '<path d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L
 icon.userPlus = '<path d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM4 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 10.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/>';
 icon.check2 = '<path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>';
 icon.x = '<path d="M6 18 18 6M6 6l12 12"/>';
+icon.export = '<path d="M12 15V3m0 0L8.5 6.5M12 3l3.5 3.5M20.25 14.25v4.5a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-4.5"/>';
 
 export const svg = (name, cls = '') =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon[name]}</svg>`;
@@ -1619,6 +1611,9 @@ ${celebration(flash)}
 
   document.addEventListener('submit', function (e) {
     if (e.target.getAttribute('target') === '_blank') return;
+    // A form whose answer is a file never navigates, so a skeleton armed here would stay
+    // over the page until the next click. Same reason a download link is skipped above.
+    if (e.target.hasAttribute('data-download')) return;
     beginNavigation('Menyimpan…');
     // A listener further down the chain can still cancel this submit - every confirmation
     // on this dashboard does exactly that - and a navigation that never starts must not
@@ -1853,7 +1848,10 @@ export function renderDashboard({
         ${q ? `<a class="chip" href="${escape(link({ q: '' }))}">Hapus pencarian</a>` : ''}
       </form>
     </div>
-    <div class="filters">${stageChips}</div>
+    <div class="filters">
+      ${stageChips}
+      <button class="exbtn" type="button" id="ex-open" aria-haspopup="dialog">${svg('export')}Ekspor</button>
+    </div>
     ${pager(paged, { baseQuery, noun }).replace('class="pager"', 'class="pager pager--top"')}
     <div class="scroll">
       ${paged.total ? `<table>
@@ -1874,11 +1872,226 @@ export function renderDashboard({
       <span>${idNumber(all.count)} pesanan pada rentang ini</span>
       <span>Waktu mengikuti jam masing-masing platform</span>
     </div>
-  </section>`,
-    style: ORDER_DETAIL_STYLE,
-    script: ORDER_DETAIL_SCRIPT,
+  </section>
+
+  ${exportDialog(range)}`,
+    style: ORDER_DETAIL_STYLE + EXPORT_STYLE,
+    script: ORDER_DETAIL_SCRIPT + EXPORT_SCRIPT,
   });
 }
+
+/* --- the export sheet: what to take away, over which days, from which channels --- */
+
+/**
+ * The one place on this page that produces a file instead of a screen.
+ *
+ * Three decisions, in the order somebody makes them: what the rows should be, which days
+ * to cover, and which channels count. Everything is a real radio or checkbox, so the
+ * whole thing works without JavaScript and reads correctly to a screen reader; the script
+ * only adds the conveniences - the quick date chips, the "all channels" toggle, and
+ * keeping the page's loading skeleton out of the way of a download that never navigates.
+ *
+ * The dates are the range, always, rather than a preset with dates beside it that quietly
+ * override each other. A chip sets the two inputs and that is all it does, so what the
+ * form will send is on screen at every moment.
+ */
+function exportDialog(range) {
+  const today = businessToday();
+  const from = range?.from ?? today;
+  const to = range?.to ?? today;
+
+  const dataset = Object.values(DATASETS).map((spec, index) => `
+    <label class="ex__pick">
+      <input type="radio" name="dataset" value="${escape(spec.id)}"${spec.id === DEFAULT_DATASET ? ' checked autofocus' : ''}>
+      <span class="ex__pickb">
+        <span class="ex__pickt">${escape(spec.label)}</span>
+        <span class="ex__pickh">${escape(spec.hint)}</span>
+      </span>
+    </label>`).join('');
+
+  const channels = EXPORT_CHANNELS.map((meta) => `
+    <label class="ex__ch" style="--chip:${meta.accent}">
+      <input type="checkbox" name="channel" value="${escape(meta.id)}" checked data-ch>
+      <span>${escape(meta.label)}</span>
+    </label>`).join('');
+
+  const quick = [['Hari ini', 0], ['7 hari', 6], ['30 hari', 29], ['90 hari', 89]]
+    .map(([label, back]) => `<button class="ex__q" type="button" data-back="${back}">${label}</button>`).join('');
+
+  return `<dialog class="ex" id="export" aria-labelledby="ex-title">
+  <form class="ex__box" method="get" action="/api/export" data-download>
+    <button class="od__x" type="button" id="ex-x" aria-label="Tutup">${svg('x')}</button>
+    <span class="ex__ico" aria-hidden="true">${svg('export')}</span>
+    <h2 class="ex__title" id="ex-title">Ekspor data</h2>
+    <p class="ex__text">Filter di halaman ini tidak ikut terbawa &mdash; pilih sendiri apa yang mau diambil.</p>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Isi filenya</legend>
+      <div class="ex__picks">${dataset}</div>
+    </fieldset>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Rentang tanggal</legend>
+      <div class="ex__quick">${quick}</div>
+      <div class="ex__dates">
+        <label>Dari <input type="date" name="from" id="ex-from" value="${escape(from)}" max="${escape(today)}" required></label>
+        <label>s/d <input type="date" name="to" id="ex-to" value="${escape(to)}" max="${escape(today)}" required></label>
+      </div>
+      <p class="ex__note">Maksimal 90 hari. Rentang yang lebih panjang dipotong dari tanggal akhir.</p>
+    </fieldset>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Kanal</legend>
+      <div class="ex__chs">${channels}</div>
+      <label class="ex__all"><input type="checkbox" id="ex-all" checked><span>Semua kanal</span></label>
+    </fieldset>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Format</legend>
+      <div class="ex__seg">
+        <label><input type="radio" name="format" value="xlsx" checked><span>XLSX<small>Excel, siap di-pivot</small></span></label>
+        <label><input type="radio" name="format" value="csv"><span>CSV<small>Teks, untuk tool lain</small></span></label>
+      </div>
+    </fieldset>
+
+    <div class="ex__row">
+      <button class="pu__no" type="button" id="ex-no">Batal</button>
+      <button class="pu__yes" type="submit">${svg('export')}Unduh</button>
+    </div>
+  </form>
+</dialog>`;
+}
+
+const EXPORT_STYLE = `
+.ex{width:min(38rem,calc(100vw - 2rem)); max-height:min(88vh,52rem); padding:0; border:1px solid var(--glass-line);
+  border-radius:22px; background:color-mix(in srgb,var(--panel) 92%,transparent); color:var(--fg);
+  backdrop-filter:blur(24px) saturate(1.4); -webkit-backdrop-filter:blur(24px) saturate(1.4);
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.07)}
+.ex::backdrop{background:color-mix(in srgb,#0A0F0D 62%,transparent); backdrop-filter:blur(6px)}
+.ex[open]{animation:pop 280ms var(--ease-out) both}
+.ex[open]::backdrop{animation:veil 240ms var(--ease-out) both}
+/* Without showModal there is no top layer and no backdrop, so it centres itself. */
+.ex:not(:modal){position:fixed; inset:auto; top:50%; left:50%; transform:translate(-50%,-50%); z-index:70;
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.9), 0 0 0 100vmax color-mix(in srgb,#0A0F0D 62%,transparent)}
+.ex__box{display:flex; flex-direction:column; gap:1rem; padding:1.6rem; max-height:min(88vh,52rem); overflow:auto; position:relative}
+/* It is scrollable, so the browser makes it focusable; a ring around the whole sheet is
+   noise, and the controls inside it have rings of their own. */
+.ex__box:focus{outline:none}
+.ex__ico{width:44px; height:44px; border-radius:50%; display:grid; place-items:center; flex:none;
+  color:var(--cta-hi); background:color-mix(in srgb,var(--cta-a) 16%,transparent);
+  border:1px solid color-mix(in srgb,var(--cta-a) 40%,transparent)}
+.ex__ico .ico{width:20px; height:20px}
+.ex__title{margin:0; font-size:1.2rem; font-weight:600; letter-spacing:-.02em}
+.ex__text{margin:-.5rem 0 0; font-size:.85rem; line-height:1.55; color:var(--muted)}
+.ex__set{margin:0; padding:0; border:0; display:flex; flex-direction:column; gap:.55rem}
+.ex__leg{padding:0; font-size:.68rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--dim)}
+.ex__picks{display:flex; flex-direction:column; gap:.4rem}
+.ex__pick{display:block; cursor:pointer}
+.ex__pick input{position:absolute; opacity:0; width:0; height:0}
+.ex__pickb{display:block; padding:.7rem .9rem; border-radius:14px; border:1px solid var(--glass-line);
+  background:var(--glass); transition:border-color var(--t-fast), background var(--t-fast)}
+.ex__pick:hover .ex__pickb{background:var(--glass-2)}
+.ex__pick input:checked + .ex__pickb{border-color:color-mix(in srgb,var(--cta-a) 65%,transparent);
+  background:color-mix(in srgb,var(--cta-a) 13%,transparent)}
+.ex__pick input:focus-visible + .ex__pickb{outline:2px solid var(--brand); outline-offset:2px}
+.ex__pickt{display:block; font-size:.9rem; font-weight:600}
+.ex__pickh{display:block; margin-top:.15rem; font-size:.76rem; line-height:1.45; color:var(--muted)}
+.ex__quick{display:flex; flex-wrap:wrap; gap:.4rem}
+.ex__q{font:inherit; font-size:.78rem; padding:.42rem .85rem; min-height:36px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--glass-line); background:var(--glass); color:var(--muted); transition:background var(--t-fast), color var(--t-fast)}
+.ex__q:hover{background:var(--glass-2); color:var(--fg)}
+.ex__q:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.ex__dates{display:flex; flex-wrap:wrap; gap:.5rem}
+.ex__dates label{flex:1 1 11rem; display:flex; align-items:center; gap:.5rem; font-size:.8rem; color:var(--muted);
+  padding:.35rem .5rem .35rem .85rem; border-radius:14px; border:1px solid var(--glass-line); background:var(--glass)}
+.ex__dates input{flex:1; min-width:0; min-height:38px; font:inherit; font-size:.84rem; color:var(--fg);
+  background:transparent; border:0; color-scheme:dark}
+.ex__dates input:focus-visible{outline:2px solid var(--brand); outline-offset:2px; border-radius:8px}
+.ex__note{margin:0; font-size:.72rem; color:var(--dim)}
+.ex__chs{display:flex; flex-wrap:wrap; gap:.4rem}
+.ex__ch{display:inline-flex; align-items:center; gap:.45rem; padding:.42rem .85rem; min-height:38px; cursor:pointer;
+  border-radius:999px; border:1px solid var(--glass-line); background:var(--glass); font-size:.8rem; color:var(--muted);
+  transition:border-color var(--t-fast), background var(--t-fast), color var(--t-fast)}
+.ex__ch input{position:absolute; opacity:0; width:0; height:0}
+.ex__ch::before{content:''; width:9px; height:9px; border-radius:50%; background:var(--glass-line); flex:none; transition:background var(--t-fast)}
+.ex__ch:has(input:checked){color:var(--fg); border-color:color-mix(in srgb,var(--chip,var(--brand)) 55%,transparent);
+  background:color-mix(in srgb,var(--chip,var(--brand)) 14%,transparent)}
+.ex__ch:has(input:checked)::before{background:var(--chip,var(--brand))}
+.ex__ch:has(input:focus-visible){outline:2px solid var(--brand); outline-offset:2px}
+.ex__all{display:inline-flex; align-items:center; gap:.5rem; font-size:.78rem; color:var(--muted); cursor:pointer}
+.ex__all input{width:17px; height:17px; accent-color:var(--cta-a); cursor:pointer}
+.ex__seg{display:flex; gap:.4rem}
+.ex__seg label{flex:1; cursor:pointer}
+.ex__seg input{position:absolute; opacity:0; width:0; height:0}
+.ex__seg span{display:block; padding:.6rem .8rem; border-radius:14px; text-align:center; font-size:.86rem; font-weight:600;
+  border:1px solid var(--glass-line); background:var(--glass); transition:border-color var(--t-fast), background var(--t-fast)}
+.ex__seg small{display:block; margin-top:.1rem; font-size:.7rem; font-weight:400; color:var(--muted)}
+.ex__seg label:hover span{background:var(--glass-2)}
+.ex__seg input:checked + span{border-color:color-mix(in srgb,var(--cta-a) 65%,transparent);
+  background:color-mix(in srgb,var(--cta-a) 13%,transparent)}
+.ex__seg input:focus-visible + span{outline:2px solid var(--brand); outline-offset:2px}
+.ex__row{display:flex; gap:.6rem; margin-top:.2rem}
+.ex__row .pu__yes{display:inline-flex; align-items:center; justify-content:center; gap:.45rem}
+.ex__row .pu__yes .ico{width:16px; height:16px}
+/* The button that opens it, parked in the space to the right of the status chips. */
+.exbtn{margin-left:auto; display:inline-flex; align-items:center; gap:.45rem; font:inherit; font-size:.8rem; font-weight:600;
+  padding:.45rem 1rem; min-height:38px; border-radius:999px; cursor:pointer; color:var(--fg);
+  border:1px solid color-mix(in srgb,var(--cta-a) 45%,transparent);
+  background:color-mix(in srgb,var(--cta-a) 12%,transparent);
+  transition:background var(--t-fast), border-color var(--t-fast), transform var(--t-fast) var(--ease-out)}
+.exbtn:hover{background:color-mix(in srgb,var(--cta-a) 20%,transparent); transform:translateY(-1px)}
+.exbtn:active{transform:none}
+.exbtn:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.exbtn .ico{width:16px; height:16px; color:var(--cta-hi)}
+@media (max-width:640px){ .ex__box{padding:1.1rem} .exbtn{margin-left:0} }
+`;
+
+const EXPORT_SCRIPT = `
+(function () {
+  var dialog = document.getElementById('export');
+  var open = document.getElementById('ex-open');
+  if (!dialog || !open) return;
+  var form = dialog.querySelector('form');
+
+  function show() { if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open', ''); }
+  function hide() { if (dialog.close) dialog.close(); else dialog.removeAttribute('open'); }
+  open.addEventListener('click', show);
+  document.getElementById('ex-no').addEventListener('click', hide);
+  document.getElementById('ex-x').addEventListener('click', hide);
+
+  // The chips only move the two date inputs. Nothing is hidden from the operator: what
+  // the form will send is exactly what the fields show.
+  var from = document.getElementById('ex-from');
+  var to = document.getElementById('ex-to');
+  var day = 86400000;
+  form.querySelectorAll('[data-back]').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      var end = new Date();
+      var start = new Date(end.getTime() - Number(chip.dataset.back) * day);
+      to.value = end.toISOString().slice(0, 10);
+      from.value = start.toISOString().slice(0, 10);
+    });
+  });
+
+  var all = document.getElementById('ex-all');
+  var boxes = Array.prototype.slice.call(form.querySelectorAll('[data-ch]'));
+  all.addEventListener('change', function () {
+    boxes.forEach(function (box) { box.checked = all.checked; });
+  });
+  boxes.forEach(function (box) {
+    box.addEventListener('change', function () {
+      all.checked = boxes.every(function (b) { return b.checked; });
+      // Every channel off would download an empty sheet, so the last one stays on.
+      if (boxes.every(function (b) { return !b.checked; })) box.checked = true;
+    });
+  });
+
+  // The response is a file, so the page never navigates and the skeleton armed on submit
+  // would sit over the dashboard forever. It closes instead, which is what "done" looks
+  // like here.
+  form.addEventListener('submit', function () { window.setTimeout(hide, 120); });
+})();
+`;
 
 /* --- the order popup: a row opens what the page already knows about that order --- */
 

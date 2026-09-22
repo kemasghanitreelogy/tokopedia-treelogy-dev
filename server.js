@@ -21,6 +21,7 @@ const ROUTES = {
   '/api/activate': './api/activate.js',
   '/api/invoice': './api/invoice.js',
   '/api/labels': './api/labels.js',
+  '/api/export': './api/export.js',
   '/api/status': './api/status.js',
   '/api/callback': './api/callback.js',
   '/api/mekari-sync': './api/mekari-sync.js',

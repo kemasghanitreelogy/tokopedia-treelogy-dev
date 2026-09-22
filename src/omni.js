@@ -41,6 +41,21 @@ export const channelMeta = (id) => CHANNELS[id] ?? (id === MANUAL_CHANNEL.id ? M
  */
 export const STAGES = ['unpaid', 'to_ship', 'shipping', 'delivered', 'completed', 'cancelled', 'returned'];
 
+/**
+ * What each stage is called, and how it reads. Kept beside the stages themselves rather
+ * than in the page, because a spreadsheet and a screen must not name the same state
+ * differently - somebody reconciles one against the other.
+ */
+export const STAGE_META = {
+  unpaid: { label: 'Belum bayar', tone: 'warn' },
+  to_ship: { label: 'Siap kirim', tone: 'act' },
+  shipping: { label: 'Dikirim', tone: 'info' },
+  delivered: { label: 'Terkirim', tone: 'good' },
+  completed: { label: 'Selesai', tone: 'done' },
+  cancelled: { label: 'Batal', tone: 'bad' },
+  returned: { label: 'Retur', tone: 'bad' },
+};
+
 const STAGE_BY_STATUS = {
   // TikTok Shop / Tokopedia
   UNPAID: 'unpaid',

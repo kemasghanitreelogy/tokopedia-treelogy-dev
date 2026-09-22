@@ -11,6 +11,9 @@
     "api/dashboard.js": {
       "maxDuration": 120
     },
+    "api/export.js": {
+      "maxDuration": 120
+    },
     "api/mekari-sync.js": {
       "maxDuration": 120
     },

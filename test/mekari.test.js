@@ -396,6 +396,22 @@ test('a code that does not match its source is refused', () => {
   assert.throws(() => buildManualOrder(manual({ code: '' })), /tidak berbentuk/);
 });
 
+test('a sale typed in this morning is stamped now, not at lunchtime', () => {
+  // It was stamped midday WIB whatever the clock said, so a sale entered at 09:26 sat
+  // two and a half hours in the future and the order list - which asks for everything
+  // up to now - could not see it until noon.
+  const morning = Date.parse('2026-09-22T02:29:00Z'); // 09:29 WIB
+  const today = buildManualOrder(manual({ date: '2026-09-22', now: morning }));
+  assert.equal(today.createdAt, Math.floor(morning / 1000));
+  assert.equal(jurnalDate(today.createdAt, 'manual'), '2026-09-22', 'and it is still today in the books');
+
+  // An entry made after midday, and a back-dated one, both keep the midday stamp that
+  // protects the date from a timezone slip.
+  const afternoon = Date.parse('2026-09-22T09:00:00Z'); // 16:00 WIB
+  assert.equal(buildManualOrder(manual({ date: '2026-09-22', now: afternoon })).createdAt, Math.floor(Date.parse('2026-09-22T05:00:00Z') / 1000));
+  assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: morning })).createdAt, Math.floor(Date.parse('2026-09-20T05:00:00Z') / 1000));
+});
+
 test('a transaction cannot be dated into the future', () => {
   const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
   assert.throws(() => buildManualOrder(manual({ date: tomorrow })), /masa depan/);

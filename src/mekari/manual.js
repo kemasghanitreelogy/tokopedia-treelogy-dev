@@ -2,7 +2,7 @@ import { SOURCES } from './sources.js';
 import { MANUAL_SOURCES, PREFIXES, isManualSource } from './prefix.js';
 import { findProduct, PRODUCTS } from '../master.js';
 import { InvoiceError } from './invoice.js';
-import { WIB_OFFSET_SECONDS, wibDayStart, wibDate } from '../range.js';
+import { wibDayStart, wibDate } from '../range.js';
 
 /**
  * Transactions that were never online.
@@ -172,12 +172,18 @@ export function buildManualOrder(input) {
 
   const dayStart = wibDayStart(String(input.date ?? ''));
   if (dayStart === null) throw new InvoiceError('tanggal tidak valid');
-  // Booked at midday WIB rather than midnight, so a timezone slip of a few hours cannot
-  // push the transaction onto the day before.
-  const createdAt = dayStart + 12 * 3600;
-  if (createdAt > Math.floor(Date.now() / 1000) + WIB_OFFSET_SECONDS) {
-    throw new InvoiceError('tanggal ada di masa depan');
-  }
+  const now = Math.floor((input.now ?? Date.now()) / 1000);
+  if (dayStart > wibDayStart(wibDate(now))) throw new InvoiceError('tanggal ada di masa depan');
+  /**
+   * Midday WIB rather than midnight, so a timezone slip of a few hours cannot push the
+   * transaction onto the day before - but never later than this moment.
+   *
+   * A sale typed in at nine in the morning used to be stamped noon, two hours ahead of
+   * itself, and the order list asks the table for everything up to now: the sale was
+   * in Jurnal, in the database, on its label, and invisible on the Pesanan page until
+   * lunchtime. Back-dated entries still sit at midday of the day they name.
+   */
+  const createdAt = Math.min(dayStart + 12 * 3600, now);
 
   const rows = (input.lines ?? []).filter((l) => l && l.sku);
   if (rows.length === 0) throw new InvoiceError('belum ada baris produk');

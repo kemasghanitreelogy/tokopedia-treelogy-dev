@@ -174,3 +174,29 @@ test('the TikTok waybill is fetched with the packing slip attached to it', () =>
   // itself lists as allowed; a typo here fails the whole print run with 36009004.
   assert.equal(TIKTOK_DOCUMENT_TYPE, 'SHIPPING_LABEL_AND_PACKING_SLIP');
 });
+
+test('the waybill number is looked up only for the orders that do not carry one', async () => {
+  const { shopeeTracking } = await import('../src/labels.js');
+  const asked = [];
+  const call = async (config, path, auth, query) => {
+    assert.equal(path, '/api/v2/logistics/get_tracking_number');
+    asked.push(query.order_sn);
+    if (query.order_sn === 'C') throw new Error('logistics.order_not_found');
+    // An order the courier has not numbered yet answers with an empty string.
+    return { response: { tracking_number: query.order_sn === 'D' ? '' : `CM${query.order_sn}` } };
+  };
+  const found = await shopeeTracking({}, {}, [
+    { id: 'A', tracking: 'CM111' },
+    { id: 'B' },
+    { id: 'C' },
+    { id: 'D', tracking: '   ' },
+  ], { call });
+
+  assert.deepEqual(asked.sort(), ['B', 'C', 'D'], 'yang sudah punya resi tidak ditanyakan lagi');
+  assert.equal(found.get('A'), 'CM111', 'yang sudah dipegang dipakai apa adanya');
+  assert.equal(found.get('B'), 'CMB');
+  // Neither a refusal nor a blank is a tracking number, and neither may be sent as one:
+  // Shopee answers a create without it with "The tracking number is invalid".
+  assert.equal(found.has('C'), false);
+  assert.equal(found.has('D'), false);
+});

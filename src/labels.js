@@ -135,6 +135,40 @@ const POLL_BACKOFF_MS = [250, 500, 900, 1400, 1800, 1800, 1800];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * The waybill number Shopee wants told back to it, per order.
+ *
+ * create_shipping_document refuses an order whose tracking number it is not given -
+ * "The tracking number is invalid. Please check the tracking number." - even though the
+ * order is PROCESSED and Shopee is holding the number itself. Verified against the live
+ * shop on 2026-09-22: order_sn alone fails, order_sn with package_number fails, and
+ * order_sn with tracking_number succeeds.
+ *
+ * An order that already carries one from the dashboard read costs nothing here; only the
+ * ones we do not know are asked for, a few at a time.
+ */
+const TRACKING_LOOKUP_CONCURRENCY = 6;
+
+export async function shopeeTracking(config, auth, orders, { call = callShopApi } = {}) {
+  const known = new Map();
+  const ask = [];
+  for (const order of orders) {
+    const held = String(order.tracking ?? '').trim();
+    if (held) known.set(order.id, held);
+    else ask.push(order.id);
+  }
+
+  const found = await settleLimit(ask, TRACKING_LOOKUP_CONCURRENCY, async (orderSn) => {
+    const { response } = await call(config, '/api/v2/logistics/get_tracking_number', auth, { order_sn: orderSn });
+    // An order the courier has not issued for answers with an empty string, not an error.
+    return { orderSn, tracking: String(response?.tracking_number ?? '').trim() };
+  });
+  for (const outcome of found) {
+    if (outcome.ok && outcome.value.tracking) known.set(outcome.value.orderSn, outcome.value.tracking);
+  }
+  return known;
+}
+
+/**
  * Shopee is a three-step, asynchronous flow, and the final download is all-or-nothing:
  * a single not-yet-ready order makes the whole PDF request fail. So the result is polled
  * and filtered down to READY orders before anything is downloaded - otherwise one bad
@@ -178,7 +212,23 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
     // only what already exists rather than bringing new documents into being.
     for (const sn of unknown) note(sn, 'READ-ONLY: dokumen belum dibuat, tidak dibuatkan');
   } else if (unknown.length > 0) {
-    const orderList = unknown.map((order_sn) => ({ order_sn, shipping_document_type: documentType }));
+    const byId = new Map(orders.map((order) => [order.id, order]));
+    const tracking = await shopeeTracking(config, auth, unknown.map((sn) => byId.get(sn) ?? { id: sn }));
+
+    // An order the courier has not numbered yet cannot have a document, and saying so is
+    // more use to the bench than repeating Shopee's line about an invalid number.
+    const missing = unknown.filter((sn) => !tracking.get(sn));
+    for (const sn of missing) note(sn, 'nomor resi belum terbit di kurir, coba lagi sebentar lagi');
+
+    const askable = unknown.filter((sn) => tracking.get(sn));
+    const orderList = askable.map((order_sn) => {
+      const item = { order_sn, shipping_document_type: documentType, tracking_number: tracking.get(order_sn) };
+      // Named when we have it, because an order split across parcels needs saying which.
+      const packageNumber = byId.get(order_sn)?.packageNumber;
+      if (packageNumber) item.package_number = packageNumber;
+      return item;
+    });
+    if (orderList.length === 0) return { pages: [], failures };
     try {
       const created = await callShopApi(config, '/api/v2/logistics/create_shipping_document', auth, {}, { order_list: orderList });
       for (const row of created.response?.result_list ?? []) {
@@ -189,10 +239,10 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
         if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
       }
       if (!error.response?.result_list) {
-        for (const sn of unknown) note(sn, error.message);
+        for (const sn of askable) note(sn, error.message);
       }
     }
-    for (const sn of unknown) {
+    for (const sn of askable) {
       if (!failures.some((f) => f.id === sn)) pending.add(sn);
     }
   }

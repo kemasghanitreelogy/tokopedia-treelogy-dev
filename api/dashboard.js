@@ -100,8 +100,15 @@ const LEDGER_TTL_MS = 60_000;
 const IMAGES_TTL_MS = 5 * 60_000;
 const imagesByKey = () => cached('images', IMAGES_TTL_MS, () => loadImageManifest().then((m) => m.images ?? {}).catch(() => ({})), SWR);
 
-/** The orders behind one range, from the cache when it has them and refreshed behind the reader when it is time. */
-const ordersFor = (range) => cached(
+/**
+ * The orders behind one range, from the cache when it has them and refreshed behind the
+ * reader when it is time.
+ *
+ * Exported so the spreadsheet route reads through the same entry rather than a second
+ * one beside it: an export of the range somebody is looking at should cost nothing, and
+ * two caches of the same window would only disagree.
+ */
+export const ordersFor = (range) => cached(
   // Keyed by the range's identity, not its computed bounds: a rolling preset recomputes
   // `since`/`until` from Date.now() on every request, so timestamps would make the key
   // unique each time and the cache would never hit.

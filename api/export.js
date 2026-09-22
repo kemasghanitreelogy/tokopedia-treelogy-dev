@@ -1,4 +1,4 @@
-import { loadOrders } from '../src/orders-source.js';
+import { ordersFor } from './dashboard.js';
 import { resolveRange } from '../src/range.js';
 import { dashboardError } from '../src/dashboard-page.js';
 import { buildExport, renderExport, exportFilename, DATASETS, DEFAULT_DATASET } from '../src/export/orders.js';
@@ -57,7 +57,7 @@ export default async function handler(req, res) {
 
   try {
     const started = Date.now();
-    const { orders } = await loadOrders({ range, tracking: true });
+    const { orders } = await ordersFor(range);
     const sheet = buildExport({ orders, dataset, channels, range });
     const { body, type } = renderExport(sheet, format);
     const filename = exportFilename(sheet, format, range);

@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
+import { shippingMethod, shippingMethods, shipBody, needsPickupTime, PICKUP } from './shopee/pickup.js';
 import { shopifyGraphql } from './shopify/client.js';
 import { isShopifyConfigured } from './shopify/config.js';
 import { markArranged } from './shopify/label.js';
@@ -72,38 +73,26 @@ function guard(what) {
 }
 
 /**
- * Shopee: arrange the shipment. This shop's get_shipping_parameter reports
- * `info_needed: { dropoff: [] }`, meaning dropoff with no extra fields required, so the
- * parameters are read per order rather than assumed - a shop switched to pickup needs an
- * address and a time slot instead.
+ * Shopee: arrange the shipment, the way this order in particular is handed over.
+ *
+ * A regular courier is a drop-off and needs nothing said. An instant courier dispatches
+ * a driver, so Shopee wants an address and a time; `pickupTimeId` is what the operator
+ * chose, and a choice Shopee no longer offers is refused rather than quietly replaced -
+ * silently falling back to "Now" is how a driver ends up at an unpacked bench.
  */
-export async function shopeeShip(orderSn) {
+export async function shopeeShip(orderSn, { pickupTimeId = null } = {}) {
   guard(`pengiriman Shopee ${orderSn}`);
   const { config, auth } = await resolveShopeeSession();
-
-  const { response } = await callShopApi(config, '/api/v2/logistics/get_shipping_parameter', auth, {
-    order_sn: orderSn,
-  });
-  const needed = response?.info_needed ?? {};
-
-  const body = { order_sn: orderSn };
-  if (Object.hasOwn(needed, 'dropoff')) {
-    body.dropoff = {};
-    for (const field of needed.dropoff ?? []) {
-      if (field === 'branch_id') body.dropoff.branch_id = response.dropoff?.branch_list?.[0]?.branch_id;
-    }
-  } else if (Object.hasOwn(needed, 'pickup')) {
-    const address = response.pickup?.address_list?.[0];
-    if (!address) throw new Error('tidak ada alamat pickup yang tersedia');
-    body.pickup = { address_id: address.address_id };
-    const slot = address.time_slot_list?.[0];
-    if (slot) body.pickup.pickup_time_id = slot.pickup_time_id;
-  } else {
-    throw new Error(`Shopee tidak menyebut metode pengiriman: ${JSON.stringify(needed)}`);
-  }
-
-  await callShopApi(config, '/api/v2/logistics/ship_order', auth, {}, body);
+  await shopeeShipUnguarded(config, auth, orderSn, { pickupTimeId });
   return { channel: 'shopee', id: orderSn, action: 'shopee_ship' };
+}
+
+/** Which Shopee orders in a selection need a pickup time before anything can be arranged. */
+export async function planArrangement(orders, { read = shippingMethods } = {}) {
+  const shopee = orders.filter((o) => o.channel === 'shopee' && o.packageNumber);
+  if (shopee.length === 0) return {};
+  const { config, auth } = await resolveShopeeSession();
+  return read(shopee.map((o) => o.id), { config, auth });
 }
 
 /** TikTok / Tokopedia: mark the package ready to ship, which is what mints the waybill. */
@@ -248,7 +237,7 @@ export async function runAction({ action, order, trackingNumber, company }) {
  * Shopee's batch is all-or-nothing per call, so a rejected batch falls back to shipping
  * each order on its own: one ineligible order must not cost the other nineteen.
  */
-export async function massArrange(orders) {
+export async function massArrange(orders, { pickupTimes = {}, methods = null } = {}) {
   guard(`pengiriman ${orders.length} pesanan`);
 
   const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
@@ -298,28 +287,37 @@ export async function massArrange(orders) {
       results.push({ channel: 'shopee', id: order.id, status: 'failed', error: 'nomor paket tidak diketahui' });
     }
 
+    // Split by how each parcel is handed over, rather than sending the lot as dropoff
+    // and letting Shopee refuse the batch because one order wanted a driver.
+    const plans = methods ?? await shippingMethods(usable.map((o) => o.id), { config, auth });
+    const collected = usable.filter((o) => plans[o.id]?.method === PICKUP);
+    const dropped = usable.filter((o) => plans[o.id]?.method !== PICKUP);
+
     let batched = false;
-    if (usable.length > 0) {
+    if (dropped.length > 0) {
       try {
         await callShopApi(config, '/api/v2/logistics/mass_ship_order', auth, {}, {
-          package_list: usable.map((o) => ({ order_sn: o.id, package_number: o.packageNumber })),
+          package_list: dropped.map((o) => ({ order_sn: o.id, package_number: o.packageNumber })),
           dropoff: {},
         });
-        for (const order of usable) results.push({ channel: 'shopee', id: order.id, status: 'ok' });
+        for (const order of dropped) results.push({ channel: 'shopee', id: order.id, status: 'ok' });
         batched = true;
       } catch {
         batched = false;
       }
     }
 
-    if (!batched) {
-      for (const order of usable) {
-        try {
-          await shopeeShipUnguarded(config, auth, order.id);
-          results.push({ channel: 'shopee', id: order.id, status: 'ok' });
-        } catch (error) {
-          results.push({ channel: 'shopee', id: order.id, status: 'failed', error: error.message });
-        }
+    // A pickup is booked one at a time by necessity: the address and the slot belong to
+    // that order and mass_ship_order takes one method for the whole call.
+    for (const order of batched ? collected : usable) {
+      try {
+        await shopeeShipUnguarded(config, auth, order.id, {
+          pickupTimeId: pickupTimes[order.id] ?? null,
+          plan: plans[order.id] ?? null,
+        });
+        results.push({ channel: 'shopee', id: order.id, status: 'ok' });
+      } catch (error) {
+        results.push({ channel: 'shopee', id: order.id, status: 'failed', error: error.message });
       }
     }
   }
@@ -333,27 +331,7 @@ export async function massArrange(orders) {
 }
 
 /** The single-order path, minus the guard - the batch has already checked it once. */
-async function shopeeShipUnguarded(config, auth, orderSn) {
-  const { response } = await callShopApi(config, '/api/v2/logistics/get_shipping_parameter', auth, {
-    order_sn: orderSn,
-  });
-  const needed = response?.info_needed ?? {};
-  const body = { order_sn: orderSn };
-
-  if (Object.hasOwn(needed, 'dropoff')) {
-    body.dropoff = {};
-    for (const field of needed.dropoff ?? []) {
-      if (field === 'branch_id') body.dropoff.branch_id = response.dropoff?.branch_list?.[0]?.branch_id;
-    }
-  } else if (Object.hasOwn(needed, 'pickup')) {
-    const address = response.pickup?.address_list?.[0];
-    if (!address) throw new Error('tidak ada alamat pickup yang tersedia');
-    body.pickup = { address_id: address.address_id };
-    const slot = address.time_slot_list?.[0];
-    if (slot) body.pickup.pickup_time_id = slot.pickup_time_id;
-  } else {
-    throw new Error(`Shopee tidak menyebut metode pengiriman: ${JSON.stringify(needed)}`);
-  }
-
-  await callShopApi(config, '/api/v2/logistics/ship_order', auth, {}, body);
+async function shopeeShipUnguarded(config, auth, orderSn, { pickupTimeId = null, plan = null } = {}) {
+  const method = plan ?? await shippingMethod(orderSn, { config, auth });
+  await callShopApi(config, '/api/v2/logistics/ship_order', auth, {}, shipBody(orderSn, method, { pickupTimeId }));
 }

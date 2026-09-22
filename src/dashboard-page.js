@@ -6,6 +6,7 @@ import { labelReadiness } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
+import { defaultSlot } from './shopee/pickup.js';
 import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
@@ -1455,6 +1456,46 @@ a.rv__product:hover{color:var(--accent)}
 .yay__ok:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 @media (prefers-reduced-motion:reduce){ .yay__field{display:none} .yay__check{stroke-dashoffset:0} }
 
+/* --- the pickup step: one question, asked once, for a whole batch --- */
+.pu{width:min(40rem,calc(100vw - 2rem)); max-height:min(88vh,50rem); padding:0; border:1px solid var(--glass-line);
+  border-radius:22px; background:color-mix(in srgb,var(--panel) 92%,transparent); color:var(--fg);
+  backdrop-filter:blur(24px) saturate(1.4); -webkit-backdrop-filter:blur(24px) saturate(1.4);
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.07)}
+.pu::backdrop{background:color-mix(in srgb,#0A0F0D 62%,transparent); backdrop-filter:blur(6px)}
+.pu[open]{animation:pop 280ms var(--ease-out) both}
+.pu[open]::backdrop{animation:veil 240ms var(--ease-out) both}
+/* Open without JavaScript the dialog is not modal, so it carries its own veil. */
+.pu:not(:modal){position:fixed; inset:auto; top:50%; left:50%; transform:translate(-50%,-50%); z-index:70}
+.pu__box{display:flex; flex-direction:column; gap:.9rem; padding:1.6rem; max-height:min(88vh,50rem); overflow:auto}
+.pu__ico{width:44px; height:44px; border-radius:50%; display:grid; place-items:center; flex:none;
+  color:var(--cta-hi); background:color-mix(in srgb,var(--cta-a) 16%,transparent);
+  border:1px solid color-mix(in srgb,var(--cta-a) 40%,transparent)}
+.pu__ico .ico{width:20px; height:20px}
+.pu__title{margin:0; font-size:1.2rem; font-weight:600; letter-spacing:-.02em}
+.pu__text{margin:0; font-size:.88rem; line-height:1.55; color:var(--muted)}
+.pu__at{display:flex; align-items:center; gap:.45rem; margin:0; font-size:.78rem; color:var(--dim)}
+.pu__at .ico{width:15px; height:15px; flex:none}
+.pu__all{display:flex; align-items:center; gap:.6rem; padding:.7rem .85rem; border-radius:14px;
+  background:var(--glass); border:1px solid var(--glass-line); font-size:.82rem; color:var(--muted)}
+.pu__all select{margin-left:auto}
+.pu__list{border:1px solid var(--glass-line); border-radius:14px; overflow:auto; max-height:22rem}
+.pu__list th{background:color-mix(in srgb,var(--panel) 92%,transparent)}
+.pu__slot{font:inherit; font-size:.82rem; padding:.4rem .6rem; min-height:38px; border-radius:999px;
+  border:1px solid var(--glass-line); background:var(--panel-2); color:var(--fg); cursor:pointer; min-width:11rem}
+.pu__slot:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.pu__row{display:flex; gap:.6rem; margin-top:.3rem}
+.pu__no,.pu__yes{flex:1; font:inherit; font-size:.9rem; font-weight:600; padding:.7rem; min-height:46px;
+  border-radius:999px; cursor:pointer; text-align:center; text-decoration:none;
+  transition:filter var(--t-base) var(--ease-out), background var(--t-fast), transform var(--t-fast) var(--ease-out)}
+.pu__no{border:1px solid var(--glass-line); background:var(--glass); color:var(--fg); display:grid; place-items:center}
+.pu__no:hover{background:var(--glass-2)}
+.pu__yes{border:1px solid transparent; color:#fff; background:linear-gradient(155deg,var(--cta-a),var(--cta-b));
+  box-shadow:0 1px 0 rgba(255,255,255,.14) inset, 0 12px 26px -14px color-mix(in srgb,var(--cta-a) 85%,transparent)}
+.pu__yes:hover{filter:brightness(1.08); transform:translateY(-1px)}
+.pu__yes:active{transform:none}
+.pu__no:focus-visible,.pu__yes:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+@media (max-width:640px){ .pu__box{padding:1.1rem} .pu__slot{min-width:8rem} }
+
 /* --- who is signed in: a small identity chip that doubles as a link to their own trail --- */
 .who{display:inline-flex; align-items:center; gap:.5rem; padding:.2rem .75rem .2rem .2rem; min-height:38px; border-radius:999px;
   border:1px solid transparent; background:transparent; text-decoration:none; color:inherit;
@@ -1932,7 +1973,70 @@ const rangeQuery = (range) =>
  * channel is what makes the page a worklist instead of a report. Actions run one at a
  * time on purpose - shipping cannot be undone from here.
  */
-export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, arranged = {}, user = null }) {
+/**
+ * The question an instant courier forces: when should the driver come?
+ *
+ * Shopee dispatches a rider for GrabExpress and GoSend, and it will not accept the
+ * order until it is told which slot. It offers them itself - "Now", or an hour-wide
+ * window - minted per order and expiring, so this is asked at the moment of arranging
+ * and answered in one place for the whole batch. One control sets every row, because
+ * the usual answer is the same for all of them; each row can still differ, because the
+ * one parcel that is not packed yet is exactly the one this exists for.
+ *
+ * Nothing is arranged until this is answered: the form carries the whole selection, so
+ * the drop-off parcels in the same batch go out on the same press.
+ */
+function pickupDialog(pickup, csrf) {
+  if (!pickup?.waiting?.length) return '';
+
+  const slotTexts = [...new Set(pickup.waiting.flatMap(({ plan }) => (plan.slots ?? []).map((s) => s.text)))];
+  const address = pickup.waiting.map(({ plan }) => plan.address).find(Boolean) ?? '';
+
+  const rows = pickup.waiting.map(({ order, plan }) => {
+    const chosen = pickup.chosen?.[order.id] ?? defaultSlot(plan)?.id ?? '';
+    const options = (plan.slots ?? []).map((slot) =>
+      `<option value="${escape(slot.id)}" data-text="${escape(slot.text)}"${slot.id === chosen ? ' selected' : ''}>${
+        escape(slot.text)}${slot.recommended ? ' &middot; disarankan' : ''}</option>`).join('');
+    return `<tr>
+      <td><span class="mono nowrap">${escape(order.id)}</span><span class="pick__s">${escape(order.buyer) || '&mdash;'}</span></td>
+      <td class="nowrap">${escape(order.carrier) || '&mdash;'}</td>
+      <td><select class="pu__slot" name="slot:${escape(order.id)}" data-slot required
+                  aria-label="Waktu jemput ${escape(order.id)}">${options}</select></td>
+    </tr>`;
+  }).join('');
+
+  const others = pickup.total - pickup.waiting.length;
+  return `<dialog class="pu" id="pickup" open aria-labelledby="pu-title">
+  <form class="pu__box" method="post" action="/api/dashboard">
+    <input type="hidden" name="csrf" value="${escape(csrf)}">
+    <input type="hidden" name="view" value="process">
+    <input type="hidden" name="action" value="mass_arrange">
+    ${pickup.selection.map((value) => `<input type="hidden" name="order" value="${escape(value)}">`).join('')}
+    <span class="pu__ico" aria-hidden="true">${svg('truck')}</span>
+    <h2 class="pu__title" id="pu-title">Kapan kurir menjemput?</h2>
+    <p class="pu__text">${pickup.waiting.length} pesanan pakai kurir instan, jadi Shopee mengirim driver dan menahan pesanannya sampai waktu jemput dipilih.${
+      others > 0 ? ` ${others} pesanan lain tinggal diantar ke agen dan ikut diatur sekaligus.` : ''}</p>
+    ${address ? `<p class="pu__at">${svg('truck')}<span>Dijemput di ${escape(address)}</span></p>` : ''}
+    ${slotTexts.length > 1 ? `<label class="pu__all">
+      <span>Terapkan ke semua</span>
+      <select class="pu__slot" id="pu-all" aria-label="Waktu jemput untuk semua pesanan">
+        <option value="">Pilih satu per satu</option>
+        ${slotTexts.map((text) => `<option value="${escape(text)}">${escape(text)}</option>`).join('')}
+      </select>
+    </label>` : ''}
+    <div class="pu__list scroll"><table class="dense">
+      <thead><tr><th>Pesanan</th><th>Kurir</th><th>Waktu jemput</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="pu__row">
+      <a class="pu__no" href="?view=process">Batal</a>
+      <button class="pu__yes" type="submit">Atur pengiriman ${pickup.total} pesanan</button>
+    </div>
+  </form>
+</dialog>`;
+}
+
+export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, arranged = {}, user = null, pickup = null }) {
   const rows = pending(orders, arranged);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
 
@@ -2029,6 +2133,25 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     </div>`,
     script: `
 (function () {
+  // The pickup step, when Shopee asked for one. Rendered open so it still works with no
+  // JavaScript; upgraded to a real modal here for the backdrop, Escape and focus trap.
+  var pu = document.getElementById('pickup');
+  if (pu) {
+    if (pu.showModal) { pu.close(); pu.showModal(); }
+    var all = document.getElementById('pu-all');
+    var slots = Array.prototype.slice.call(pu.querySelectorAll('select[data-slot]'));
+    if (all) {
+      all.addEventListener('change', function () {
+        if (!all.value) return;
+        slots.forEach(function (slot) {
+          Array.prototype.forEach.call(slot.options, function (option) {
+            if (option.dataset.text === all.value) slot.value = option.value;
+          });
+        });
+      });
+    }
+  }
+
   var form = document.getElementById('massform');
   if (!form) return;
   var picks = Array.prototype.slice.call(form.querySelectorAll('.wo__pick'));
@@ -2076,7 +2199,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
 
   sync();
 })();\n`,
-    body: rows.length === 0
+    body: pickupDialog(pickup, csrf) + (rows.length === 0
       ? `<p class="empty">Semua pesanan sudah diatur pengirimannya.${
           waiting > 0 ? ` ${waiting} menunggu dijemput kurir.` : ''}</p>`
       : `<form method="post" id="massform" data-confirm="Atur pengiriman untuk {n} pesanan sekaligus?">
@@ -2096,7 +2219,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           <div class="wl__go">
             <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${rows.length}</span> pesanan</button>
           </div>
-        </form>`,
+        </form>`),
   });
 }
 

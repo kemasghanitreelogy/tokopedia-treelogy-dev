@@ -16,7 +16,8 @@ import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
-import { runAction, massArrange } from '../src/fulfillment.js';
+import { runAction, massArrange, planArrangement } from '../src/fulfillment.js';
+import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
@@ -175,7 +176,35 @@ async function deliverInvitation({ user, token, by }) {
  * `apply` and `price` do write to the shops, and both go through the same guarded paths
  * the CLI uses, including the audit trail.
  */
-async function handleWrite(form, ip, user) {
+/**
+ * The page that asks when the driver should come, for the orders that need it asked.
+ *
+ * It is the process page with a dialog over it, carrying the whole selection forward in
+ * hidden fields, so answering the question arranges the drop-off parcels in the same
+ * batch and nothing is half-committed while the operator decides.
+ */
+async function pickupStep({ user, csrf, eligible, waiting, plans, chosen }) {
+  const [data, arranged] = await Promise.all([
+    outstandingOrders(),
+    arrangedOrders().catch(() => ({})),
+  ]);
+  return renderProcess({
+    user,
+    ...data,
+    range: resolveRange({ preset: '7d' }),
+    csrf,
+    flash: null,
+    arranged,
+    pickup: {
+      waiting: waiting.map((order) => ({ order, plan: plans[order.id] })),
+      selection: eligible.map((o) => `${o.channel}:${o.id}`),
+      chosen,
+      total: eligible.length,
+    },
+  });
+}
+
+async function handleWrite(form, ip, user, csrf) {
   const action = form.get('action');
 
   // Permission first, before any field is read: a viewer's POST is refused whatever it says.
@@ -292,7 +321,21 @@ async function handleWrite(form, ip, user) {
     const eligible = orders.filter((o) => wanted.some((w) => w.id === o.id && w.channel === o.channel));
     if (eligible.length === 0) throw new Error('pesanan yang dipilih tidak ditemukan');
 
-    const result = await massArrange(eligible);
+    // What Shopee needs per parcel, read before anything is booked. An instant courier
+    // dispatches a driver, and Shopee will not take the order until it is told when -
+    // so the operator is asked, once, for the whole batch.
+    const plans = await planArrangement(eligible);
+    const chosen = {};
+    for (const [key, value] of form) {
+      if (key.startsWith('slot:')) chosen[key.slice('slot:'.length)] = String(value).trim();
+    }
+    const waiting = eligible.filter((o) => needsPickupTime(plans[o.id]) && !chosen[o.id]);
+    if (waiting.length > 0) {
+      console.log(`dashboard: mass_arrange menunggu waktu jemput untuk ${waiting.length} pesanan`);
+      return { view: 'process', html: await pickupStep({ user, csrf, eligible, waiting, plans, chosen }) };
+    }
+
+    const result = await massArrange(eligible, { pickupTimes: chosen, methods: plans });
     invalidate('orders');
     console.log(`dashboard: mass_arrange ${result.succeeded} ok, ${result.failed} failed`);
 
@@ -727,7 +770,13 @@ export default async function handler(req, res) {
 
     const action = String(form.get('action') ?? '');
     try {
-      const outcome = await handleWrite(form, ip, user);
+      const outcome = await handleWrite(form, ip, user, csrfToken(session));
+      // A step that only asks a question renders rather than redirects, and writes
+      // nothing to the log: nothing has happened yet.
+      if (outcome.html) {
+        send(200, outcome.html);
+        return;
+      }
       if (outcome.audit) await recordActivity({ actor: user, ip, action, status: 'ok', ...outcome.audit });
       redirect(`${PATH}?view=${outcome.view}&${outcome.kind === 'error' ? 'error' : 'done'}=${encodeURIComponent(outcome.message)}${
         outcome.celebrate ? `&yay=${encodeURIComponent(outcome.celebrate)}` : ''}`);

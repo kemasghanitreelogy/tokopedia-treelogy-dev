@@ -330,6 +330,51 @@ test('stale data is labelled, never passed off as current', () => {
   assert.ok(html.includes('WIB'), 'and when it was taken');
 });
 
+const pickupPlan = (id, slots = [
+  { id: `${id}_1`, text: 'Now', at: 1790067600, recommended: true },
+  { id: `${id}_6`, text: '10:00 - 11:00', at: 1790067600, recommended: false },
+]) => ({ id, method: 'pickup', fields: ['address_id', 'pickup_time_id'], addressId: 200380478, address: 'Jalan Bumbak, Kerobokan', slots });
+
+test('an instant courier is asked when the driver should come, before anything is booked', () => {
+  const instant = (id, carrier) => ({
+    channel: 'shopee', id, status: 'READY_TO_SHIP', stage: 'to_ship', createdAt: 1789992000,
+    buyer: 'kinoi.id', carrier, total: 849000, lines: [],
+  });
+  const html = renderProcess({
+    orders: [], ...common,
+    pickup: {
+      waiting: [
+        { order: instant('260922NAX1M1M0', 'GrabExpress Instant'), plan: pickupPlan('260922NAX1M1M0') },
+        { order: instant('260922N5PPP8MF', 'GoSend Instant Prioritas'), plan: pickupPlan('260922N5PPP8MF') },
+      ],
+      selection: ['shopee:260922NAX1M1M0', 'shopee:260922N5PPP8MF', 'shopee:260922NKRP97CW', 'shopify:#10971'],
+      chosen: {},
+      total: 4,
+    },
+  });
+
+  assert.match(html, /<dialog class="pu" id="pickup" open/, 'the question is asked on the page, not skipped');
+  assert.ok(html.includes('Kapan kurir menjemput?'));
+  // Every order gets its own slot field, because Shopee mints the ids per order.
+  assert.match(html, /name="slot:260922NAX1M1M0"/);
+  assert.match(html, /name="slot:260922N5PPP8MF"/);
+  assert.match(html, /<option value="260922NAX1M1M0_1"[^>]*selected>Now/, 'the recommended slot is preselected');
+  assert.match(html, /<option value="260922NAX1M1M0_6"[^>]*>10:00 - 11:00</);
+  // The whole batch travels with the answer, so the drop-off parcels go on the same press.
+  for (const value of ['shopee:260922NKRP97CW', 'shopify:#10971']) {
+    assert.ok(html.includes(`<input type="hidden" name="order" value="${value.replace('#', '#')}">`), `${value} tidak ikut terbawa`);
+  }
+  assert.match(html, /Atur pengiriman 4 pesanan<\/button>/);
+  assert.ok(html.includes('2 pesanan lain tinggal diantar ke agen'), 'it says what else rides along');
+  assert.ok(html.includes('Jalan Bumbak'), 'and where the driver is coming to');
+  // One control for the usual case: the same window for every parcel.
+  assert.match(html, /id="pu-all"/);
+  assert.ok(html.includes("option.dataset.text === all.value"), 'the apply-to-all control is wired');
+
+  // No question, no dialog.
+  assert.ok(!renderProcess({ orders: [], ...common }).includes('id="pickup"'));
+});
+
 test('a worklist carries no date filter, and says what it does cover', () => {
   // An order placed on Friday that nobody arranged is still work on Monday, so the three
   // pages that exist to empty a queue are not filtered by day at all.

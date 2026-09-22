@@ -103,3 +103,150 @@ test('read-only mode blocks every fulfillment action', async () => {
     else process.env.TREELOGY_READONLY = before;
   }
 });
+
+/* ------------------------------------------- the batch: every parcel, every verdict */
+
+const shopeeOrder = (id, over = {}) => ({ channel: 'shopee', id, packageNumber: `P${id}`, status: 'READY_TO_SHIP', stage: 'to_ship', createdAt: 1, ...over });
+const session = { config: {}, auth: {} };
+const dropoffPlans = (ids) => Object.fromEntries(ids.map((id) => [id, { id, method: 'dropoff', fields: [] }]));
+
+/** A stand-in Shopee that answers mass_ship_order and get_order_detail, and records both. */
+function fakeShopee({ reject = {}, throwOn = () => false, statusAfter = () => 'PROCESSED' } = {}) {
+  const calls = { mass: [], detail: [] };
+  const call = async (config, path, auth, query, body) => {
+    if (path === '/api/v2/logistics/mass_ship_order') {
+      const sns = body.package_list.map((p) => p.order_sn);
+      calls.mass.push(sns);
+      if (throwOn(sns)) throw new Error('logistics.package_not_exist');
+      return {
+        response: {
+          result_list: sns.map((order_sn) => (reject[order_sn]
+            ? { order_sn, fail_error: 'logistics.order_not_eligible', fail_message: reject[order_sn] }
+            : { order_sn })),
+        },
+      };
+    }
+    if (path === '/api/v2/order/get_order_detail') {
+      const sns = String(query.order_sn_list).split(',');
+      calls.detail.push(sns);
+      return { response: { order_list: sns.map((order_sn) => ({ order_sn, order_status: statusAfter(order_sn) })) } };
+    }
+    throw new Error(`tak terduga: ${path}`);
+  };
+  return { call, calls };
+}
+
+test('an order Shopee names as failed is reported as failed, not swallowed by a 200', async () => {
+  const { arrangeShopee } = await import('../src/fulfillment.js');
+  const ids = ['A', 'B', 'C'];
+  const shopee = fakeShopee({
+    reject: { B: 'Order is not eligible to ship' },
+    statusAfter: (sn) => (sn === 'B' ? 'READY_TO_SHIP' : 'PROCESSED'),
+  });
+  const results = await arrangeShopee(ids.map((id) => shopeeOrder(id)), {
+    session, call: shopee.call, methods: dropoffPlans(ids), shipOne: async () => {},
+  });
+  const by = Object.fromEntries(results.map((r) => [r.id, r]));
+  assert.equal(by.A.status, 'ok');
+  assert.equal(by.C.status, 'ok');
+  assert.equal(by.B.status, 'failed', 'satu pesanan ditolak Shopee tidak boleh dihitung berhasil');
+  assert.match(by.B.error, /not eligible/);
+});
+
+test('a parcel Shopee still calls READY_TO_SHIP is not arranged, whatever the call answered', async () => {
+  const { arrangeShopee } = await import('../src/fulfillment.js');
+  // The call says everything went through; the shop says one of them did not move.
+  const shopee = fakeShopee({ statusAfter: (sn) => (sn === 'B' ? 'READY_TO_SHIP' : 'PROCESSED') });
+  const results = await arrangeShopee(['A', 'B'].map((id) => shopeeOrder(id)), {
+    session, call: shopee.call, methods: dropoffPlans(['A', 'B']), shipOne: async () => {},
+  });
+  const by = Object.fromEntries(results.map((r) => [r.id, r]));
+  assert.equal(by.A.status, 'ok');
+  assert.equal(by.B.status, 'failed');
+  assert.match(by.B.error, /masih READY_TO_SHIP/);
+});
+
+test('a batch Shopee refuses outright costs only the order that caused it', async () => {
+  const { shipShopeeDropoffs } = await import('../src/fulfillment.js');
+  const ids = ['A', 'BAD', 'C'];
+  const shopee = fakeShopee({ throwOn: (sns) => sns.includes('BAD') });
+  const tried = [];
+  const results = await shipShopeeDropoffs({}, {}, ids.map((id) => shopeeOrder(id)), {
+    call: shopee.call,
+    shipOne: async (config, auth, sn) => {
+      tried.push(sn);
+      if (sn === 'BAD') throw new Error('Package does not exist');
+    },
+  });
+  const by = Object.fromEntries(results.map((r) => [r.id, r]));
+  assert.equal(by.A.status, 'ok');
+  assert.equal(by.C.status, 'ok');
+  assert.equal(by.BAD.status, 'failed');
+  assert.deepEqual(tried.sort(), ['A', 'BAD', 'C'], 'setiap pesanan dicoba sendiri-sendiri');
+});
+
+test('Shopee is asked fifty at a time, because it refuses a fifty-first', async () => {
+  const { shipShopeeDropoffs } = await import('../src/fulfillment.js');
+  const orders = Array.from({ length: 120 }, (_, i) => shopeeOrder(`S${i}`));
+  const shopee = fakeShopee();
+  const results = await shipShopeeDropoffs({}, {}, orders, { call: shopee.call, shipOne: async () => {} });
+  assert.equal(results.length, 120, 'semua yang dipilih ikut diatur');
+  assert.deepEqual(shopee.calls.mass.map((c) => c.length), [50, 50, 20]);
+  assert.ok(results.every((r) => r.status === 'ok'));
+});
+
+test('a hundred parcels are verified in two reads, not a hundred', async () => {
+  const { verifyShopee } = await import('../src/fulfillment.js');
+  const shopee = fakeShopee();
+  const status = await verifyShopee({}, {}, Array.from({ length: 100 }, (_, i) => `S${i}`), { call: shopee.call });
+  assert.equal(Object.keys(status).length, 100);
+  assert.deepEqual(shopee.calls.detail.map((c) => c.length), [50, 50]);
+});
+
+test('a TikTok package that fails takes only itself down, not the whole selection', async () => {
+  const { arrangeTikTok } = await import('../src/fulfillment.js');
+  const sent = [];
+  const call = async ({ body }) => {
+    const id = body.packages[0].id;
+    sent.push(id);
+    // What the live API answers when one package in a body is not shippable - and, when
+    // they travel together, what it answers for every other package too.
+    if (id === '999') throw new Error('Invalid parameters; detail:No Valid FulfillUnit error');
+    return { data: {} };
+  };
+  const orders = [
+    { channel: 'tiktok_shop', id: 'T1', packageId: '111' },
+    { channel: 'tokopedia', id: 'T2', packageId: '999' },
+    { channel: 'tokopedia', id: 'T3', packageId: '333' },
+    { channel: 'tokopedia', id: 'T4' },
+  ];
+  const results = await arrangeTikTok(orders, { call, config: {} });
+  const by = Object.fromEntries(results.map((r) => [r.id, r]));
+  assert.equal(by.T1.status, 'ok');
+  assert.equal(by.T3.status, 'ok');
+  assert.equal(by.T2.status, 'failed');
+  assert.equal(by.T4.status, 'failed');
+  assert.match(by.T4.error, /belum punya paket/);
+  assert.deepEqual(sent.sort(), ['111', '333', '999'], 'satu panggilan per paket');
+});
+
+test('an order somebody else arranged mid-batch is counted as arranged, not as a failure', async () => {
+  const { arrangeShopee } = await import('../src/fulfillment.js');
+  // The ship call fails because the parcel had already moved; the shop agrees it moved.
+  const shopee = fakeShopee({ throwOn: () => true, statusAfter: () => 'PROCESSED' });
+  const results = await arrangeShopee([shopeeOrder('A')], {
+    session, call: shopee.call, methods: dropoffPlans(['A']),
+    shipOne: async () => { throw new Error('Order status is not ready to ship'); },
+  });
+  assert.equal(results[0].status, 'ok');
+});
+
+test('a parcel with no package number is refused by name rather than sent', async () => {
+  const { arrangeShopee } = await import('../src/fulfillment.js');
+  const shopee = fakeShopee();
+  const results = await arrangeShopee([shopeeOrder('A', { packageNumber: '' })], {
+    session, call: shopee.call, methods: {}, shipOne: async () => {},
+  });
+  assert.equal(results[0].status, 'failed');
+  assert.match(results[0].error, /nomor paket/);
+});

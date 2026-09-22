@@ -320,7 +320,9 @@ async function handleWrite(form, ip, user, csrf) {
       if (match) wanted.push({ channel: match[1], id: match[2] });
     }
     if (wanted.length === 0) throw new Error('tidak ada pesanan yang dipilih');
-    if (wanted.length > 100) throw new Error('maksimal 100 pesanan sekali atur');
+    // High enough to be no limit in practice - a day's queue is tens, not hundreds - and
+    // low enough that a malformed post cannot ask for ten thousand round trips.
+    if (wanted.length > 1000) throw new Error('maksimal 1000 pesanan sekali atur');
 
     // Orders are re-read from the platforms: the form carries ids, never package numbers,
     // so a tampered field cannot ship a parcel that is not the seller's.
@@ -763,7 +765,11 @@ export default async function handler(req, res) {
   if (req.method === 'POST' && user) {
     let form;
     try {
-      form = await readFormBody(req);
+      // Sixty-four kilobytes, not four. A selection travels as one `order` field per
+      // parcel at roughly thirty bytes each, and the pickup step adds a slot field
+      // beside it - four kilobytes ran out at around a hundred parcels, and ran out as
+      // "Data formulir terlalu besar" rather than as anything an operator could act on.
+      form = await readFormBody(req, 64 * 1024);
     } catch {
       send(400, dashboardError('Permintaan tidak valid', 'Data formulir terlalu besar.'));
       return;

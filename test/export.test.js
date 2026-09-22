@@ -237,3 +237,52 @@ test('every dataset names itself and its tab', () => {
     assert.ok(spec.sheet.length <= 31, 'nama tab tidak boleh lebih dari 31 huruf');
   }
 });
+
+test('a product filter selects rows in the product and item sheets', async () => {
+  const { buildExport } = await import('../src/export/orders.js');
+  const orders = [
+    order(),
+    order({ channel: 'shopify', id: '#1', lines: [{ sku: 'OMP-90-001', name: 'Powder', variant: '', qty: 4 }],
+      finance: { lines: [{ sku: 'OMP-90-001', name: 'Powder', variant: '', qty: 4, unitPrice: 150000, unitDiscount: 0 }], shipping: 0 } }),
+  ];
+  const only = buildExport({ orders, dataset: 'product', products: ['OMP-90-001'] });
+  assert.equal(only.rows.length, 1);
+  assert.equal(only.rows[0].sku, 'OMP-90-001');
+  assert.deepEqual(only.products, ['OMP-90-001']);
+
+  const items = buildExport({ orders, dataset: 'item', products: ['OMP-90-001'] });
+  assert.equal(items.rows.length, 1);
+  assert.equal(items.rows[0].sku, 'OMP-90-001');
+});
+
+test('a product filter picks which orders appear, and never rewrites what one is worth', async () => {
+  const { buildExport } = await import('../src/export/orders.js');
+  const mixed = order({
+    lines: [
+      { sku: 'OMC180', name: 'Kapsul', variant: '', qty: 2 },
+      { sku: 'OMP-90-001', name: 'Powder', variant: '', qty: 1 },
+    ],
+    finance: { lines: [
+      { sku: 'OMC180', name: 'Kapsul', variant: '', qty: 2, unitPrice: 300000, unitDiscount: 25000 },
+      { sku: 'OMP-90-001', name: 'Powder', variant: '', qty: 1, unitPrice: 150000, unitDiscount: 0 },
+    ], shipping: 0 },
+    total: 700000,
+  });
+  const out = buildExport({ orders: [mixed, order({ id: 'B' })], dataset: 'order', products: ['OMP-90-001'] });
+  assert.equal(out.rows.length, 1, 'hanya pesanan yang memuat produk itu');
+  // The row is still the whole sale. Reporting part of an order as the whole would be a
+  // number that reconciles against nothing.
+  assert.equal(out.rows[0].total, 700000);
+  assert.equal(out.rows[0].units, 3);
+});
+
+test('asking for every product is the same as asking for none of them in particular', async () => {
+  const { buildExport, resolveProducts, EXPORT_PRODUCTS } = await import('../src/export/orders.js');
+  assert.equal(resolveProducts([]), null);
+  assert.equal(resolveProducts(EXPORT_PRODUCTS.map((p) => p.sku)), null, 'semua = tanpa filter');
+  assert.equal(resolveProducts(['tidak-ada']), null, 'SKU asing bukan filter');
+  // With no filter, a SKU the catalogue has never heard of is still exported.
+  const stranger = order({ lines: [{ sku: 'BARU-001', name: 'Baru', variant: '', qty: 1 }], finance: undefined });
+  assert.equal(buildExport({ orders: [stranger], dataset: 'product' }).rows.length, 1);
+  assert.equal(buildExport({ orders: [stranger], dataset: 'product', products: ['OMP-90-001'] }).rows.length, 0);
+});

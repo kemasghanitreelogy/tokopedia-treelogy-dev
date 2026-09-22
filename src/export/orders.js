@@ -1,5 +1,5 @@
 import { CHANNELS, MANUAL_CHANNEL, STAGE_META, channelMeta } from '../omni.js';
-import { findProduct } from '../master.js';
+import { findProduct, PRODUCTS } from '../master.js';
 import { PREFIXES } from '../mekari/prefix.js';
 import { zoneForChannel } from '../clock.js';
 import { excelSerial, toCsv, toXlsx } from './sheet.js';
@@ -20,6 +20,27 @@ import { excelSerial, toCsv, toXlsx } from './sheet.js';
 /** Every channel a row can carry, in the order the dashboard shows them. */
 export const EXPORT_CHANNELS = [...Object.values(CHANNELS), MANUAL_CHANNEL];
 const CHANNEL_IDS = new Set(EXPORT_CHANNELS.map((c) => c.id));
+
+/**
+ * The catalogue as the dialog offers it.
+ *
+ * Grouped the way somebody thinks about the shelf rather than in catalogue order, and
+ * labelled with the variant, because "Moringa Capsules" on its own is three products.
+ */
+export const EXPORT_PRODUCTS = PRODUCTS.map((product) => ({
+  sku: product.sku,
+  name: product.name,
+  // One variant is written with an HTML entity in the master list; a checkbox label is
+  // text, not markup, so it is spelled out here.
+  variant: String(product.variant ?? '').replaceAll('&middot;', '\u00B7'),
+  category: product.category,
+}));
+const PRODUCT_SKUS = new Set(EXPORT_PRODUCTS.map((p) => p.sku));
+
+/** What each group of the shelf is called. */
+export const PRODUCT_GROUPS = {
+  powder: 'Powder', capsules: 'Capsules', oil: 'Seed Oil', set: 'Set', bundle: 'Bundle', gift: 'Gift',
+};
 
 export const DATASETS = {
   product: {
@@ -98,7 +119,7 @@ function identify(line) {
 
 /* ----------------------------------------------------------------- datasets */
 
-function productSheet(orders, channels) {
+function productSheet(orders, channels, wanted = null) {
   // A column per channel only when there is more than one to compare; on a single-channel
   // export it would be the quantity column again under a different heading.
   const spread = channels.length > 1;
@@ -106,6 +127,7 @@ function productSheet(orders, channels) {
 
   for (const order of orders) {
     for (const line of linesOf(order)) {
+      if (wanted && !wanted(line)) continue;
       const id = identify(line);
       const key = id.sku || id.name || '(tanpa sku)';
       const row = byProduct.get(key) ?? {
@@ -203,12 +225,13 @@ function orderSheet(orders) {
   return { columns, rows };
 }
 
-function itemSheet(orders) {
+function itemSheet(orders, wanted = null) {
   const rows = [];
   for (const order of orders.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))) {
     const at = stamp(order);
     const channel = channelLabel(order);
     for (const line of linesOf(order)) {
+      if (wanted && !wanted(line)) continue;
       const id = identify(line);
       const qty = Number(line.qty) || 0;
       const priced = line.unitPrice !== null && Number.isFinite(Number(line.unitPrice));
@@ -263,23 +286,48 @@ export function resolveChannels(wanted) {
 }
 
 /**
- * The sheet for one request. `orders` is already the range's worth; this only decides
- * shape and which channels survive.
+ * Which products were asked for, or null for all of them.
+ *
+ * Null rather than "every SKU in the catalogue" on purpose: a product nobody has listed
+ * yet still sells, and a filter built from the catalogue would silently drop it. Asking
+ * for everything has to mean everything, including what the catalogue has not heard of.
  */
-export function buildExport({ orders, dataset = DEFAULT_DATASET, channels, range }) {
+export function resolveProducts(wanted) {
+  const asked = (Array.isArray(wanted) ? wanted : [wanted])
+    .flatMap((value) => String(value ?? '').split(','))
+    .map((value) => value.trim())
+    .filter((value) => PRODUCT_SKUS.has(value));
+  if (asked.length === 0 || asked.length === PRODUCT_SKUS.size) return null;
+  return new Set(asked);
+}
+
+/**
+ * The sheet for one request. `orders` is already the range's worth; this only decides
+ * shape, and which channels and products survive.
+ *
+ * A product filter selects which orders appear, never what an order is worth: a row in
+ * the per-order sheet is the sale, and quietly reporting part of one as the whole would
+ * be a number that reconciles against nothing.
+ */
+export function buildExport({ orders, dataset = DEFAULT_DATASET, channels, products, range }) {
   const chosen = resolveChannels(channels);
   const set = new Set(chosen);
-  const rows = (orders ?? []).filter((order) => set.has(order.channel));
+  const keep = resolveProducts(products);
+  const wanted = keep ? (line) => keep.has(identify(line).sku) : null;
+
+  let rows = (orders ?? []).filter((order) => set.has(order.channel));
+  if (wanted) rows = rows.filter((order) => linesOf(order).some(wanted));
   const spec = DATASETS[dataset] ?? DATASETS[DEFAULT_DATASET];
 
   const built = spec.id === 'order' ? orderSheet(rows)
-    : spec.id === 'item' ? itemSheet(rows)
-      : productSheet(rows, chosen);
+    : spec.id === 'item' ? itemSheet(rows, wanted)
+      : productSheet(rows, chosen, wanted);
 
   return {
     name: spec.sheet,
     dataset: spec.id,
     channels: chosen,
+    products: keep ? [...keep] : null,
     orderCount: rows.length,
     range: range ?? null,
     ...built,

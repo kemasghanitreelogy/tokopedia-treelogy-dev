@@ -85,7 +85,7 @@ export const stageOf = (status) => STAGE_BY_STATUS[status] ?? 'unpaid';
 export const ACTIONABLE = new Set(['unpaid', 'to_ship']);
 
 /** Bounded-concurrency map: order detail is fetched 50 at a time, several batches at once. */
-async function mapLimit(items, limit, worker) {
+export async function mapLimit(items, limit, worker) {
   const results = new Array(items.length);
   let next = 0;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -98,7 +98,7 @@ async function mapLimit(items, limit, worker) {
   return results;
 }
 
-const batches = (list, size) => {
+export const batches = (list, size) => {
   const out = [];
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
   return out;

@@ -1,6 +1,6 @@
 import { businessToday, zoneLabel, zoneName, zoneForChannel, ZONES } from './clock.js';
 import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omni.js';
-import { DATASETS, EXPORT_CHANNELS, DEFAULT_DATASET } from './export/orders.js';
+import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness } from './labels.js';
@@ -1915,6 +1915,24 @@ function exportDialog(range) {
       <span>${escape(meta.label)}</span>
     </label>`).join('');
 
+  // Grouped the way the shelf is, because twenty-five checkboxes in catalogue order is a
+  // list nobody reads. Every one starts ticked: the common export is all of them, and a
+  // filter you have to switch on is a filter that gets forgotten.
+  const byGroup = new Map();
+  for (const product of EXPORT_PRODUCTS) {
+    if (!byGroup.has(product.category)) byGroup.set(product.category, []);
+    byGroup.get(product.category).push(product);
+  }
+  const products = [...byGroup.entries()].map(([group, items]) => `
+    <div class="ex__grp">
+      <span class="ex__grpt">${escape(PRODUCT_GROUPS[group] ?? group)}</span>
+      <div class="ex__chs">${items.map((product) => `
+        <label class="ex__ch ex__ch--p">
+          <input type="checkbox" name="product" value="${escape(product.sku)}" checked data-pr>
+          <span>${escape(product.name)}${product.variant ? ` <small>${escape(product.variant)}</small>` : ''}</span>
+        </label>`).join('')}</div>
+    </div>`).join('');
+
   const quick = [['Hari ini', 0], ['7 hari', 6], ['30 hari', 29], ['90 hari', 89]]
     .map(([label, back]) => `<button class="ex__q" type="button" data-back="${back}">${label}</button>`).join('');
 
@@ -1944,6 +1962,12 @@ function exportDialog(range) {
       <legend class="ex__leg">Kanal</legend>
       <div class="ex__chs">${channels}</div>
       <label class="ex__all"><input type="checkbox" id="ex-all" checked><span>Semua kanal</span></label>
+    </fieldset>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Produk</legend>
+      <div class="ex__prs scroll">${products}</div>
+      <label class="ex__all"><input type="checkbox" id="ex-allp" checked><span>Semua produk</span></label>
     </fieldset>
 
     <fieldset class="ex__set">
@@ -2018,6 +2042,15 @@ const EXPORT_STYLE = `
   background:color-mix(in srgb,var(--chip,var(--brand)) 14%,transparent)}
 .ex__ch:has(input:checked)::before{background:var(--chip,var(--brand))}
 .ex__ch:has(input:focus-visible){outline:2px solid var(--brand); outline-offset:2px}
+.ex__prs{display:flex; flex-direction:column; gap:.6rem; max-height:13rem; overflow:auto;
+  padding:.7rem .8rem; border-radius:14px; border:1px solid var(--glass-line); background:var(--glass)}
+.ex__grp{display:flex; flex-direction:column; gap:.35rem}
+.ex__grpt{font-size:.64rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--dim)}
+.ex__ch--p{background:var(--panel-2)}
+.ex__ch--p:has(input:checked){border-color:color-mix(in srgb,var(--brand) 50%,transparent);
+  background:color-mix(in srgb,var(--brand) 12%,transparent)}
+.ex__ch--p:has(input:checked)::before{background:var(--brand)}
+.ex__ch--p small{font-size:.72rem; font-weight:400; color:var(--muted); margin-left:.2rem}
 .ex__all{display:inline-flex; align-items:center; gap:.5rem; font-size:.78rem; color:var(--muted); cursor:pointer}
 .ex__all input{width:17px; height:17px; accent-color:var(--cta-a); cursor:pointer}
 .ex__seg{display:flex; gap:.4rem}
@@ -2030,7 +2063,15 @@ const EXPORT_STYLE = `
 .ex__seg input:checked + span{border-color:color-mix(in srgb,var(--cta-a) 65%,transparent);
   background:color-mix(in srgb,var(--cta-a) 13%,transparent)}
 .ex__seg input:focus-visible + span{outline:2px solid var(--brand); outline-offset:2px}
-.ex__row{display:flex; gap:.6rem; margin-top:.2rem}
+/* The sheet got tall once the catalogue joined it, so the two buttons stay where the
+   thumb is instead of at the bottom of a scroll. */
+.ex__row{display:flex; gap:.6rem; position:sticky; bottom:0; z-index:2;
+  margin:.2rem -1.6rem -1.6rem; padding:.9rem 1.6rem 1.6rem;
+  /* Opaque, and blended with the page rather than with black, so it holds in both themes.
+     A translucent bar let the product list read straight through the buttons. */
+  background:color-mix(in srgb,var(--panel) 92%,var(--bg))}
+.ex__row::before{content:''; position:absolute; left:0; right:0; bottom:100%; height:20px; pointer-events:none;
+  background:linear-gradient(to top, color-mix(in srgb,var(--panel) 92%,var(--bg)), transparent)}
 .ex__row .pu__yes{display:inline-flex; align-items:center; justify-content:center; gap:.45rem}
 .ex__row .pu__yes .ico{width:16px; height:16px}
 /* The button that opens it, parked in the space to the right of the status chips. */
@@ -2043,7 +2084,8 @@ const EXPORT_STYLE = `
 .exbtn:active{transform:none}
 .exbtn:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .exbtn .ico{width:16px; height:16px; color:var(--cta-hi)}
-@media (max-width:640px){ .ex__box{padding:1.1rem} .exbtn{margin-left:0} }
+@media (max-width:640px){ .ex__box{padding:1.1rem} .exbtn{margin-left:0}
+  .ex__row{margin:.2rem -1.1rem -1.1rem; padding:.9rem 1.1rem 1.1rem} }
 `;
 
 const EXPORT_SCRIPT = `
@@ -2073,18 +2115,24 @@ const EXPORT_SCRIPT = `
     });
   });
 
-  var all = document.getElementById('ex-all');
-  var boxes = Array.prototype.slice.call(form.querySelectorAll('[data-ch]'));
-  all.addEventListener('change', function () {
-    boxes.forEach(function (box) { box.checked = all.checked; });
-  });
-  boxes.forEach(function (box) {
-    box.addEventListener('change', function () {
-      all.checked = boxes.every(function (b) { return b.checked; });
-      // Every channel off would download an empty sheet, so the last one stays on.
-      if (boxes.every(function (b) { return !b.checked; })) box.checked = true;
+  // One master switch per group of tickboxes. The last one on cannot be turned off:
+  // every channel or every product unticked is an empty file, which is never the ask.
+  function couple(masterId, selector) {
+    var all = document.getElementById(masterId);
+    var boxes = Array.prototype.slice.call(form.querySelectorAll(selector));
+    if (!all || boxes.length === 0) return;
+    all.addEventListener('change', function () {
+      boxes.forEach(function (box) { box.checked = all.checked; });
     });
-  });
+    boxes.forEach(function (box) {
+      box.addEventListener('change', function () {
+        if (boxes.every(function (b) { return !b.checked; })) box.checked = true;
+        all.checked = boxes.every(function (b) { return b.checked; });
+      });
+    });
+  }
+  couple('ex-all', '[data-ch]');
+  couple('ex-allp', '[data-pr]');
 
   // The response is a file, so the page never navigates and the skeleton armed on submit
   // would sit over the dashboard forever. It closes instead, which is what "done" looks

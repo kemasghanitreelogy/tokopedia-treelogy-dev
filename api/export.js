@@ -54,11 +54,12 @@ export default async function handler(req, res) {
     fallback: '30d',
   });
   const channels = url.searchParams.getAll('channel');
+  const products = url.searchParams.getAll('product');
 
   try {
     const started = Date.now();
     const { orders } = await ordersFor(range);
-    const sheet = buildExport({ orders, dataset, channels, range });
+    const sheet = buildExport({ orders, dataset, channels, products, range });
     const { body, type } = renderExport(sheet, format);
     const filename = exportFilename(sheet, format, range);
 
@@ -73,6 +74,7 @@ export default async function handler(req, res) {
       changes: [
         { field: 'Rentang', to: `${range.from} s/d ${range.to}` },
         { field: 'Kanal', to: sheet.channels.join(', ') },
+        ...(sheet.products ? [{ field: 'Produk', to: sheet.products.join(', ') }] : []),
       ],
     }).catch(() => {});
 

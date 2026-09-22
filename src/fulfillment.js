@@ -2,7 +2,8 @@ import { loadConfig } from './config.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
-import { shippingMethod, shippingMethods, shipBody, needsPickupTime, PICKUP } from './shopee/pickup.js';
+import { mapLimit, batches } from './omni.js';
+import { shippingMethod, shippingMethods, shipBody, needsPickupTime, PICKUP, DROPOFF } from './shopee/pickup.js';
 import { shopifyGraphql } from './shopify/client.js';
 import { isShopifyConfigured } from './shopify/config.js';
 import { markArranged } from './shopify/label.js';
@@ -234,22 +235,190 @@ export async function runAction({ action, order, trackingNumber, company }) {
 
 /* ------------------------------------------------------------- mass shipment */
 
+/* ------------------------------------------------------------- the batch */
+
+/**
+ * Shopee refuses a 51st package outright: "The amount of packages in your request
+ * exceeds limit". Probed against the live shop rather than read off a page.
+ */
+const SHOPEE_MASS_LIMIT = 50;
+/** One call per parcel, several at a time. Both platforms are comfortable here. */
+const SHIP_CONCURRENCY = 6;
+const VERIFY_CONCURRENCY = 4;
+/** Shopee statuses that still mean "nobody has arranged this". */
+const UNARRANGED = new Set(['READY_TO_SHIP', 'RETRY_SHIP']);
+
+const ok = (order) => ({ channel: order.channel, id: order.id, status: 'ok' });
+const failed = (order, error) => ({ channel: order.channel, id: order.id, status: 'failed', error });
+
+/**
+ * TikTok / Tokopedia: one call per package.
+ *
+ * The endpoint takes an array and looks batched, but it validates the whole body before
+ * it does anything: a single package it will not accept fails the call with
+ * "No Valid FulfillUnit error" and takes every other parcel in the request down with it.
+ * One call each costs a few hundred milliseconds across six workers and tells the truth
+ * about every parcel, which is worth more than a round trip.
+ */
+export async function arrangeTikTok(orders, { call = callApi, config = null } = {}) {
+  if (orders.length === 0) return [];
+  const settings = config ?? loadConfig();
+  return mapLimit(orders, SHIP_CONCURRENCY, async (order) => {
+    if (!order.packageId) return failed(order, 'belum punya paket');
+    try {
+      await call({
+        config: settings,
+        method: 'POST',
+        path: '/fulfillment/202309/packages/ship',
+        body: { packages: [{ id: String(order.packageId) }] },
+      });
+      return ok(order);
+    } catch (error) {
+      return failed(order, error.message);
+    }
+  });
+}
+
+/**
+ * Shopee drop-offs, fifty to a call, several calls at once.
+ *
+ * A chunk that comes back cleanly is not taken at its word: `result_list` names the
+ * orders that did not make it, and those are re-reported as failures. A chunk that
+ * throws is not a verdict on any one order - it is retried one order at a time, so the
+ * single ineligible parcel costs itself and nothing else.
+ */
+export async function shipShopeeDropoffs(config, auth, orders, { call = callShopApi, shipOne = shopeeShipUnguarded } = {}) {
+  if (orders.length === 0) return [];
+  const chunks = batches(orders, SHOPEE_MASS_LIMIT);
+
+  const perChunk = await mapLimit(chunks, VERIFY_CONCURRENCY, async (chunk) => {
+    try {
+      const answer = await call(config, '/api/v2/logistics/mass_ship_order', auth, {}, {
+        package_list: chunk.map((o) => ({ order_sn: o.id, package_number: o.packageNumber })),
+        dropoff: {},
+      });
+      // Every order Shopee names with an error is one that did not ship, whatever the
+      // call's own status said. Marking the whole chunk "ok" because the HTTP request
+      // succeeded is what made a batch report twenty-seven arranged when nine were.
+      const rejected = new Map();
+      for (const row of answer.response?.result_list ?? []) {
+        if (row.fail_error) rejected.set(row.order_sn, row.fail_message || row.fail_error);
+      }
+      return chunk.map((order) => (rejected.has(order.id) ? failed(order, rejected.get(order.id)) : ok(order)));
+    } catch (error) {
+      const reason = error.message;
+      return mapLimit(chunk, SHIP_CONCURRENCY, async (order) => {
+        try {
+          await shipOne(config, auth, order.id, { plan: { method: DROPOFF, fields: [] } });
+          return ok(order);
+        } catch (own) {
+          // The batch's own complaint is the more useful one when the retry says nothing new.
+          return failed(order, own.message || reason);
+        }
+      });
+    }
+  });
+
+  return perChunk.flat();
+}
+
+/**
+ * What Shopee thinks now, for the orders we just tried to arrange.
+ *
+ * The ship call answering 200 is not the same as the parcel having moved, and the
+ * difference is exactly what an operator sees when the list still holds orders the
+ * dashboard just said were arranged. Fifty statuses per call, so checking a hundred
+ * parcels costs two reads. A read that fails leaves the ship call's own answer standing
+ * rather than inventing a failure.
+ */
+export async function verifyShopee(config, auth, orderSns, { call = callShopApi } = {}) {
+  if (orderSns.length === 0) return {};
+  const pages = await mapLimit(batches(orderSns, 50), VERIFY_CONCURRENCY, (chunk) =>
+    call(config, '/api/v2/order/get_order_detail', auth, {
+      order_sn_list: chunk.join(','),
+      response_optional_fields: 'order_status',
+    }).then((r) => r.response?.order_list ?? []).catch(() => []));
+
+  const status = {};
+  for (const row of pages.flat()) status[row.order_sn] = row.order_status;
+  return status;
+}
+
+export async function arrangeShopee(orders, { pickupTimes = {}, methods = null, session = null, call = callShopApi, shipOne = shopeeShipUnguarded } = {}) {
+  if (orders.length === 0) return [];
+  const { config, auth } = session ?? await resolveShopeeSession();
+
+  const results = [];
+  const usable = orders.filter((o) => o.packageNumber);
+  for (const order of orders.filter((o) => !o.packageNumber)) {
+    results.push(failed(order, 'nomor paket tidak diketahui'));
+  }
+  if (usable.length === 0) return results;
+
+  // Split by how each parcel is handed over, rather than sending the lot as dropoff and
+  // letting Shopee refuse the batch because one order wanted a driver.
+  const plans = methods ?? await shippingMethods(usable.map((o) => o.id), { config, auth, concurrency: SHIP_CONCURRENCY });
+  const collected = usable.filter((o) => plans[o.id]?.method === PICKUP);
+  const dropped = usable.filter((o) => plans[o.id]?.method !== PICKUP);
+
+  // A pickup is booked one at a time by necessity - the address and the slot belong to
+  // that order, and mass_ship_order carries one method for the whole call - but they no
+  // longer wait for each other, or for the drop-offs.
+  const [droppedResults, collectedResults] = await Promise.all([
+    shipShopeeDropoffs(config, auth, dropped, { call, shipOne }),
+    mapLimit(collected, SHIP_CONCURRENCY, async (order) => {
+      try {
+        await shipOne(config, auth, order.id, {
+          pickupTimeId: pickupTimes[order.id] ?? null,
+          plan: plans[order.id] ?? null,
+        });
+        return ok(order);
+      } catch (error) {
+        return failed(order, error.message);
+      }
+    }),
+  ]);
+
+  const attempted = [...droppedResults, ...collectedResults];
+  const status = await verifyShopee(config, auth, usable.map((o) => o.id), { call }).catch(() => ({}));
+
+  for (const row of attempted) {
+    const now = status[row.id];
+    if (!now) { results.push(row); continue; }
+    if (UNARRANGED.has(now)) {
+      results.push({ ...row, status: 'failed', error: row.error ?? `Shopee masih ${now}` });
+    } else {
+      // Moved on, whatever the call said - including an order somebody else arranged
+      // while this batch was running.
+      results.push({ channel: 'shopee', id: row.id, status: 'ok' });
+    }
+  }
+  return results;
+}
+
 /**
  * Arrange shipment for many orders in one go.
  *
- * The two platforms batch differently, and both contracts were probed against the live
- * APIs rather than assumed:
+ * Every parcel in the selection is arranged, however many were chosen, and every parcel
+ * gets its own verdict. The three platforms run at the same time rather than in turn,
+ * because none of them is waiting on the others:
  *
- *   TikTok / Tokopedia  POST /fulfillment/202309/packages/ship takes `packages: [{id}]`
- *                       and is natively batched - one call covers the whole selection.
- *                       (`{package_id}` alone is rejected: "Packages is a required field".)
+ *   TikTok / Tokopedia  POST /fulfillment/202309/packages/ship takes `packages: [{id}]`.
+ *                       It looks batched and is not: the body is validated as a whole, so
+ *                       one parcel it refuses fails the call for all of them. One call
+ *                       each, six at a time. (`{package_id}` alone is rejected outright:
+ *                       "Packages is a required field".)
  *   Shopee              POST /api/v2/logistics/mass_ship_order takes
  *                       `package_list: [{order_sn, package_number}]` plus exactly one of
  *                       pickup / dropoff / non_integrated - it says so itself when the
- *                       method is omitted. This shop is on dropoff.
+ *                       method is omitted - and refuses a 51st package. Fifty to a call,
+ *                       and what Shopee names in `result_list` as failed is failed.
+ *   Shopify             has no courier to call. Arranging it is the record that the bench
+ *                       has taken it, which is what lets it leave the queue.
  *
- * Shopee's batch is all-or-nothing per call, so a rejected batch falls back to shipping
- * each order on its own: one ineligible order must not cost the other nineteen.
+ * Then the Shopee orders are read back. A ship call answering 200 is not the same as the
+ * parcel having moved, and the gap between the two is what an operator sees when the
+ * queue still holds orders the dashboard just called done.
  */
 export async function massArrange(orders, { pickupTimes = {}, methods = null } = {}) {
   guard(`pengiriman ${orders.length} pesanan`);
@@ -257,85 +426,18 @@ export async function massArrange(orders, { pickupTimes = {}, methods = null } =
   const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
   const shopee = orders.filter((o) => o.channel === 'shopee');
   const shopify = orders.filter((o) => o.channel === 'shopify');
-  const results = [];
 
-  // Shopify rides along, but nothing is called for it: there is no courier to ask and
-  // no status of ours to move on that side. Arranging it is the record that the bench
-  // has taken it, which is what lets it leave the queue.
-  if (shopify.length > 0) {
-    await markArranged(shopify.map((o) => o.id), { by: 'dashboard' });
-    for (const order of shopify) results.push({ channel: 'shopify', id: order.id, status: 'ok' });
-  }
+  const [tiktokResults, shopeeResults, shopifyResults] = await Promise.all([
+    arrangeTikTok(tiktok).catch((error) => tiktok.map((o) => failed(o, error.message))),
+    arrangeShopee(shopee, { pickupTimes, methods }).catch((error) => shopee.map((o) => failed(o, error.message))),
+    shopify.length === 0
+      ? Promise.resolve([])
+      : markArranged(shopify.map((o) => o.id), { by: 'dashboard' })
+        .then(() => shopify.map(ok))
+        .catch((error) => shopify.map((o) => failed(o, error.message))),
+  ]);
 
-  if (tiktok.length > 0) {
-    const config = loadConfig();
-    const packages = tiktok.filter((o) => o.packageId).map((o) => ({ id: String(o.packageId) }));
-    for (const order of tiktok.filter((o) => !o.packageId)) {
-      results.push({ channel: order.channel, id: order.id, status: 'failed', error: 'belum punya paket' });
-    }
-
-    if (packages.length > 0) {
-      try {
-        await callApi({
-          config,
-          method: 'POST',
-          path: '/fulfillment/202309/packages/ship',
-          body: { packages },
-        });
-        for (const order of tiktok.filter((o) => o.packageId)) {
-          results.push({ channel: order.channel, id: order.id, status: 'ok' });
-        }
-      } catch (error) {
-        // One call covered them all, so one failure is reported against all of them.
-        for (const order of tiktok.filter((o) => o.packageId)) {
-          results.push({ channel: order.channel, id: order.id, status: 'failed', error: error.message });
-        }
-      }
-    }
-  }
-
-  if (shopee.length > 0) {
-    const { config, auth } = await resolveShopeeSession();
-    const usable = shopee.filter((o) => o.packageNumber);
-    for (const order of shopee.filter((o) => !o.packageNumber)) {
-      results.push({ channel: 'shopee', id: order.id, status: 'failed', error: 'nomor paket tidak diketahui' });
-    }
-
-    // Split by how each parcel is handed over, rather than sending the lot as dropoff
-    // and letting Shopee refuse the batch because one order wanted a driver.
-    const plans = methods ?? await shippingMethods(usable.map((o) => o.id), { config, auth });
-    const collected = usable.filter((o) => plans[o.id]?.method === PICKUP);
-    const dropped = usable.filter((o) => plans[o.id]?.method !== PICKUP);
-
-    let batched = false;
-    if (dropped.length > 0) {
-      try {
-        await callShopApi(config, '/api/v2/logistics/mass_ship_order', auth, {}, {
-          package_list: dropped.map((o) => ({ order_sn: o.id, package_number: o.packageNumber })),
-          dropoff: {},
-        });
-        for (const order of dropped) results.push({ channel: 'shopee', id: order.id, status: 'ok' });
-        batched = true;
-      } catch {
-        batched = false;
-      }
-    }
-
-    // A pickup is booked one at a time by necessity: the address and the slot belong to
-    // that order and mass_ship_order takes one method for the whole call.
-    for (const order of batched ? collected : usable) {
-      try {
-        await shopeeShipUnguarded(config, auth, order.id, {
-          pickupTimeId: pickupTimes[order.id] ?? null,
-          plan: plans[order.id] ?? null,
-        });
-        results.push({ channel: 'shopee', id: order.id, status: 'ok' });
-      } catch (error) {
-        results.push({ channel: 'shopee', id: order.id, status: 'failed', error: error.message });
-      }
-    }
-  }
-
+  const results = [...tiktokResults, ...shopeeResults, ...shopifyResults];
   await writeAudit({ results }, { guards: { action: 'mass_arrange' } }).catch(() => {});
   return {
     results,

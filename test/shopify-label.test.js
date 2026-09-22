@@ -136,7 +136,8 @@ test('the sheet draws Shopify pages instead of fetching them, and names what it 
     resolveShopify: async () => [order()],
   });
   assert.equal(sheet.pageCount, 1);
-  assert.deepEqual(sheet.printed, ['#10926']);
+  // Keyed by channel now that the ledger holds every channel, not only Shopify.
+  assert.deepEqual(sheet.printed, ['shopify:#10926']);
   assert.equal(sheet.failures.length, 1);
   assert.equal(sheet.failures[0].id, '#404');
   assert.match(sheet.failures[0].reason, /tidak ditemukan/);
@@ -209,6 +210,6 @@ test('a typed-in sale prints on the same sheet, under its source and the house m
     resolveShopify: async () => [manual],
   });
   assert.equal(sheet.pageCount, 1);
-  assert.deepEqual(sheet.printed, ['DP-260921-00001AD']);
+  assert.deepEqual(sheet.printed, ['manual:DP-260921-00001AD']);
   assert.deepEqual(sheet.failures, [{ id: 'DP-missing', channel: 'manual', reason: 'transaksi manual tidak ditemukan' }]);
 });

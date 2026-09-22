@@ -400,23 +400,22 @@ async function handleWrite(form, ip, user, csrf) {
   }
 
   if (action === 'label_printed') {
-    // Clearing a backlog, not printing one: the orders that were handled before this
-    // ledger existed have to be able to say so, or they ask for a label forever.
-    const ids = form.getAll('order')
-      .map((value) => String(value))
-      .filter((value) => value.startsWith('shopify:') || value.startsWith('manual:'))
-      .map((value) => value.slice(value.indexOf(':') + 1));
-    if (ids.length === 0) throw new Error('tidak ada pesanan Shopify yang dipilih');
-    if (ids.length > 200) throw new Error('terlalu banyak sekaligus');
+    // Clearing a backlog, not printing one: a parcel whose label came out of the printer
+    // before this ledger held its channel has to be able to say so, or it asks for a
+    // label forever. Stored exactly as the print path stores it, channel and all.
+    const LABEL_SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify|manual):([A-Za-z0-9_#-]{1,64})$/;
+    const keys = form.getAll('order').map(String).filter((value) => LABEL_SELECTION.test(value));
+    if (keys.length === 0) throw new Error('tidak ada pesanan yang dipilih');
+    if (keys.length > 200) throw new Error('terlalu banyak sekaligus');
 
-    await markPrinted(ids, { by: user.email });
-    console.log(`dashboard: label_printed ${ids.length} shopify orders`);
+    await markPrinted(keys, { by: user.email });
+    console.log(`dashboard: label_printed ${keys.length} pesanan ditandai tanpa dicetak`);
     return {
-      view: 'labels', message: `${ids.length} pesanan Shopify ditandai sudah dicetak`,
+      view: 'labels', message: `${keys.length} pesanan ditandai sudah dicetak`,
       audit: {
-        menu: 'labels', verb: 'edit', target: `${ids.length} pesanan`,
-        summary: `Menandai ${ids.length} label Shopify sebagai sudah dicetak tanpa mencetak`,
-        changes: ids.map((id) => ({ field: id, to: 'sudah dicetak' })),
+        menu: 'labels', verb: 'edit', target: `${keys.length} pesanan`,
+        summary: `Menandai ${keys.length} label sebagai sudah dicetak tanpa mencetak`,
+        changes: keys.map((key) => ({ field: key, to: 'sudah dicetak' })),
       },
     };
   }

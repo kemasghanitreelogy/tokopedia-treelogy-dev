@@ -114,7 +114,7 @@ async function fetchTikTokLabels(orders, resolvePackages) {
       query: { document_type: TIKTOK_DOCUMENT_TYPE, document_size: 'A6' },
     });
     if (!data.doc_url) throw new Error('API tidak mengembalikan doc_url');
-    return { order, bytes: await fetchBytes(data.doc_url) };
+    return { order, covers: [{ channel: order.channel, id: order.id }], bytes: await fetchBytes(data.doc_url) };
   });
 
   const pages = [];
@@ -301,7 +301,12 @@ async function downloadShopeeBatch(config, auth, orderSns, documentType, depth =
   try {
     const bytes = await attempt(orderSns);
     return {
-      pages: [{ order: { channel: 'shopee', id: orderSns.join(',') }, bytes, count: orderSns.length }],
+      pages: [{
+        order: { channel: 'shopee', id: orderSns.join(',') },
+        covers: orderSns.map((id) => ({ channel: 'shopee', id })),
+        bytes,
+        count: orderSns.length,
+      }],
       failures: [],
     };
   } catch (error) {
@@ -382,6 +387,16 @@ export async function mergeLabels(documents, sizeKey = DEFAULT_SIZE) {
 export const PRINTABLE_STAGES = new Set(['to_ship', 'shipping']);
 
 /**
+ * How an order is named in the print ledger.
+ *
+ * Keyed by channel as well as id, because the ledger now holds every channel and two
+ * platforms can mint the same number. Shopify's own entries predate the prefix and are
+ * still read under their bare id, so nothing that was printed yesterday comes back today.
+ */
+export const printKey = (channel, id) => `${channel}:${id}`;
+const wasPrinted = (printed, order) => printed[printKey(order.channel, order.id)] ?? printed[order.id] ?? null;
+
+/**
  * What, if anything, this order needs from the label printer right now.
  *
  * Both platforms only issue a waybill inside a window, and the windows sit at opposite
@@ -401,7 +416,7 @@ export function labelReadiness(order, printed = {}) {
   // courier is booked outside it - so the label is the packing sheet we draw ourselves.
   // Nothing on Shopify's side records that it was printed, so `printed` does.
   if (order.channel === 'shopify') {
-    if (printed[order.id]) return { state: 'reprint', note: 'sudah dicetak' };
+    if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
     if (order.stage === 'to_ship') return { state: 'needsPrint', note: 'siap dicetak' };
     return { state: 'none', note: 'sudah selesai, tidak perlu label' };
   }
@@ -411,12 +426,24 @@ export function labelReadiness(order, printed = {}) {
   // is nothing to put on it - a walk-in who carried the goods out needs no label.
   if (order.channel === 'manual') {
     if (!String(order.shipTo ?? '').trim()) return { state: 'none', note: 'tanpa alamat, tidak perlu label' };
-    if (printed[order.id]) return { state: 'reprint', note: 'sudah dicetak' };
+    if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
     return { state: 'needsPrint', note: 'siap dicetak' };
   }
 
+  // A marketplace waybill is printable long before the courier takes the parcel, so the
+  // platform's own status cannot say whether the sheet came out of the printer. Shopee
+  // stays PROCESSED for hours after printing and TikTok stays AWAITING_COLLECTION, which
+  // is why a printed batch used to sit in the queue asking to be printed again.
+  //
+  // The ledger only ever answers the question the platform has already said yes to. An
+  // order whose document does not exist yet cannot have been printed, and "menunggu
+  // dokumen terbit di kurir" tells the bench something; "sudah dicetak" would not.
   if (order.channel === 'shopee') {
-    if (order.status === 'PROCESSED') return { state: 'needsPrint', note: 'siap dicetak' };
+    if (order.status === 'PROCESSED') {
+      return wasPrinted(printed, order)
+        ? { state: 'reprint', note: 'sudah dicetak' }
+        : { state: 'needsPrint', note: 'siap dicetak' };
+    }
     if (['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED'].includes(order.status)) {
       return { state: 'reprint', note: 'sudah diambil kurir' };
     }
@@ -426,7 +453,11 @@ export function labelReadiness(order, printed = {}) {
     return { state: 'none', note: `status ${order.status} tidak bisa dicetak` };
   }
 
-  if (order.status === 'AWAITING_COLLECTION') return { state: 'needsPrint', note: 'siap dicetak' };
+  if (order.status === 'AWAITING_COLLECTION') {
+    return wasPrinted(printed, order)
+      ? { state: 'reprint', note: 'sudah dicetak' }
+      : { state: 'needsPrint', note: 'siap dicetak' };
+  }
   if (order.status === 'AWAITING_SHIPMENT') {
     return { state: 'arrange', note: 'atur pengiriman dulu di Seller Center' };
   }
@@ -484,12 +515,21 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
   }
 
   const merged = await mergeLabels(documents, size);
+
+  // Which orders actually came out of the printer, for the print ledger. A document that
+  // would not merge printed nothing, so everything it covered is left unmarked - the
+  // alternative is an order that quietly leaves the queue without a label on the parcel.
+  const lost = new Set(merged.failures.map((f) => `${f.channel}:${f.id}`));
+  const printed = documents
+    .filter((doc) => !lost.has(`${doc.order.channel}:${doc.order.id}`))
+    .flatMap((doc) => doc.covers ?? [])
+    .map(({ channel, id }) => printKey(channel, id));
+
   return {
     bytes: merged.bytes,
     pageCount: merged.pageCount,
     requested: orders.length,
-    // Which Shopify orders actually came out of the printer, for the print ledger.
-    printed: shopifyResult.printed,
+    printed,
     failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...shopifyResult.failures, ...merged.failures],
     size,
   };
@@ -522,7 +562,11 @@ async function drawShopifyLabels(selection, resolveShopify) {
     // rather than once per parcel, which is most of what a hundred labels used to cost.
     const bytes = await buildShopifyLabels(found.map((row, index) => ({ order: byId.get(keyOf(row)), pick: picks[index] })));
     return {
-      pages: [{ bytes, order: { id: found[0].id, channel: found[0].channel } }],
+      pages: [{
+        bytes,
+        order: { id: found[0].id, channel: found[0].channel },
+        covers: found.map((row) => ({ channel: row.channel, id: row.id })),
+      }],
       printed: found.map((row) => row.id),
       failures,
     };

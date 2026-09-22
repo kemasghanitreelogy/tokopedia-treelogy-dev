@@ -200,3 +200,43 @@ test('the waybill number is looked up only for the orders that do not carry one'
   assert.equal(found.has('C'), false);
   assert.equal(found.has('D'), false);
 });
+
+test('a marketplace label that has been printed leaves the queue, the way a Shopify one does', () => {
+  // Shopee holds an order at PROCESSED for hours after the waybill is printed, and
+  // TikTok holds it at AWAITING_COLLECTION, so the platform's status cannot say whether
+  // the sheet came out of the printer. Only our own ledger can.
+  const shopee = { channel: 'shopee', id: '260922NYRBTMG5', status: 'PROCESSED' };
+  const tiktok = { channel: 'tokopedia', id: '5861937', status: 'AWAITING_COLLECTION' };
+  assert.equal(labelReadiness(shopee).state, 'needsPrint');
+  assert.equal(labelReadiness(tiktok).state, 'needsPrint');
+
+  const ledger = { 'shopee:260922NYRBTMG5': { at: 1 }, 'tokopedia:5861937': { at: 1 } };
+  assert.equal(labelReadiness(shopee, ledger).state, 'reprint');
+  assert.equal(labelReadiness(shopee, ledger).note, 'sudah dicetak');
+  assert.equal(labelReadiness(tiktok, ledger).state, 'reprint');
+
+  // A different channel's order of the same number is a different parcel.
+  assert.equal(labelReadiness({ channel: 'shopify', id: '260922NYRBTMG5', stage: 'to_ship' }, ledger).state, 'needsPrint');
+});
+
+test('the ledger still recognises a Shopify order written before it had channels', () => {
+  const order = { channel: 'shopify', id: '#10926', stage: 'to_ship' };
+  assert.equal(labelReadiness(order, { '#10926': { at: 1 } }).state, 'reprint', 'entri lama tetap terbaca');
+  assert.equal(labelReadiness(order, { 'shopify:#10926': { at: 1 } }).state, 'reprint');
+});
+
+test('an order whose document does not exist yet is never called printed', () => {
+  // Nothing could have come out of the printer for it, and "menunggu dokumen terbit di
+  // kurir" tells the bench what to do next; "sudah dicetak" would send them looking for
+  // a sheet that was never made.
+  const waiting = { channel: 'shopee', id: 'X', status: 'READY_TO_SHIP' };
+  assert.equal(labelReadiness(waiting, { 'shopee:X': { at: 1 } }).state, 'waiting');
+  assert.match(labelReadiness(waiting, { 'shopee:X': { at: 1 } }).note, /menunggu dokumen/);
+
+  const unarranged = { channel: 'tokopedia', id: 'Y', status: 'AWAITING_SHIPMENT' };
+  assert.equal(labelReadiness(unarranged, { 'tokopedia:Y': { at: 1 } }).state, 'arrange');
+
+  // And one the courier already took stays a reprint for that reason, not for the ledger.
+  const gone = { channel: 'shopee', id: 'Z', status: 'SHIPPED' };
+  assert.equal(labelReadiness(gone, {}).note, 'sudah diambil kurir');
+});

@@ -3504,7 +3504,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
           </table></div>
           <div class="apply">
             <button type="submit">Cetak <span id="n">${ticked}</span> label</button>
-            ${candidates.some(({ order: o }) => o.channel === 'shopify' || o.channel === 'manual') && !showReprints
+            ${candidates.length > 0 && !showReprints
               ? `<button class="chip" type="submit" formaction="/api/dashboard" formtarget="_self"
                    name="action" value="label_printed"
                    data-confirm-text="Tandai label yang tercentang sebagai sudah dicetak, tanpa mencetak?">Tandai sudah dicetak</button>`

@@ -145,7 +145,7 @@ test('the sheet draws Shopify pages instead of fetching them, and names what it 
 
 test('without a way to read the order, a Shopify label is refused rather than drawn blank', async () => {
   const sheet = await buildLabelSheet({ orders: [{ channel: 'shopify', id: '#10926' }] });
-  assert.equal(sheet.bytes, null);
+  assert.deepEqual(sheet.groups, [], 'tidak ada tumpukan yang bisa dicetak');
   assert.match(sheet.failures[0].reason, /tidak tersedia/);
 });
 

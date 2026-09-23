@@ -104,7 +104,7 @@ export default async function handler(req, res) {
       },
     });
 
-    if (!sheet.bytes) {
+    if (sheet.groups.length === 0) {
       const lines = sheet.failures
         .slice(0, 12)
         .map((f) => `${f.channel} ${f.id}: ${f.reason}`)
@@ -134,30 +134,29 @@ export default async function handler(req, res) {
       ],
     });
 
-    // A partial run must never look complete. Streaming the PDF alone would leave the
-    // operator counting labels at the printer to discover what is missing, so anything
-    // short of a full run answers with a page that names every parcel that failed.
+    // Always the page, never the bare PDF. A run is now one stack per channel, and a
+    // single stream could only ever hand over one of them; the page carries all of them,
+    // opens a print tab each, and - the reason it existed before grouping - names every
+    // parcel that did not make it instead of leaving the operator to count paper.
     if (sheet.failures.length > 0) {
       console.warn(`labels: ${sheet.failures.map((f) => `${f.id}:${f.reason}`).join('; ')}`);
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.end(renderLabelReport({
-        pageCount: sheet.pageCount,
-        requested: chosen.length,
-        failures: sheet.failures,
-        pdfBase64: Buffer.from(sheet.bytes).toString('base64'),
-        size,
-      }));
-      return;
     }
-
     res.statusCode = 200;
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="label-${size}-${sheet.pageCount}.pdf"`);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Label-Pages', String(sheet.pageCount));
-    res.end(Buffer.from(sheet.bytes));
+    res.end(renderLabelReport({
+      pageCount: sheet.pageCount,
+      requested: chosen.length,
+      failures: sheet.failures,
+      size,
+      groups: sheet.groups.map((group) => ({
+        key: group.key,
+        label: group.label,
+        pageCount: group.pageCount,
+        pdfBase64: Buffer.from(group.bytes).toString('base64'),
+      })),
+    }));
   } catch (error) {
     console.error(`labels: ${error.message}`);
     fail(502, 'Gagal menyiapkan label', error.message);

@@ -4288,7 +4288,19 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
  * header is invisible to the person at the printer. This page names every order that did
  * not print and why, and still hands over the labels that did.
  */
-export function renderLabelReport({ pageCount, requested, failures, pdfBase64, size }) {
+/**
+ * What came out of a print run, one stack per channel.
+ *
+ * The stacks are handed over separately - Shopee's waybills go to the Shopee pickup and
+ * J&T's do not - so each gets its own print job rather than one interleaved PDF the bench
+ * has to sort. Each opens in its own tab with the print dialog already up.
+ *
+ * Opening those tabs is attempted on load and will sometimes be refused: a browser only
+ * lets a page open windows off a real click, and arriving here was a form submission. So
+ * the buttons are always present and always work, and the page says plainly when the
+ * browser stopped it rather than leaving somebody waiting for tabs that are not coming.
+ */
+export function renderLabelReport({ pageCount, requested, failures, size, groups = [] }) {
   const rows = failures
     .map((f) => `<tr>
       <td class="mono nowrap">${escape(f.id)}</td>
@@ -4337,7 +4349,10 @@ td{padding:.65rem 1rem;border-top:1px solid var(--line);vertical-align:top}
 .dim{color:var(--dim)}
 .count{font-family:"Fira Code",monospace;font-size:1.9rem;font-weight:600;letter-spacing:-.02em}
 .ok{color:var(--good)}.warn{color:var(--warn)}
-iframe{width:100%;height:70vh;border:0;background:#fff;display:block}
+iframe{width:100%;height:38vh;min-height:19rem;border:0;background:#fff;display:block}
+.bar--in{margin:0;padding:.85rem 1rem;border-bottom:1px solid var(--line)}
+.note{margin:0 0 1.25rem;padding:.8rem 1rem;border-radius:10px;font-size:.86rem;
+  color:var(--warn);background:var(--panel);border:1px solid var(--line)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style></head><body>
 <div class="wrap">
@@ -4348,43 +4363,88 @@ iframe{width:100%;height:70vh;border:0;background:#fff;display:block}
   </p>
 
   <div class="bar">
-    <button class="btn" id="print" type="button">Cetak ${pageCount} label</button>
-    <a class="btn btn--ghost" id="dl" download="label-${escape(size)}.pdf">Unduh PDF</a>
+    <button class="btn" id="openall" type="button">Buka ${groups.length} tab cetak</button>
     <a class="btn btn--ghost" href="/api/dashboard?view=labels">Kembali</a>
   </div>
 
-  <div class="card">
+  <p class="note" id="blocked" hidden>
+    Tekan <b>Buka ${groups.length} tab cetak</b> di atas untuk mencetak semuanya sekaligus, atau cetak
+    tumpukan satu per satu di bawah. Browser hanya mengizinkan tab dibuka otomatis kalau pop-up
+    untuk situs ini diizinkan.
+  </p>
+
+  ${failures.length > 0 ? `<div class="card">
     <p class="head"><span class="warn">${failures.length} pesanan tidak tercetak</span></p>
     <table>
       <thead><tr><th>Order ID</th><th>Kanal</th><th>Alasan</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-  </div>
+  </div>` : ''}
 
-  <div class="card">
-    <p class="head">Pratinjau label</p>
-    <iframe id="pdf" title="Label pengiriman"></iframe>
-  </div>
+  ${groups.map((group) => `<div class="card" data-group="${escape(group.key)}">
+    <p class="head">${escape(group.label)} &middot; ${group.pageCount} label</p>
+    <div class="bar bar--in">
+      <button class="btn" type="button" data-print="${escape(group.key)}">Cetak ${group.pageCount} label</button>
+      <a class="btn btn--ghost" data-dl="${escape(group.key)}" download="label-${escape(group.key)}-${escape(size)}.pdf">Unduh PDF</a>
+    </div>
+    <iframe data-pdf="${escape(group.key)}" title="Label ${escape(group.label)}"></iframe>
+  </div>`).join('')}
 </div>
 <script>
 (function () {
-  // The PDF travels inline so this page needs no second request and no temporary file.
-  var raw = atob(${JSON.stringify(pdfBase64)});
-  var bytes = new Uint8Array(raw.length);
-  for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  var url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  // Every stack travels inline, so this page needs no second request, no temporary file
+  // and no second trip to the couriers for documents already fetched.
+  var groups = ${JSON.stringify(groups.map((g) => ({ key: g.key, label: g.label })))};
+  var data = ${JSON.stringify(Object.fromEntries(groups.map((g) => [g.key, g.pdfBase64])))};
+  var urls = {};
 
-  document.getElementById('pdf').src = url;
-  document.getElementById('dl').href = url;
-  document.getElementById('print').addEventListener('click', function () {
-    var frame = document.getElementById('pdf');
-    try {
-      frame.contentWindow.focus();
-      frame.contentWindow.print();
-    } catch (e) {
-      window.open(url, '_blank');
-    }
+  groups.forEach(function (group) {
+    var raw = atob(data[group.key]);
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    urls[group.key] = url;
+    document.querySelector('[data-pdf="' + group.key + '"]').src = url;
+    document.querySelector('[data-dl="' + group.key + '"]').href = url;
   });
+
+  // A tab per stack, with the print dialog already up. The fallback is the preview on
+  // this page, which needs no permission from anybody.
+  function openStack(key, printHere) {
+    var tab = window.open(urls[key], '_blank');
+    if (!tab) {
+      // Only when one stack was asked for. Falling back for a whole blocked run would
+      // raise a print dialog per channel at the same moment, and they queue behind each
+      // other badly enough that the operator loses track of which stack they are on.
+      if (printHere) {
+        var frame = document.querySelector('[data-pdf="' + key + '"]');
+        try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { /* the preview is still there */ }
+      }
+      return false;
+    }
+    // Chrome will not let a blob tab be printed from here until its viewer has loaded,
+    // and there is no event for that across browsers - a short wait is the honest way.
+    try { tab.addEventListener('load', function () { tab.print(); }); } catch (e) { /* cross-origin blob */ }
+    window.setTimeout(function () { try { tab.print(); } catch (e) { /* the operator can press print */ } }, 900);
+    return true;
+  }
+
+  function openAll() {
+    var blocked = 0;
+    groups.forEach(function (group) { if (!openStack(group.key, false)) blocked += 1; });
+    document.getElementById('blocked').hidden = blocked === 0;
+  }
+
+  document.getElementById('openall').addEventListener('click', openAll);
+  document.querySelectorAll('[data-print]').forEach(function (button) {
+    button.addEventListener('click', function () { openStack(button.getAttribute('data-print'), true); });
+  });
+
+  // Tried once on arrival, because what was asked for is the labels and not a page about
+  // the labels. This page is itself a new tab, and a tab cannot open tabs without a click
+  // behind it, so unless pop-ups are allowed for this site the attempt is refused - in
+  // which case the line above says which button does it instead of nothing happening.
+  openAll();
 })();
 </script>
 </body></html>`;

@@ -397,6 +397,31 @@ export async function mergeLabels(documents, sizeKey = DEFAULT_SIZE) {
 
 /* ------------------------------------------------------------------ public */
 
+/**
+ * How a print run is divided at the printer.
+ *
+ * One group per channel, because a run is handed over channel by channel: a stack of
+ * Shopee waybills goes to the Shopee pickup and a stack of J&T ones does not, and a
+ * single interleaved PDF makes the bench sort paper it should never have been given
+ * mixed. Tokopedia and TikTok Shop are one group because they are one shop behind one
+ * API, one courier booking and one pickup - splitting them would be a distinction that
+ * exists nowhere outside the order id.
+ */
+export const LABEL_GROUPS = {
+  tiktok: { label: 'Tokopedia & TikTok Shop', channels: ['tokopedia', 'tiktok_shop'] },
+  shopee: { label: 'Shopee', channels: ['shopee'] },
+  shopify: { label: 'Shopify', channels: ['shopify'] },
+  manual: { label: 'Penjualan manual', channels: ['manual'] },
+};
+
+/** Which stack this order's label belongs on. */
+export function labelGroup(channel) {
+  for (const [key, group] of Object.entries(LABEL_GROUPS)) {
+    if (group.channels.includes(channel)) return key;
+  }
+  return 'tiktok';
+}
+
 /** Orders whose label can meaningfully exist yet. */
 export const PRINTABLE_STAGES = new Set(['to_ship', 'shipping']);
 
@@ -519,7 +544,7 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
   const documents = [...tiktokResult.pages, ...shopeeResult.pages, ...shopifyResult.pages];
   if (documents.length === 0) {
     return {
-      bytes: null,
+      groups: [],
       pageCount: 0,
       requested: orders.length,
       printed: [],
@@ -528,23 +553,51 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
     };
   }
 
-  const merged = await mergeLabels(documents, size);
+  // Merged once per group rather than once for the run. The fetching above is what costs
+  // anything; merging is arithmetic on bytes we already hold, so the printer gets one
+  // stack per channel for free.
+  const byGroup = new Map();
+  for (const doc of documents) {
+    const key = labelGroup(doc.order.channel);
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(doc);
+  }
+
+  const groups = [];
+  const mergeFailures = [];
+  const lost = new Set();
+  // Named in the order the constant declares, so the stacks come out the same way every
+  // time rather than in whichever order the platforms happened to answer.
+  for (const key of Object.keys(LABEL_GROUPS)) {
+    const docs = byGroup.get(key);
+    if (!docs?.length) continue;
+    const merged = await mergeLabels(docs, size);
+    mergeFailures.push(...merged.failures);
+    for (const failure of merged.failures) lost.add(`${failure.channel}:${failure.id}`);
+    if (!merged.bytes || merged.pageCount === 0) continue;
+    groups.push({
+      key,
+      label: LABEL_GROUPS[key].label,
+      bytes: merged.bytes,
+      pageCount: merged.pageCount,
+      orders: docs
+        .filter((doc) => !lost.has(`${doc.order.channel}:${doc.order.id}`))
+        .flatMap((doc) => doc.covers ?? []),
+    });
+  }
 
   // Which orders actually came out of the printer, for the print ledger. A document that
   // would not merge printed nothing, so everything it covered is left unmarked - the
   // alternative is an order that quietly leaves the queue without a label on the parcel.
-  const lost = new Set(merged.failures.map((f) => `${f.channel}:${f.id}`));
-  const printed = documents
-    .filter((doc) => !lost.has(`${doc.order.channel}:${doc.order.id}`))
-    .flatMap((doc) => doc.covers ?? [])
-    .map(({ channel, id }) => printKey(channel, id));
+  const printed = groups.flatMap((group) => group.orders).map(({ channel, id }) => printKey(channel, id));
+  const pageCount = groups.reduce((n, group) => n + group.pageCount, 0);
 
   return {
-    bytes: merged.bytes,
-    pageCount: merged.pageCount,
+    groups,
+    pageCount,
     requested: orders.length,
     printed,
-    failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...shopifyResult.failures, ...merged.failures],
+    failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...shopifyResult.failures, ...mergeFailures],
     size,
   };
 }
@@ -572,23 +625,29 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
   // print leaves a gap rather than handing the next print the same number.
   const picks = await reservePickNumbers(found.length);
   try {
-    // One document for the whole run: the fonts and the Shopify mark are embedded once
-    // rather than once per parcel, which is most of what a hundred labels used to cost.
-    // Drawn at the stock it will be merged onto, so the one sheet we make ourselves is
-    // not the one page in the run that has to be rescaled to join the others.
-    const bytes = await buildShopifyLabels(
-      found.map((row, index) => ({ order: byId.get(keyOf(row)), pick: picks[index] })),
-      { width: stock.width, height: stock.height },
-    );
-    return {
-      pages: [{
+    // One document per channel, not one for the whole run: Shopify and a typed-in sale
+    // are drawn by the same code but they are still two channels, and the print is
+    // grouped by channel. Within a channel it stays one document, which is where the
+    // saving is - the fonts and the mark are embedded once rather than once per parcel.
+    const byChannel = new Map();
+    found.forEach((row, index) => {
+      if (!byChannel.has(row.channel)) byChannel.set(row.channel, []);
+      byChannel.get(row.channel).push({ order: byId.get(keyOf(row)), pick: picks[index], row });
+    });
+
+    const pages = [];
+    for (const [channel, jobs] of byChannel) {
+      const bytes = await buildShopifyLabels(
+        jobs.map(({ order, pick }) => ({ order, pick })),
+        { width: stock.width, height: stock.height },
+      );
+      pages.push({
         bytes,
-        order: { id: found[0].id, channel: found[0].channel },
-        covers: found.map((row) => ({ channel: row.channel, id: row.id })),
-      }],
-      printed: found.map((row) => row.id),
-      failures,
-    };
+        order: { id: jobs[0].row.id, channel },
+        covers: jobs.map(({ row }) => ({ channel: row.channel, id: row.id })),
+      });
+    }
+    return { pages, printed: found.map((row) => row.id), failures };
   } catch (error) {
     // Drawing is arithmetic on data we already hold, so a failure here is a bug rather
     // than a bad parcel - it is reported against all of them because it stopped all of them.

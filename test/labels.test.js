@@ -259,3 +259,39 @@ test('an order whose document does not exist yet is never called printed', () =>
   const gone = { channel: 'shopee', id: 'Z', status: 'SHIPPED' };
   assert.equal(labelReadiness(gone, {}).note, 'sudah diambil kurir');
 });
+
+test('a run comes out as one stack per channel, with Tokopedia and TikTok on the same one', async () => {
+  const { LABEL_GROUPS, labelGroup } = await import('../src/labels.js');
+  // One shop behind one API, one courier booking and one pickup.
+  assert.equal(labelGroup('tokopedia'), 'tiktok');
+  assert.equal(labelGroup('tiktok_shop'), 'tiktok');
+  assert.equal(LABEL_GROUPS.tiktok.label, 'Tokopedia & TikTok Shop');
+  // The rest stand alone, because they are handed over separately.
+  assert.equal(labelGroup('shopee'), 'shopee');
+  assert.equal(labelGroup('shopify'), 'shopify');
+  assert.equal(labelGroup('manual'), 'manual');
+  // A channel nobody has heard of still lands on a stack rather than vanishing.
+  assert.ok(LABEL_GROUPS[labelGroup('sesuatu')]);
+});
+
+test('the stacks are built in a fixed order, so the same run prints the same way twice', async () => {
+  const { buildLabelSheet } = await import('../src/labels.js');
+  const sheet = await buildLabelSheet({
+    orders: [
+      { channel: 'manual', id: 'DP-1' },
+      { channel: 'shopify', id: '#1' },
+    ],
+    resolveShopify: async (selection) => selection.map((o) => ({
+      ...o, buyer: 'X', shipTo: 'Jl. Satu', total: 1000, lines: [{ sku: 'A', name: 'A', variant: '', qty: 1 }], finance: { shipping: 0 },
+    })),
+  });
+  assert.deepEqual(sheet.groups.map((g) => g.key), ['shopify', 'manual'], 'urutan mengikuti daftar, bukan urutan jawaban');
+  // Two channels drawn by the same code are still two stacks at the printer.
+  assert.equal(sheet.groups.length, 2);
+  for (const group of sheet.groups) {
+    assert.equal(group.pageCount, 1);
+    assert.ok(group.bytes?.length > 0);
+  }
+  assert.equal(sheet.pageCount, 2);
+  assert.deepEqual(sheet.printed.sort(), ['manual:DP-1', 'shopify:#1']);
+});

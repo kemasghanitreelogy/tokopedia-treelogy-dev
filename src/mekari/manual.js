@@ -2,7 +2,7 @@ import { SOURCES } from './sources.js';
 import { MANUAL_SOURCES, PREFIXES, isManualSource } from './prefix.js';
 import { findProduct, PRODUCTS } from '../master.js';
 import { InvoiceError } from './invoice.js';
-import { wibDayStart, wibDate } from '../range.js';
+import { channelDayStart, channelDate, channelToday } from '../clock.js';
 
 /**
  * Transactions that were never online.
@@ -44,7 +44,7 @@ export const SELLABLE = PRODUCTS.map((p) => ({
  * a glance when it was written.
  */
 export function suggestCode(prefix, existingCodes = [], now = Date.now()) {
-  const day = wibDate(Math.floor(now / 1000)).replace(/-/g, '').slice(2);
+  const day = channelDate(Math.floor(now / 1000), 'manual').replace(/-/g, '').slice(2);
   const stem = `${prefix}-${day}-`;
   const used = existingCodes
     .filter((code) => code.startsWith(stem))
@@ -170,10 +170,11 @@ export function buildManualOrder(input) {
   if (!CODE_PATTERN.test(code)) throw new InvoiceError(`kode "${code}" tidak berbentuk PREFIX-xxxx`);
   if (!code.startsWith(`${source}-`)) throw new InvoiceError(`kode ${code} tidak cocok dengan sumber ${source}`);
 
-  const dayStart = wibDayStart(String(input.date ?? ''));
+  const dayStart = channelDayStart(String(input.date ?? ''), 'manual');
   if (dayStart === null) throw new InvoiceError('tanggal tidak valid');
   const now = Math.floor((input.now ?? Date.now()) / 1000);
-  if (dayStart > wibDayStart(wibDate(now))) throw new InvoiceError('tanggal ada di masa depan');
+  const todayStart = channelDayStart(channelDate(now, 'manual'), 'manual');
+  if (dayStart > todayStart) throw new InvoiceError('tanggal ada di masa depan');
   /**
    * A sale dated today is stamped the moment it was typed. A back-dated one is stamped
    * midday of the day it names.
@@ -183,13 +184,16 @@ export function buildManualOrder(input) {
    * would move it onto the day before. Midday has hours of room on either side. Today's
    * entry has no such problem, because the moment it was typed is not in doubt.
    *
+   * The day is WITA throughout, because a typed-in sale has no platform behind it and
+   * the only clock that means anything is the one the person entering it is reading.
+   *
    * Clamping today's entry to midday as well - which is what `Math.min(noon, now)` did -
    * traded one wrong time for another: a sale typed at 16:02 read 12.00 on the order
    * list, three hours behind the operator who had just entered it. Before that it was
    * pinned to midday outright, which put a nine-in-the-morning sale in the future and
    * hid it from a list that asks for everything up to now until lunchtime.
    */
-  const createdAt = dayStart === wibDayStart(wibDate(now)) ? now : dayStart + 12 * 3600;
+  const createdAt = dayStart === todayStart ? now : dayStart + 12 * 3600;
 
   const rows = (input.lines ?? []).filter((l) => l && l.sku);
   if (rows.length === 0) throw new InvoiceError('belum ada baris produk');

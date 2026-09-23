@@ -44,6 +44,7 @@ import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
+import { channelToday } from '../src/clock.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
 import { loadImageManifest } from '../src/mekari/images.js';
 import { loadForecast } from '../src/forecast/engine.js';
@@ -962,7 +963,10 @@ export default async function handler(req, res) {
       // Reserved now, inside a store transaction, so this form and any other open at the
       // same moment hold different numbers. An abandoned form leaves a gap, never a repeat.
       const sequence = await reserveManualSequence();
-      const today = wibDate(Math.floor(Date.now() / 1000));
+      // The form's default date and its ceiling are WITA, because that is the clock the
+      // person filling it in is looking at. Just before midnight in Bali the house clock
+      // still reads yesterday, and the form would open on a date already gone.
+      const today = channelToday('manual');
 
       send(200, renderManual({ user,
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,

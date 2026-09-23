@@ -148,6 +148,11 @@ export const CHANNEL_ZONES = {
   tokopedia: 'Asia/Singapore',
   tiktok_shop: 'Asia/Singapore',
   shopify: 'Asia/Singapore',
+  // A typed-in sale has no platform behind it, so its clock is the one the person typing
+  // is reading. That person is in Bali, and a transaction entered at 16:02 there was
+  // being filed at 15:02 - an hour behind the operator, and on the previous day for
+  // anything entered in the last hour before midnight.
+  manual: 'Asia/Makassar',
 };
 
 
@@ -160,6 +165,25 @@ export function zoneForChannel(channel) {
 /** The calendar date an instant belongs to, on the clock of the platform it came from. */
 export const channelDate = (epochSeconds, channel) =>
   new Date((epochSeconds + zoneForChannel(channel).offsetHours * 3600) * 1000).toISOString().slice(0, 10);
+
+/** Today, on that channel's clock. */
+export const channelToday = (channel) => channelDate(Math.floor(Date.now() / 1000), channel);
+
+/**
+ * Midnight of a calendar date on a channel's own clock, as epoch seconds.
+ *
+ * The same arithmetic as businessDayStart, against a different offset: a date typed into
+ * a form means midnight where the person typing it lives, not midnight at head office.
+ */
+export function channelDayStart(dateString, channel) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateString ?? ''));
+  if (!m) return null;
+  const [, y, mo, d] = m.map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const utcMidnight = Date.UTC(y, mo - 1, d) / 1000;
+  if (new Date(utcMidnight * 1000).toISOString().slice(0, 10) !== dateString) return null;
+  return utcMidnight - zoneForChannel(channel).offsetHours * 3600;
+}
 
 /**
  * The widest the zones we book in are apart, in seconds.

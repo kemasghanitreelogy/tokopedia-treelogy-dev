@@ -43,13 +43,13 @@ test('every platform is a day ahead of the house clock for the last hour of the 
   // Checked against each seller centre rather than reasoned about from the shops' region.
   // Shopee reads "New Order 14/09/2026 00:38" for an instant this system had at 13 Sep
   // 23:38; Tokopedia reads "Waktu pembuatan 03/09/2026 00:25:24" for one it had at 2 Sep
-  // 23:25. All four platforms are UTC+8. A sale typed in by hand has no platform and
-  // belongs to the day the person entering it is living in.
+  // 23:25. All four platforms are UTC+8, and so is a sale typed in by hand, because the
+  // day it belongs to is the day the person entering it is living in - in Bali.
   const at = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000); // 23:38 WIB, 00:38 +8
-  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual']) {
     assert.equal(channelDate(at, channel), '2026-09-14', channel);
   }
-  assert.equal(channelDate(at, 'manual'), '2026-09-13', 'transaksi manual pakai jam rumah');
+  // Only the house clock is still on the 13th, and nothing is filed by the house clock.
   assert.equal(channelDate(at, null), '2026-09-13');
 });
 
@@ -57,11 +57,13 @@ test('that same hour moves a sale into the next month, and into the next year', 
   // The boundary that matters for a monthly close, and for a financial year.
   const endOfAugust = Math.floor(Date.parse('2026-08-31T16:30:00Z') / 1000);
   assert.equal(channelDate(endOfAugust, 'shopee'), '2026-09-01');
-  assert.equal(channelDate(endOfAugust, 'manual'), '2026-08-31');
+  assert.equal(channelDate(endOfAugust, 'manual'), '2026-09-01', 'WITA sudah berganti bulan');
+  assert.equal(channelDate(endOfAugust, null), '2026-08-31');
 
   const endOfYear = Math.floor(Date.parse('2026-12-31T16:30:00Z') / 1000);
   assert.equal(channelDate(endOfYear, 'tokopedia'), '2027-01-01');
-  assert.equal(channelDate(endOfYear, 'manual'), '2026-12-31');
+  assert.equal(channelDate(endOfYear, 'manual'), '2027-01-01');
+  assert.equal(channelDate(endOfYear, null), '2026-12-31');
 });
 
 test('a channel keeps its own clock even when the house clock is moved', () => {
@@ -72,7 +74,7 @@ test('a channel keeps its own clock even when the house clock is moved', () => {
   try {
     for (const zone of ['Asia/Jakarta', 'Asia/Makassar', 'Asia/Jayapura']) {
       process.env.BUSINESS_TZ = zone;
-      for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+      for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual']) {
         assert.equal(channelDate(at, channel), '2026-09-14', `${channel} di bawah ${zone}`);
       }
     }
@@ -88,7 +90,7 @@ test('every channel with an entry names a zone that exists, and an unknown one f
     assert.ok(zoneForChannel(channel).label, `${channel} tanpa label`);
   }
   // Nothing may return undefined here: the offset is multiplied straight into a date.
-  for (const channel of ['manual', 'lazada', '', null, undefined]) {
+  for (const channel of ['lazada', '', null, undefined]) {
     assert.equal(typeof zoneForChannel(channel).offsetHours, 'number', String(channel));
   }
 });
@@ -231,9 +233,11 @@ test("every platform is UTC+8, and each one's own records are what say so", asyn
   for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
     assert.equal(zoneOf(channel).offsetHours, 8, channel);
   }
-  // A typed-in sale has no platform, so it keeps the day the person entering it is in.
-  assert.equal(dateFor(shopeeAt, 'manual'), '2026-09-13');
-  assert.equal(zoneOf('manual').offsetHours, 7);
+  // A typed-in sale keeps the day the person entering it is in, which is Bali: the same
+  // +8, arrived at for a different reason, which is why it is a table and not a constant.
+  assert.equal(zoneOf('manual').offsetHours, 8);
+  assert.equal(zoneOf('manual').label, 'WITA');
+  assert.equal(dateFor(shopeeAt, 'manual'), '2026-09-14');
 });
 
 test('a Shopee order id carries the day the platform assigns it', async () => {

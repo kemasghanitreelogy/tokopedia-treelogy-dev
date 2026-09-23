@@ -19,21 +19,22 @@ const MIDDAY_5_SEP = Math.floor(Date.parse('2026-09-05T05:00:00Z') / 1000);
 
 const order = (channel, at) => ({ channel, createdAt: at });
 
-test('a September window holds the marketplace sale the house clock would call August', () => {
+test('a September window holds the sale the house clock would call August', () => {
   const september = { from: '2026-09-01', to: '2026-09-16' };
-  // 31 Aug 23:30 Jakarta is already 1 September to every platform we sell on.
-  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+  // 31 Aug 23:30 Jakarta is already 1 September to every platform we sell on - and to
+  // the bench in Bali, which is why a typed-in sale sits with them rather than apart.
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual']) {
     assert.equal(channelDate(LATE_31_AUG, channel), '2026-09-01', channel);
     assert.equal(withinDays(order(channel, LATE_31_AUG), september), true, channel);
   }
-  // A typed-in sale has no platform and stays on the day it was entered.
-  assert.equal(withinDays(order('manual', LATE_31_AUG), september), false);
 });
 
-test('an August window holds the typed-in sale and not the marketplace one', () => {
+test('an August window holds neither, because that hour belongs to September', () => {
   const august = { from: '2026-08-17', to: '2026-08-31' };
-  assert.equal(withinDays(order('manual', LATE_31_AUG), august), true);
+  assert.equal(withinDays(order('manual', LATE_31_AUG), august), false, 'WITA sudah 1 September');
   assert.equal(withinDays(order('shopee', LATE_31_AUG), august), false, 'Shopee sudah 1 September');
+  // Only the house clock still calls it August, and nothing is filed by that.
+  assert.equal(channelDate(LATE_31_AUG, null), '2026-08-31');
 });
 
 test('away from the boundary every channel agrees, which is most of the month', () => {

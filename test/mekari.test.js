@@ -413,9 +413,37 @@ test("a sale dated today is stamped when it was typed, whatever o'clock that is"
 
   // A back-dated entry carries a date and no time, so it keeps midday: midnight sits
   // close enough to the boundary that a few hours of timezone slip would move it onto
-  // the day before, and midday has hours of room on either side.
-  assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: morning })).createdAt, Math.floor(Date.parse('2026-09-20T05:00:00Z') / 1000));
-  assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: afternoon })).createdAt, Math.floor(Date.parse('2026-09-20T05:00:00Z') / 1000));
+  // the day before, and midday has hours of room on either side. Midday WITA, because
+  // the date on the form is the date the person filling it in was reading.
+  const middayWita = Math.floor(Date.parse('2026-09-20T04:00:00Z') / 1000);
+  assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: morning })).createdAt, middayWita);
+  assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: afternoon })).createdAt, middayWita);
+  assert.equal(jurnalDate(middayWita, 'manual'), '2026-09-20', 'dan tetap tanggal itu di buku');
+});
+
+test('a typed-in sale is dated by the bench clock, not the house clock', async () => {
+  // 00:30 on the 24th in Bali is still 23:30 on the 23rd in Jakarta. The person at the
+  // bench is filling in the 24th, and that is the day the sale has to land on - in the
+  // order list, on the invoice and in Jurnal. Read on the house clock it would be filed
+  // a day early, every night, for the last hour of every night.
+  const justAfterMidnightWita = Date.parse('2026-09-23T16:30:00Z');
+  const order = buildManualOrder(manual({ date: '2026-09-24', now: justAfterMidnightWita }));
+  assert.equal(order.createdAt, Math.floor(justAfterMidnightWita / 1000), 'dicap saat diketik');
+  assert.equal(jurnalDate(order.createdAt, 'manual'), '2026-09-24');
+  // And the same instant is still the 23rd to the house clock, which files nothing.
+  assert.equal(jurnalDate(order.createdAt, null), '2026-09-23');
+  // The suggested code carries the same day, so the number on the invoice and the date
+  // on it name one day rather than two.
+  const { formatManualCode } = await import('../src/mekari/manual.js');
+  assert.match(formatManualCode('DP', '2026-09-24', 1), /^DP-260924-/);
+});
+
+test('a date that is still the future in Bali is refused', () => {
+  // 23:30 on the 23rd in Jakarta is already the 24th at the bench, so the 24th is a
+  // legitimate entry - but the 25th is not, on anybody's clock.
+  const lateOn23rdWib = Date.parse('2026-09-23T16:30:00Z');
+  assert.ok(buildManualOrder(manual({ date: '2026-09-24', now: lateOn23rdWib })));
+  assert.throws(() => buildManualOrder(manual({ date: '2026-09-25', now: lateOn23rdWib })), /masa depan/);
 });
 
 test('a transaction cannot be dated into the future', () => {

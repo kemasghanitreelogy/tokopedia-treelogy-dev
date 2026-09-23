@@ -52,17 +52,30 @@ test('every marketplace invoice is dated on the platform clock, all day long', (
   }
 });
 
-test('a platform parts company with the house clock for exactly one hour a night', () => {
-  // The hour that exists because every platform we sell on is UTC+8 and the business
-  // keeps Jakarta time. Six ten-minute steps: if this is not 6, either the channel
-  // mechanism is not being applied or it is being applied to the house clock as well.
+test('a channel parts company with the house clock for exactly one hour a night', () => {
+  // The hour that exists because the business keeps Jakarta time while everything it
+  // actually sells through is UTC+8. Six ten-minute steps: if this is not 6, either the
+  // channel mechanism is not being applied or it is being applied to the house clock too.
   const start = Math.floor(Date.parse('2026-09-14T17:00:00Z') / 1000);
   let differing = 0;
   for (let i = 0; i < 144; i += 1) {
     const at = start + i * 600;
-    if (channelDate(at, 'shopee') !== channelDate(at, 'manual')) differing += 1;
+    if (channelDate(at, 'shopee') !== channelDate(at, null)) differing += 1;
   }
   assert.equal(differing, 6, 'tepat satu jam sehari, tidak lebih dan tidak kurang');
+});
+
+test('a typed-in sale keeps the same hour, because the bench is on WITA too', () => {
+  // It is entered by hand in Bali, so it is +8 like the platforms and unlike the house
+  // clock. The two disagree for the last hour of the Jakarta night and nowhere else.
+  const start = Math.floor(Date.parse('2026-09-14T17:00:00Z') / 1000);
+  let differing = 0;
+  for (let i = 0; i < 144; i += 1) {
+    const at = start + i * 600;
+    assert.equal(channelDate(at, 'manual'), channelDate(at, 'shopee'), `beda di menit ke-${i * 10}`);
+    if (channelDate(at, 'manual') !== channelDate(at, null)) differing += 1;
+  }
+  assert.equal(differing, 6);
 });
 
 test('a day starts at 17:00 UTC the day before, and covers exactly 24 hours', () => {
@@ -136,22 +149,26 @@ const { jurnalDate: invoiceDate } = await import('../src/mekari/invoice.js');
 test('an invoice is dated by the clock of the platform it came from', () => {
   // 23:38 in Jakarta on 13 September, which every platform we sell on calls the 14th -
   // Shopee's seller centre says so outright ("New Order 14/09/2026 00:38") and its order
-  // id begins 260914. A sale typed in by hand has no platform and keeps the house day.
+  // id begins 260914. A sale typed in by hand is on the bench's own clock, which is the
+  // same +8, so it books on the 14th too. Only the house clock is still on the 13th.
   const at = Math.floor(Date.parse('2026-09-13T16:38:00Z') / 1000);
 
-  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify']) {
+  for (const channel of ['shopee', 'tokopedia', 'tiktok_shop', 'shopify', 'manual']) {
     assert.equal(channelDate(at, channel), '2026-09-14', channel);
     assert.equal(invoiceDate(at, channel), '2026-09-14', channel);
     assert.equal(zoneForChannel(channel).offsetHours, 8, channel);
   }
-  assert.equal(invoiceDate(at, 'manual'), '2026-09-13');
   assert.equal(invoiceDate(at, null), '2026-09-13');
 });
 
-test('a typed-in transaction has no platform, so it uses the house clock', () => {
+test('a typed-in transaction is filed on the clock of whoever typed it', () => {
+  // No platform behind it, so the only clock that means anything is the one on the wall
+  // in front of the person entering it - and that wall is in Bali.
   const at = Math.floor(Date.parse('2026-09-14T16:30:00Z') / 1000);
-  assert.equal(channelDate(at, 'manual'), channelDate(at, null));
-  assert.equal(zoneForChannel('manual').name, 'Asia/Jakarta');
+  assert.equal(zoneForChannel('manual').name, 'Asia/Makassar');
+  assert.equal(zoneForChannel('manual').label, 'WITA');
+  assert.equal(channelDate(at, 'manual'), '2026-09-15', 'setengah satu pagi WITA sudah hari berikutnya');
+  assert.equal(channelDate(at, null), '2026-09-14', 'jam sebelas malam WIB masih hari sebelumnya');
   // Every channel that does have an entry must name a zone the table knows.
   for (const [channel, name] of Object.entries(CHANNEL_ZONES)) {
     assert.ok(zoneForChannel(channel).label, channel);

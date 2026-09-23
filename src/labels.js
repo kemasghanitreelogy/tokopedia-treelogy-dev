@@ -15,13 +15,27 @@ import { buildShopUrl } from './shopee/sign.js';
  * every page to the exact media the thermal printer expects.
  */
 
-/** Thermal label stock, in PDF points (1pt = 1/72"). */
+/**
+ * Thermal label stock, in PDF points (1pt = 1/72").
+ *
+ * A6 is first and is the default, because it is the page every courier actually issues.
+ * TikTok's document and Shopee's thermal waybill both arrive at ~298 × 420, and pouring
+ * that into a 100 × 150 page means fitting 298pt of width into 283.46 - every marketplace
+ * label came out at 95.1% of the size the courier drew it, which is exactly how far ours
+ * sat below the same waybill printed by another tool. 298 × 420 rather than a strict
+ * 297.64 × 419.53 so the couriers' own pages pass through at 1:1 instead of 99.88%; the
+ * 0.13 mm difference is below what the label prints and well below what a printer can
+ * resolve.
+ *
+ * The fixed stocks stay for anyone whose printer wants one, and they still fit rather
+ * than fill: cropping a waybill can cut the barcode and make it unscannable.
+ */
 export const LABEL_SIZES = {
+  a6: { label: 'A6 (105 × 148 mm) · sesuai kurir', width: 298, height: 420 },
   '100x150': { label: '100 × 150 mm', width: 283.46, height: 425.20 },
   '100x100': { label: '100 × 100 mm', width: 283.46, height: 283.46 },
-  a6: { label: 'A6 (105 × 148 mm)', width: 297.64, height: 419.53 },
 };
-export const DEFAULT_SIZE = '100x150';
+export const DEFAULT_SIZE = 'a6';
 
 const mm = (value) => (value / 72) * 25.4;
 
@@ -497,7 +511,7 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
     fetchShopeeLabels(shopee).catch((error) => ({
       pages: [], failures: shopee.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
     })),
-    drawShopifyLabels(shopify, resolveShopify).catch((error) => ({
+    drawShopifyLabels(shopify, resolveShopify, LABEL_SIZES[size] ?? LABEL_SIZES[DEFAULT_SIZE]).catch((error) => ({
       pages: [], printed: [], failures: shopify.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
     })),
   ]);
@@ -540,7 +554,7 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
  * the order. The selection carries ids; `resolveShopify` turns them into real orders, and
  * anything it cannot find is reported rather than silently dropped.
  */
-async function drawShopifyLabels(selection, resolveShopify) {
+async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[DEFAULT_SIZE]) {
   if (selection.length === 0) return { pages: [], printed: [], failures: [] };
   if (!resolveShopify) {
     return { pages: [], printed: [], failures: selection.map((o) => ({ id: o.id, channel: o.channel, reason: 'data pesanan tidak tersedia' })) };
@@ -560,7 +574,12 @@ async function drawShopifyLabels(selection, resolveShopify) {
   try {
     // One document for the whole run: the fonts and the Shopify mark are embedded once
     // rather than once per parcel, which is most of what a hundred labels used to cost.
-    const bytes = await buildShopifyLabels(found.map((row, index) => ({ order: byId.get(keyOf(row)), pick: picks[index] })));
+    // Drawn at the stock it will be merged onto, so the one sheet we make ourselves is
+    // not the one page in the run that has to be rescaled to join the others.
+    const bytes = await buildShopifyLabels(
+      found.map((row, index) => ({ order: byId.get(keyOf(row)), pick: picks[index] })),
+      { width: stock.width, height: stock.height },
+    );
     return {
       pages: [{
         bytes,

@@ -33,8 +33,27 @@ test('every label size is a sane thermal stock', () => {
   assert.ok(Object.hasOwn(LABEL_SIZES, DEFAULT_SIZE));
 });
 
-test('the default size is exactly 100x150 mm', () => {
-  assert.deepEqual(labelSizeMm(DEFAULT_SIZE), { width: 100, height: 150 });
+test('the default is the page the couriers themselves issue', () => {
+  // Both TikTok's document and Shopee's thermal waybill arrive at about 298 x 420pt.
+  // Anything narrower fits them smaller than the courier drew them.
+  assert.equal(DEFAULT_SIZE, 'a6');
+  assert.deepEqual(labelSizeMm(DEFAULT_SIZE), { width: 105, height: 148 });
+  const stock = LABEL_SIZES[DEFAULT_SIZE];
+  assert.ok(stock.width >= 298 && stock.height >= 420, 'kertas tidak boleh lebih kecil dari dokumen kurir');
+});
+
+test('a courier page passes through the default at full size, and shrinks on narrower stock', async () => {
+  const courier = await samplePdf(298, 420);
+  const scaleOn = async (size) => {
+    const { bytes } = await mergeLabels([{ order: { id: 'X', channel: 'shopee' }, bytes: courier }], size);
+    const page = (await PDFDocument.load(bytes)).getPages()[0];
+    const { width, height } = page.getSize();
+    return Math.min(width / 298, height / 420);
+  };
+  // 1:1 is the whole point: a waybill printed at 95% is a waybill smaller than the one
+  // every other tool prints from the same document.
+  assert.ok(Math.abs(await scaleOn(DEFAULT_SIZE) - 1) < 0.001, 'ukuran asli tidak dikecilkan');
+  assert.ok(Math.abs(await scaleOn('100x150') - 0.9512) < 0.001, '100x150 memang mengecilkan');
 });
 
 test('an unknown size falls back rather than producing a zero-sized page', () => {

@@ -175,15 +175,21 @@ export function buildManualOrder(input) {
   const now = Math.floor((input.now ?? Date.now()) / 1000);
   if (dayStart > wibDayStart(wibDate(now))) throw new InvoiceError('tanggal ada di masa depan');
   /**
-   * Midday WIB rather than midnight, so a timezone slip of a few hours cannot push the
-   * transaction onto the day before - but never later than this moment.
+   * A sale dated today is stamped the moment it was typed. A back-dated one is stamped
+   * midday of the day it names.
    *
-   * A sale typed in at nine in the morning used to be stamped noon, two hours ahead of
-   * itself, and the order list asks the table for everything up to now: the sale was
-   * in Jurnal, in the database, on its label, and invisible on the Pesanan page until
-   * lunchtime. Back-dated entries still sit at midday of the day they name.
+   * The midday stamp exists for one reason: a back-dated entry carries a date and no
+   * time, and midnight is close enough to the boundary that a few hours of timezone slip
+   * would move it onto the day before. Midday has hours of room on either side. Today's
+   * entry has no such problem, because the moment it was typed is not in doubt.
+   *
+   * Clamping today's entry to midday as well - which is what `Math.min(noon, now)` did -
+   * traded one wrong time for another: a sale typed at 16:02 read 12.00 on the order
+   * list, three hours behind the operator who had just entered it. Before that it was
+   * pinned to midday outright, which put a nine-in-the-morning sale in the future and
+   * hid it from a list that asks for everything up to now until lunchtime.
    */
-  const createdAt = Math.min(dayStart + 12 * 3600, now);
+  const createdAt = dayStart === wibDayStart(wibDate(now)) ? now : dayStart + 12 * 3600;
 
   const rows = (input.lines ?? []).filter((l) => l && l.sku);
   if (rows.length === 0) throw new InvoiceError('belum ada baris produk');

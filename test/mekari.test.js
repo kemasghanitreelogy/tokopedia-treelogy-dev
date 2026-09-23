@@ -396,20 +396,26 @@ test('a code that does not match its source is refused', () => {
   assert.throws(() => buildManualOrder(manual({ code: '' })), /tidak berbentuk/);
 });
 
-test('a sale typed in this morning is stamped now, not at lunchtime', () => {
-  // It was stamped midday WIB whatever the clock said, so a sale entered at 09:26 sat
-  // two and a half hours in the future and the order list - which asks for everything
-  // up to now - could not see it until noon.
+test("a sale dated today is stamped when it was typed, whatever o'clock that is", () => {
+  // Pinned to midday it sat in the future all morning, and the order list asks for
+  // everything up to now - so a sale entered at 09:29 was in Jurnal, in the database and
+  // on its label while the Pesanan page could not see it until lunchtime. Clamped to
+  // midday instead, an afternoon sale read three hours behind the person typing it.
   const morning = Date.parse('2026-09-22T02:29:00Z'); // 09:29 WIB
   const today = buildManualOrder(manual({ date: '2026-09-22', now: morning }));
   assert.equal(today.createdAt, Math.floor(morning / 1000));
   assert.equal(jurnalDate(today.createdAt, 'manual'), '2026-09-22', 'and it is still today in the books');
 
-  // An entry made after midday, and a back-dated one, both keep the midday stamp that
-  // protects the date from a timezone slip.
-  const afternoon = Date.parse('2026-09-22T09:00:00Z'); // 16:00 WIB
-  assert.equal(buildManualOrder(manual({ date: '2026-09-22', now: afternoon })).createdAt, Math.floor(Date.parse('2026-09-22T05:00:00Z') / 1000));
+  const afternoon = Date.parse('2026-09-22T09:02:00Z'); // 16:02 WIB
+  const later = buildManualOrder(manual({ date: '2026-09-22', now: afternoon }));
+  assert.equal(later.createdAt, Math.floor(afternoon / 1000), 'sore hari tercatat sore hari');
+  assert.equal(jurnalDate(later.createdAt, 'manual'), '2026-09-22');
+
+  // A back-dated entry carries a date and no time, so it keeps midday: midnight sits
+  // close enough to the boundary that a few hours of timezone slip would move it onto
+  // the day before, and midday has hours of room on either side.
   assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: morning })).createdAt, Math.floor(Date.parse('2026-09-20T05:00:00Z') / 1000));
+  assert.equal(buildManualOrder(manual({ date: '2026-09-20', now: afternoon })).createdAt, Math.floor(Date.parse('2026-09-20T05:00:00Z') / 1000));
 });
 
 test('a transaction cannot be dated into the future', () => {

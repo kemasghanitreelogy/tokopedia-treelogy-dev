@@ -1301,6 +1301,7 @@ a.rv__product:hover{color:var(--accent)}
   .ln input,.ln__t{grid-column:1/-1}
 }
 
+.fld__warn{margin:.4rem 0 0; font-size:.74rem; line-height:1.45; color:var(--warn)}
 .addln{margin-top:.6rem; font:inherit; font-size:.8rem; font-weight:600; padding:.45rem .8rem; min-height:38px;
   border-radius:9px; cursor:pointer; border:1px dashed var(--line); background:none; color:var(--muted);
   transition:color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
@@ -2940,7 +2941,7 @@ export function renderManual({
               <div class="flds flds--one">
                 <div class="fld">
                   <label for="shipTo">Alamat</label>
-                  <textarea id="shipTo" name="shipTo" rows="2" maxlength="400"
+                  <textarea id="shipTo" name="shipTo" rows="2" maxlength="400" data-nomoji
                             placeholder="Jalan, kelurahan, kecamatan, kota, provinsi, kode pos"></textarea>
                 </div>
               </div>
@@ -2962,7 +2963,12 @@ export function renderManual({
               <h3 class="fset__h">Catatan</h3>
               <div class="fld">
                 <label for="note">Keterangan (ikut ke memo faktur)</label>
-                <input id="note" name="note" maxlength="200" placeholder="mis. titip di toko A, tempo 7 hari">
+                <input id="note" name="note" maxlength="200" placeholder="mis. titip di toko A, tempo 7 hari"
+                  data-nomoji aria-describedby="note-warn">
+                <p class="fld__warn" id="note-warn" hidden>
+                  Jurnal menolak faktur yang memonya berisi emoji, jadi emoji dilepas sebelum dikirim
+                  ke buku. Catatan di label dan faktur cetak tetap utuh.
+                </p>
               </div>
             </div>
           </div>
@@ -2984,6 +2990,33 @@ export function renderManual({
 (function () {
   var form = document.getElementById('mxform');
   if (!form) return;
+
+  // Emoji, caught at the keyboard rather than at the books.
+  //
+  // Jurnal answers 422 "Memo may not contain emoji" and throws the whole invoice away,
+  // and because a typed-in sale is only stored once the books have accepted it, the sale
+  // went with it - a walk-in entered at 12:01 on 24 Sep was lost that way and had to be
+  // typed again from memory.
+  //
+  // It does not block. A sale at the counter has already happened, and refusing to record
+  // it over a character would be the wrong end of the trade. The server takes the emoji
+  // out of what it sends to Jurnal and keeps the note whole in our own record, so this
+  // only says so - before the press, not after it.
+  Array.prototype.forEach.call(form.querySelectorAll('[data-nomoji]'), function (field) {
+    var warn = field.getAttribute('aria-describedby') && document.getElementById(field.getAttribute('aria-describedby'));
+    // Doubled, because this whole script is a template literal: a single backslash is
+    // eaten before it ever reaches the browser, and the class that arrives is a list of
+    // the letters in "p{Extended_Pictographic}" - which matches the t, i and p in
+    // "titip di toko A". Caught by running it in a browser rather than reading it.
+    var pictographs = /[\\p{Extended_Pictographic}\\u{1F3FB}-\\u{1F3FF}\\u{FE0F}\\u{200D}\\u{20E3}]/u;
+    var look = function () {
+      var found = pictographs.test(field.value || '');
+      field.classList.toggle('is-warn', found);
+      if (warn) warn.hidden = !found;
+    };
+    field.addEventListener('input', look);
+    look();
+  });
 
   var lines = document.getElementById('lines');
   var template = lines.firstElementChild.cloneNode(true);

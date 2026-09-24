@@ -143,6 +143,33 @@ export function productCodeFor(line) {
  */
 export const ADDRESS_LIMIT = 250;
 
+/**
+ * Text with the emoji taken out, for the fields Jurnal refuses to take them in.
+ *
+ * Jurnal answers 422 "Memo may not contain emoji" and throws the whole invoice away. A
+ * walk-in sale typed at 12:01 on 24 Sep 2026 was lost that way - the note had an emoji in
+ * it, Jurnal refused the invoice, and because the sale is only stored once the books have
+ * accepted it, nothing was kept anywhere and it had to be typed again from memory.
+ *
+ * Stripped only on the way out. The note is still whole in our own table, on the label
+ * and on the invoice we draw, because that one is for the customer and the customer is
+ * not the one objecting. Which characters count as emoji is Jurnal's opinion, not one
+ * the person typing a note should have to hold.
+ *
+ * Extended_Pictographic is the Unicode property for the things people mean by emoji. The
+ * skin-tone modifiers, the variation selector and the zero-width joiner go with them:
+ * left behind, they are the invisible remains of a character that is no longer there.
+ */
+const PICTOGRAPHS = /[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{FE0E}\u{200D}\u{20E3}]/gu;
+
+export function withoutEmoji(value) {
+  return String(value ?? '')
+    .replace(PICTOGRAPHS, '')
+    // Taking a character out of the middle of a sentence leaves two spaces behind it.
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 export function fitAddress(value) {
   const text = String(value ?? '').trim();
   if (text.length <= ADDRESS_LIMIT) return text;
@@ -264,15 +291,16 @@ export function buildInvoice({ order, accounts = null }) {
     // than as a contact that could never be reached.
     // A typed-in sale also carries the phone number here: the invoice has no field for
     // it, and the contact only takes one the day it is created.
-    memo: [channel, code, order.note, order.channel === 'manual' && order.buyerPhone ? `Telp ${order.buyerPhone}` : '']
+    memo: [channel, code, withoutEmoji(order.note), order.channel === 'manual' && order.buyerPhone ? `Telp ${order.buyerPhone}` : '']
       .filter(Boolean).join(' · '),
   };
 
   // Each of these is sent only when the platform actually disclosed it. An empty field
   // in Jurnal is honest; a field filled with a placeholder is not.
   if (order.buyerEmail) invoice.email = order.buyerEmail;
-  if (order.shipTo) invoice.shipping_address = fitAddress(order.shipTo);
-  if (order.billTo || order.shipTo) invoice.address = fitAddress(order.billTo || order.shipTo);
+  // Free text the same way the memo is, and an emoji in an address is decoration.
+  if (order.shipTo) invoice.shipping_address = fitAddress(withoutEmoji(order.shipTo));
+  if (order.billTo || order.shipTo) invoice.address = fitAddress(withoutEmoji(order.billTo || order.shipTo));
   if (order.carrier) invoice.ship_via = order.carrier;
   if (order.tracking) invoice.tracking_no = order.tracking;
 

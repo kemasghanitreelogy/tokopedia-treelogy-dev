@@ -205,7 +205,40 @@ export function mapTikTokOrder(o) {
     finance: financeFromTikTok(o),
     // Shipping documents are issued per package, not per order.
     packageId: (o.packages ?? [])[0]?.id ?? '',
+    shipBy: tiktokDeadline(o),
   };
+}
+
+/**
+ * The deadline the shop is actually being measured against right now.
+ *
+ * Both platforms publish several, and they are not interchangeable. Read off the live
+ * shop on 24 Sep 2026 for one Tokopedia order created 11:10:
+ *
+ *   rts_sla_time         17:00 same day   mark it ready to ship by here
+ *   tts_sla_time         00:59 next day   have it with the courier by here
+ *   shipping_due_time    5 days out
+ *   collection_due_time  6 days out
+ *
+ * Shopee publishes one, `ship_by_date`, and for the same afternoon it read 00:59 the next
+ * day - the same shape as TikTok's tts_sla_time.
+ *
+ * So the number shown is the one for the move still owed. An order nobody has arranged
+ * is racing the ready-to-ship clock, and showing it the comfortable five-day figure
+ * instead would be worse than showing nothing: it would say there is time when there is
+ * six hours. Once arranged, the handover clock is the one left to miss.
+ */
+const seconds = (value) => {
+  const n = Number(value) || 0;
+  // TikTok sends recommended_shipping_time in milliseconds and the SLA fields in seconds.
+  return n > 4e11 ? Math.floor(n / 1000) : n;
+};
+
+function tiktokDeadline(order) {
+  const rts = seconds(order.rts_sla_time);
+  const handover = seconds(order.tts_sla_time) || seconds(order.collection_due_time);
+  if (order.status === 'AWAITING_SHIPMENT') return rts || handover || 0;
+  return handover || rts || 0;
 }
 
 function financeFromTikTok(order) {
@@ -265,6 +298,7 @@ export function mapShopeeOrder(o) {
     lines: shopeeLines(o.item_list),
     finance: financeFromShopee(o),
     packageNumber: o.package_list?.[0]?.package_number ?? '',
+    shipBy: Number(o.ship_by_date) || 0,
   };
 }
 
@@ -436,7 +470,7 @@ export async function fetchShopeeOrders({ since, until, max, tracking = true }) 
   const pages = await mapLimit(batches(sns, 50), DETAIL_CONCURRENCY, (chunk) =>
     callShopApi(config, '/api/v2/order/get_order_detail', auth, {
       order_sn_list: chunk.join(','),
-      response_optional_fields: 'total_amount,buyer_username,item_list,shipping_carrier,order_status,create_time',
+      response_optional_fields: 'total_amount,buyer_username,item_list,shipping_carrier,order_status,create_time,ship_by_date',
     }).then((r) => r.response.order_list ?? []),
   );
   const detailed = pages.flat();
@@ -535,7 +569,7 @@ export async function fetchOrdersByIds(selection) {
           // item_list and total_amount are what the invoice is built from; asking for
           // less here is what made a by-id read unable to produce one.
           response_optional_fields:
-            'order_status,shipping_carrier,buyer_username,create_time,package_list,item_list,total_amount',
+            'order_status,shipping_carrier,buyer_username,create_time,package_list,item_list,total_amount,ship_by_date',
         }).then((r) => r.response.order_list ?? []),
       );
       const orders = pages.flat().map(mapShopeeOrder);

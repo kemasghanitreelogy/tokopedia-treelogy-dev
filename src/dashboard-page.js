@@ -734,6 +734,24 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   font-size:.84rem; color:var(--muted)}
 .wo__who b{color:var(--fg); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap}
 .wo__car{display:flex; align-items:center; gap:.35rem; font-size:.78rem; color:var(--muted)}
+/* --- the SLA chip: how long is left, and how loudly to say so --- */
+.sla{display:inline-flex; align-items:center; gap:.38rem; align-self:flex-start; margin-top:.15rem;
+  padding:.24rem .6rem .24rem .45rem; border-radius:999px; font-size:.73rem; font-weight:600;
+  border:1px solid color-mix(in srgb,var(--sla) 42%,transparent);
+  background:color-mix(in srgb,var(--sla) 13%,transparent); color:var(--sla);
+  --sla:var(--muted); transition:color var(--t-base), border-color var(--t-base), background var(--t-base)}
+.sla .ico{width:13px; height:13px; flex:none}
+.sla__at{font-weight:400; font-size:.69rem; opacity:.72; white-space:nowrap}
+.sla[data-tone="calm"]{--sla:var(--muted)}
+.sla[data-tone="soon"]{--sla:var(--warn)}
+.sla[data-tone="now"]{--sla:var(--cta-hi)}
+.sla[data-tone="over"]{--sla:var(--bad)}
+/* Only the two that need a decision now pull the eye; a five-day deadline must not. */
+.sla[data-tone="now"],.sla[data-tone="over"]{animation:slaPulse 2.4s var(--ease-soft) infinite}
+@keyframes slaPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--sla) 34%,transparent)}
+  55%{box-shadow:0 0 0 5px color-mix(in srgb,var(--sla) 0%,transparent)}}
+@media (max-width:640px){ .sla__at{display:none} }
+@media (prefers-reduced-motion:reduce){ .sla{animation:none !important} }
 .wo__car .ico{width:14px; height:14px; color:var(--muted)}
 /* A card outside the chosen courier stays readable but steps back. */
 .wo--dim{opacity:.45}
@@ -2169,6 +2187,43 @@ const EXPORT_SCRIPT = `
 })();
 `;
 
+/* --- how long is left, said the way somebody standing at a bench would say it --- */
+
+/**
+ * "4 jam 12 mnt", "besok", "lewat 20 mnt".
+ *
+ * Coarse on purpose past a few hours: a deadline five days out does not want its minutes
+ * counted, and a bench reading "2 hari" acts on it exactly as it would on "2 hari 3 jam".
+ * Under an hour it goes to the minute, because that is when the number starts deciding
+ * what gets packed next. The same function runs on the server and in the browser, so the
+ * first paint and every tick after it say the same thing.
+ */
+export function untilText(deadline, now = Math.floor(Date.now() / 1000)) {
+  const left = Math.floor(Number(deadline) || 0) - now;
+  const say = (n, unit) => `${n} ${unit}`;
+  const shape = (secs) => {
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return say(Math.max(mins, 0), 'mnt');
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) {
+      const rest = mins % 60;
+      return rest ? `${say(hours, 'jam')} ${say(rest, 'mnt')}` : say(hours, 'jam');
+    }
+    return say(Math.floor(hours / 24), 'hari');
+  };
+  if (left <= 0) return `lewat ${shape(-left)}`;
+  return `${shape(left)} lagi`;
+}
+
+/** How loudly to say it. Past, within the hour, within the day, or plenty. */
+export function untilTone(deadline, now = Math.floor(Date.now() / 1000)) {
+  const left = Math.floor(Number(deadline) || 0) - now;
+  if (left <= 0) return 'over';
+  if (left <= 3600) return 'now';
+  if (left <= 6 * 3600) return 'soon';
+  return 'calm';
+}
+
 /* --- the order popup: a row opens what the page already knows about that order --- */
 
 const ORDER_DETAIL_STYLE = `
@@ -2364,6 +2419,28 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const cutoff = dispatchCutoff(Math.floor(generatedAt / 1000));
   const early = rows.filter(({ order }) => order.createdAt < cutoff).length;
 
+  /**
+   * How long is left, on the platform's own clock.
+   *
+   * Rendered with a real value so the page is correct before any script runs, and carried
+   * as an epoch so the browser can keep counting without asking the server again. The
+   * server's answer is only ever right for the instant it was sent; a queue left open on
+   * a screen at the packing bench is looked at for hours.
+   *
+   * Shopify has no marketplace behind it and no deadline to miss, so it gets nothing
+   * rather than a blank where a number should be.
+   */
+  const deadline = (o) => {
+    const at = Number(o.shipBy) || 0;
+    if (!at) return '';
+    const label = o.channel === 'shopee' || o.stage !== 'to_ship' || o.status !== 'AWAITING_SHIPMENT'
+      ? 'Batas kirim' : 'Batas atur';
+    return `<span class="sla" data-deadline="${at}" data-tone="${untilTone(at)}" title="${escape(label)}: ${escape(dateTime(at, o.channel))}">
+      ${svg('clock')}<span class="sla__t">${escape(untilText(at))}</span>
+      <span class="sla__at">${escape(label.toLowerCase())} ${escape(dateTime(at, o.channel))}</span>
+    </span>`;
+  };
+
   const card = ({ order: o }) => {
     return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
       data-early="${o.createdAt < cutoff ? '1' : '0'}">
@@ -2386,6 +2463,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
           : `<span class="wo__car">${svg('truck')}${o.carrier
               ? escape(o.carrier)
               : '<span class="dim">kurir belum ditentukan</span>'}</span>`}
+        ${deadline(o)}
       </span>
     </label>`;
   };
@@ -2422,6 +2500,43 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     </div>`,
     script: `
 (function () {
+  // The deadline, kept honest while the page is open.
+  //
+  // The chips are rendered with a real value, so the page is right before this runs and
+  // right without it. What this adds is that it stays right: a queue is left open on a
+  // screen at the bench for hours, and a number that was true when the page loaded is a
+  // number that quietly lies for the rest of the shift.
+  //
+  // Nothing here invents a deadline. It only re-reads the epoch each chip already
+  // carries, which came from the platform's own SLA field. An order without one has no
+  // chip at all rather than a guess.
+  var chips = Array.prototype.slice.call(document.querySelectorAll('.sla[data-deadline]'));
+  if (chips.length > 0) {
+    var said = ${untilText.toString()};
+    var toned = ${untilTone.toString()};
+    var tick = function () {
+      var now = Math.floor(Date.now() / 1000);
+      chips.forEach(function (chip) {
+        var at = Number(chip.getAttribute('data-deadline')) || 0;
+        if (!at) return;
+        var text = chip.querySelector('.sla__t');
+        var next = said(at, now);
+        if (text && text.textContent !== next) text.textContent = next;
+        var tone = toned(at, now);
+        if (chip.getAttribute('data-tone') !== tone) chip.setAttribute('data-tone', tone);
+      });
+    };
+    tick();
+    // Every fifteen seconds is enough for a display whose smallest unit is a minute, and
+    // cheap enough to leave running all day.
+    var timer = window.setInterval(tick, 15000);
+    // A laptop lid closed over lunch suspends the timer; the numbers are hours stale when
+    // it opens, and the first thing anybody does is look at them.
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+    window.addEventListener('pageshow', tick);
+    window.addEventListener('beforeunload', function () { window.clearInterval(timer); });
+  }
+
   // The pickup step, when Shopee asked for one. Rendered open so it still works with no
   // JavaScript; upgraded to a real modal here for the backdrop, Escape and focus trap.
   var pu = document.getElementById('pickup');

@@ -346,8 +346,27 @@ async function handleWrite(form, ip, user, csrf) {
     }
 
     const result = await massArrange(eligible, { pickupTimes: chosen, methods: plans });
+
+    // Arranged is a change on the platform, and this page is drawn from our own table.
+    // Nothing else was telling the table - the webhook is the usual messenger and Shopee's
+    // pushes are not dependable here - so a parcel stayed in "perlu diatur" after it had
+    // been arranged, and the operator pressed the button again, and again. Re-reading the
+    // ones that moved costs one call per fifty and is what makes the queue empty.
+    const moved = result.results.filter((r) => r.status === 'ok').map((r) => ({ channel: r.channel, id: r.id }));
+    if (moved.length > 0) {
+      try {
+        const fresh = await fetchOrdersByIds(moved);
+        // saveOrders, not rememberOrders: this is a handful of rows, and claiming the
+        // page's whole window as covered off the back of them would tell the next reader
+        // a range had been read that never was.
+        if (fresh.orders.length > 0) await saveOrders(fresh.orders, { source: 'mass_arrange' });
+      } catch (error) {
+        // The shipment happened either way; the screen catches up on the next sweep.
+        console.warn(`dashboard: mass_arrange tidak bisa menyegarkan ${moved.length} pesanan - ${error.message}`);
+      }
+    }
     invalidate('orders');
-    console.log(`dashboard: mass_arrange ${result.succeeded} ok, ${result.failed} failed`);
+    console.log(`dashboard: mass_arrange ${result.succeeded} ok, ${result.failed} failed, ${moved.length} disegarkan`);
 
     const failed = result.results.filter((r) => r.status === 'failed');
     return {

@@ -153,17 +153,38 @@ test('an order Shopee names as failed is reported as failed, not swallowed by a 
   assert.match(by.B.error, /not eligible/);
 });
 
-test('a parcel Shopee still calls READY_TO_SHIP is not arranged, whatever the call answered', async () => {
+test('a shipment Shopee accepted is not called a failure because the next read is stale', async () => {
+  // Shopee takes the shipment and updates the order a moment later - one second, on the
+  // live shop. Asking straight away can still answer READY_TO_SHIP for a parcel that was
+  // just arranged, and calling that a failure is what sent an operator round the loop
+  // pressing the button ten times at a shop that had already taken all of it.
   const { arrangeShopee } = await import('../src/fulfillment.js');
-  // The call says everything went through; the shop says one of them did not move.
-  const shopee = fakeShopee({ statusAfter: (sn) => (sn === 'B' ? 'READY_TO_SHIP' : 'PROCESSED') });
+  const shopee = fakeShopee({ statusAfter: () => 'READY_TO_SHIP' });
   const results = await arrangeShopee(['A', 'B'].map((id) => shopeeOrder(id)), {
     session, call: shopee.call, methods: dropoffPlans(['A', 'B']), shipOne: async () => {},
+  });
+  assert.ok(results.every((r) => r.status === 'ok'), 'panggilan berhasil tetap berhasil');
+  // And nothing was re-read at all, because nothing was in doubt.
+  assert.equal(shopee.calls.detail.length, 0);
+});
+
+test('the read-back can rescue a failed call, and never overturns a refusal', async () => {
+  const { arrangeShopee } = await import('../src/fulfillment.js');
+  // A: the call failed because somebody else had already arranged it - the shop agrees
+  // it moved, so it counts. B: the call failed and the shop agrees it did not move.
+  const shopee = fakeShopee({
+    throwOn: () => true,
+    statusAfter: (sn) => (sn === 'A' ? 'PROCESSED' : 'READY_TO_SHIP'),
+  });
+  const results = await arrangeShopee(['A', 'B'].map((id) => shopeeOrder(id)), {
+    session, call: shopee.call, methods: dropoffPlans(['A', 'B']),
+    shipOne: async () => { throw new Error('Order status is not ready to ship'); },
   });
   const by = Object.fromEntries(results.map((r) => [r.id, r]));
   assert.equal(by.A.status, 'ok');
   assert.equal(by.B.status, 'failed');
-  assert.match(by.B.error, /masih READY_TO_SHIP/);
+  assert.match(by.B.error, /not ready to ship/);
+  assert.deepEqual(shopee.calls.detail, [['A', 'B']], 'hanya yang diragukan yang dibaca ulang');
 });
 
 test('a batch Shopee refuses outright costs only the order that caused it', async () => {

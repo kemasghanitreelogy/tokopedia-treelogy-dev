@@ -380,17 +380,29 @@ export async function arrangeShopee(orders, { pickupTimes = {}, methods = null, 
   ]);
 
   const attempted = [...droppedResults, ...collectedResults];
-  const status = await verifyShopee(config, auth, usable.map((o) => o.id), { call }).catch(() => ({}));
+
+  // Read back only what the ship call did not already answer for. Shopee accepts the
+  // shipment and updates the order a moment later - measured at one second on the live
+  // shop - so asking immediately can still be told READY_TO_SHIP for a parcel that was
+  // just arranged. That is a race, not a refusal, and reporting it as a failure sent an
+  // operator round the loop pressing the button ten times at a shop that had already
+  // taken all of it.
+  //
+  // So the read is a rescue and never a contradiction: it can only turn a failed call
+  // into a success, for the order somebody else arranged while this batch was running.
+  // An order Shopee explicitly refused stays refused, because its call failed too.
+  const doubtful = attempted.filter((row) => row.status !== 'ok').map((row) => row.id);
+  const status = doubtful.length > 0
+    ? await verifyShopee(config, auth, doubtful, { call }).catch(() => ({}))
+    : {};
 
   for (const row of attempted) {
+    if (row.status === 'ok') { results.push(row); continue; }
     const now = status[row.id];
-    if (!now) { results.push(row); continue; }
-    if (UNARRANGED.has(now)) {
-      results.push({ ...row, status: 'failed', error: row.error ?? `Shopee masih ${now}` });
-    } else {
-      // Moved on, whatever the call said - including an order somebody else arranged
-      // while this batch was running.
+    if (now && !UNARRANGED.has(now)) {
       results.push({ channel: 'shopee', id: row.id, status: 'ok' });
+    } else {
+      results.push(row);
     }
   }
   return results;

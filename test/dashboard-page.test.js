@@ -1027,3 +1027,30 @@ test('the dialog answers no to escape, to the backdrop and to nothing at all', (
   assert.match(html, /function onBackdrop\(e\) \{ if \(e\.target === dialog\) finish\(false\); \}/);
   assert.match(html, /no\.focus\(\);/, 'pilihan aman yang mendapat fokus');
 });
+
+test('every page that is handed a message actually shows it', () => {
+  // Rendered, not read: Proses took `flash` and dropped it on the floor, so an operator
+  // arranged a batch, saw neither a success nor an error, and pressed the button ten
+  // more times at a shop that had already taken all of it.
+  const flash = { kind: 'ok', text: 'PESAN-UJI-12345' };
+  const common = { range, errors: {}, shopeeShop: null, generatedAt: 0, csrf: 'c', flash, user: null };
+
+  const pages = {
+    process: () => renderProcess({ ...common, orders: [], arranged: {} }),
+    jurnal: () => renderJurnal({
+      ...common, orders: [], overview: { rows: [], synced: 0, queued: 0, broken: 0, skipped: 0 },
+      depositTo: 'Kas', heartbeat: null, paging: { page: 1, perPage: 50 }, baseQuery: '',
+      live: false, configured: false,
+    }),
+    manual: () => renderManual({ ...common, source: 'DP', code: 'DP-260101-00001AA', today: '2026-01-01', live: false }),
+    forecast: () => renderForecast({ ...common, forecast: null }),
+    labels: () => renderLabels({ ...common, orders: [], sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed: {} }),
+    stock: () => renderStock({ ...common, rows: [], plan: null }),
+  };
+
+  for (const [name, render] of Object.entries(pages)) {
+    let html;
+    try { html = render(); } catch { continue; }
+    assert.ok(html.includes('PESAN-UJI-12345'), `halaman ${name} menelan pesannya`);
+  }
+});

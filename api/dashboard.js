@@ -327,8 +327,23 @@ async function handleWrite(form, ip, user, csrf) {
 
     // Orders are re-read from the platforms: the form carries ids, never package numbers,
     // so a tampered field cannot ship a parcel that is not the seller's.
-    const { orders } = await fetchOrdersByIds(wanted);
+    const { orders, errors: readErrors = {} } = await fetchOrdersByIds(wanted);
     const eligible = orders.filter((o) => wanted.some((w) => w.id === o.id && w.channel === o.channel));
+
+    // A selection the platform would not hand back used to be dropped here without a
+    // word: the batch reported on the smaller number as though that had been the whole
+    // job, and the orders sat in the queue with nothing said about them. Whatever cannot
+    // be read is carried through as a failure so the count and the message agree with
+    // what was actually ticked.
+    const found = new Set(eligible.map((o) => `${o.channel}:${o.id}`));
+    const unreadable = wanted
+      .filter((w) => !found.has(`${w.channel}:${w.id}`))
+      .map((w) => ({
+        channel: w.channel,
+        id: w.id,
+        status: 'failed',
+        error: readErrors[w.channel] ?? readErrors.all ?? 'pesanan tidak bisa dibaca dari platform',
+      }));
     if (eligible.length === 0) throw new Error('pesanan yang dipilih tidak ditemukan');
 
     // What Shopee needs per parcel, read before anything is booked. An instant courier
@@ -347,19 +362,23 @@ async function handleWrite(form, ip, user, csrf) {
 
     // massArrange reconciles our copy itself and invalidates the cache on the way out;
     // the router does not have to remember, which is the point of it living there.
+    // massArrange reconciles our copy itself and invalidates the cache on the way out;
+    // the router does not have to remember, which is the point of it living there.
     const result = await massArrange(eligible, { pickupTimes: chosen, methods: plans });
-    console.log(`dashboard: mass_arrange ${result.succeeded} ok, ${result.failed} failed`);
+    const results = [...result.results, ...unreadable];
+    const succeeded = results.filter((r) => r.status === 'ok').length;
+    const failed = results.filter((r) => r.status === 'failed');
+    console.log(`dashboard: mass_arrange ${succeeded} ok, ${failed.length} failed of ${wanted.length} selected`);
 
-    const failed = result.results.filter((r) => r.status === 'failed');
     return {
       view: 'process',
       message: failed.length === 0
-        ? `${result.succeeded} pesanan berhasil diatur pengirimannya`
-        : `${result.succeeded} berhasil, ${failed.length} gagal - ${failed[0].id}: ${failed[0].error}`,
+        ? `${succeeded} pesanan berhasil diatur pengirimannya`
+        : `${succeeded} berhasil, ${failed.length} gagal - ${failed[0].id}: ${failed[0].error}`,
       audit: {
-        menu: 'process', verb: 'send', target: `${eligible.length} pesanan`,
-        summary: `Mengatur pengiriman ${eligible.length} pesanan: ${result.succeeded} berhasil${failed.length ? `, ${failed.length} gagal` : ''}`,
-        changes: result.results.map((r) => ({ field: `${r.channel} ${r.id}`, to: r.status === 'ok' ? 'diatur pengirimannya' : 'gagal', note: r.error ?? '' })),
+        menu: 'process', verb: 'send', target: `${wanted.length} pesanan`,
+        summary: `Mengatur pengiriman ${wanted.length} pesanan: ${succeeded} berhasil${failed.length ? `, ${failed.length} gagal` : ''}`,
+        changes: results.map((r) => ({ field: `${r.channel} ${r.id}`, to: r.status === 'ok' ? 'diatur pengirimannya' : 'gagal', note: r.error ?? '' })),
       },
     };
   }

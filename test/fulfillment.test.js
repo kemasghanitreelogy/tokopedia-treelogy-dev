@@ -315,3 +315,39 @@ test('a single action reconciles too, and a failed one leaves the table alone', 
   assert.equal(bad.status, 'failed');
   assert.deepEqual(asked, [], 'tidak ada yang berubah, tidak ada yang perlu disegarkan');
 });
+
+test('the batch that reported 21 of 35 now reports all 35', async () => {
+  const { massArrange } = await import('../src/fulfillment.js');
+  // The shape of the run on 24 Sep 09:28: thirty-five Shopee parcels, every ship call
+  // accepted, and Shopee's own status still catching up when the verification read went
+  // out. Twenty-one had propagated, fourteen had not, and those fourteen were reported
+  // as "Shopee masih READY_TO_SHIP" - forty such failures across six batches, every one
+  // of them a parcel that had in fact been arranged.
+  const ids = Array.from({ length: 35 }, (_, i) => `S${i}`);
+  let reads = 0;
+  const call = async (config, path, auth, query, body) => {
+    if (path === '/api/v2/logistics/mass_ship_order') {
+      return { response: { result_list: body.package_list.map(({ order_sn }) => ({ order_sn })) } };
+    }
+    if (path === '/api/v2/order/get_order_detail') {
+      reads += 1;
+      // Shopee lagging: the last fourteen still read as unarranged.
+      const sns = String(query.order_sn_list).split(',');
+      return { response: { order_list: sns.map((order_sn) => ({
+        order_sn,
+        order_status: Number(order_sn.slice(1)) >= 21 ? 'READY_TO_SHIP' : 'PROCESSED',
+      })) } };
+    }
+    throw new Error(`tak terduga: ${path}`);
+  };
+
+  const result = await massArrange(ids.map((id) => shopeeOrder(id)), {
+    methods: dropoffPlans(ids),
+    shopee: { session, call, shipOne: async () => {} },
+    refresh: async () => {},
+  });
+
+  assert.equal(result.succeeded, 35, 'semua yang diterima Shopee dihitung berhasil');
+  assert.equal(result.failed, 0);
+  assert.equal(reads, 0, 'tidak ada pembacaan ulang ketika tidak ada yang diragukan');
+});

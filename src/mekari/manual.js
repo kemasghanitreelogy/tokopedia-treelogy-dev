@@ -278,3 +278,47 @@ export function buildManualOrder(input) {
     finance: { lines, shipping, shippingPassThrough: false },
   };
 }
+
+
+/**
+ * What to tell the operator after a typed-in sale, and it is only ever what happened.
+ *
+ * `postManual` answers with five different things and the screen used to celebrate four
+ * of them. `mismatch` is the one that matters: Jurnal accepted the invoice and stored a
+ * different number than it was sent, so an invoice exists and it is wrong - and the popup
+ * said "Tersimpan di Jurnal" beside the amount we had meant to send, which was the one
+ * number on the screen that was not true.
+ *
+ * Only a clean create, that also reached our own table, celebrates. Everything else says
+ * what it is. Anything needing a decision is an error-coloured note that stays on screen
+ * rather than a green one that leaves after two seconds, and it is logged as a failure,
+ * because a mismatch recorded as "ok" is how an invoice holding the wrong number stops
+ * being anybody's problem.
+ *
+ * Pure on purpose: what an operator is told about money is a decision worth being able
+ * to test without a network.
+ */
+export function manualOutcome({ status, error = '', id, total, listed = true, listError = '' }) {
+  const amount = `Rp${Number(total ?? 0).toLocaleString('id-ID')}`;
+
+  if (status === 'created' && listed) {
+    return { kind: 'ok', message: `${id} tersimpan di Jurnal senilai ${amount}`, celebrate: 'Tersimpan di Jurnal' };
+  }
+  if (status === 'created') {
+    // The books have it, the order list does not. Both halves are said, because
+    // "tersimpan" alone is what sends somebody looking for a sale that is not on screen.
+    return { kind: 'error', message: `${id} masuk Jurnal senilai ${amount}, tapi belum masuk daftar pesanan: ${listError}` };
+  }
+  if (status === 'exists') {
+    return { kind: 'ok', message: `${id} sudah ada di Jurnal, tidak dibuat dua kali` };
+  }
+  if (status === 'mismatch') {
+    return { kind: 'error', message: `${id}: ${error}` };
+  }
+  // 'failed' never reaches here - it throws further up - and anything else is a status
+  // this code has not been taught. Saying so is safer than guessing which way it went.
+  return {
+    kind: 'error',
+    message: `${id}: Jurnal menjawab "${status}", belum tentu tersimpan - periksa di Jurnal sebelum mengulang`,
+  };
+}

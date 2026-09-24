@@ -39,7 +39,7 @@ import { postingAccounts } from '../src/mekari/accounts.js';
  * it is not the bank.
  */
 const POOLED_LABEL = 'akun penampung per kanal';
-import { buildManualOrder, formatManualCode, encodeSequence } from '../src/mekari/manual.js';
+import { buildManualOrder, formatManualCode, encodeSequence, manualOutcome } from '../src/mekari/manual.js';
 import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
@@ -612,30 +612,48 @@ async function handleWrite(form, ip, user, csrf) {
     invalidate('jurnal');
     console.log(`dashboard: manual_invoice ${order.id} -> ${result.status}`);
 
-    // The order list and the invoice printer both read the orders table, and nothing
-    // else will ever put a typed-in sale there. Best effort: the sale is in Jurnal, which
-    // is the record; a table that refuses it is a warning, not a failed save.
+    // The order list and the invoice printer both read the orders table, and nothing else
+    // will ever put a typed-in sale there. The sale is in Jurnal either way - that is the
+    // record - but a table that refused it is something the operator has to be told, not
+    // a line in a log nobody reads. It is what "sudah tersimpan" but "tidak ada di daftar"
+    // looks like from the counter.
+    let listed = true;
+    let listError = '';
     if (isSupabaseConfigured()) {
       try {
         const saved = await saveOrders([order], { source: 'manual' });
-        if (saved.rejected.length > 0) console.warn(`dashboard: manual_invoice ${order.id} ditolak tabel pesanan - ${saved.rejected[0].error}`);
+        if (saved.rejected.length > 0) {
+          listed = false;
+          listError = saved.rejected[0].error;
+        }
         invalidate('orders:');
       } catch (error) {
-        console.warn(`dashboard: manual_invoice ${order.id} tidak tersimpan ke tabel pesanan - ${error.message}`);
+        listed = false;
+        listError = error.message;
       }
     }
+    if (!listed) console.warn(`dashboard: manual_invoice ${order.id} tidak masuk tabel pesanan - ${listError}`);
+
+    const outcome = manualOutcome({
+      status: result.status, error: result.error, id: order.id,
+      total: built.expectedTotal, listed, listError,
+    });
 
     return {
       view: 'orders',
-      message: result.status === 'exists'
-        ? `${order.id} sudah ada di Jurnal, tidak dibuat dua kali`
-        : `${order.id} tersimpan di Jurnal senilai Rp${built.expectedTotal.toLocaleString('id-ID')}`,
+      kind: outcome.kind,
+      message: outcome.message,
       // A sale typed in by hand is the one write on this dashboard that is entirely the
-      // operator's own work, so it gets the one moment of celebration.
-      celebrate: result.status === 'exists' ? null : 'Tersimpan di Jurnal',
+      // operator's own work, so a clean one gets the one moment of celebration.
+      celebrate: outcome.celebrate ?? null,
       audit: {
         menu: 'jurnal', verb: 'add', target: order.id,
-        summary: `Menambah transaksi manual ${order.id} (${order.source}) untuk ${order.customer} senilai Rp${built.expectedTotal.toLocaleString('id-ID')}${result.status === 'exists' ? ' (sudah ada di Jurnal)' : ''}`,
+        // The trail says the same thing the screen says. A mismatch logged as "ok" is how
+        // an invoice holding the wrong number stops being anybody's problem.
+        status: outcome.kind === 'error' ? 'failed' : 'ok',
+        ...(outcome.kind === 'error' ? { error: outcome.message } : {}),
+        summary: `Menambah transaksi manual ${order.id} (${order.source}) untuk ${order.customer} senilai Rp${built.expectedTotal.toLocaleString('id-ID')}${
+          result.status === 'created' && listed ? '' : ` — ${outcome.message}`}`,
         changes: [
           { field: 'pelanggan', to: order.customer },
           ...(order.buyer ? [{ field: 'penerima', to: order.buyer }] : []),
@@ -809,6 +827,8 @@ export default async function handler(req, res) {
         send(200, outcome.html);
         return;
       }
+      // `status: 'ok'` is the default, not the verdict: an outcome that knows it went
+      // badly says so, and the trail agrees with the message the operator was shown.
       if (outcome.audit) await recordActivity({ actor: user, ip, action, status: 'ok', ...outcome.audit });
       redirect(`${PATH}?view=${outcome.view}&${outcome.kind === 'error' ? 'error' : 'done'}=${encodeURIComponent(outcome.message)}${
         outcome.celebrate ? `&yay=${encodeURIComponent(outcome.celebrate)}` : ''}`);

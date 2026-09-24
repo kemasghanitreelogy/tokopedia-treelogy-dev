@@ -701,14 +701,6 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   color:var(--chip,var(--muted)); background:transparent; margin-right:.25rem}
 .strip .note{font-size:.76rem}
 /* --- worklist --- */
-.wl{margin-bottom:1.5rem}
-.wl__h{padding:0 1rem .6rem}
-.wl__h h3{margin:0; font-size:.95rem; font-weight:600; letter-spacing:-.01em; display:flex;
-  align-items:center; gap:.5rem}
-.wl__n{font:500 .72rem/1 "Inter",sans-serif; padding:.22rem .45rem; border-radius:6px;
-  background:var(--panel-2); color:var(--muted); border:1px solid var(--line)}
-.wl__grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:.7rem; padding:0 1rem}
-
 .wl__bar{display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; padding:0 1rem 1rem}
 .wl__sep{width:1px; height:22px; background:var(--line); margin:0 .25rem}
 /* The commit button follows the list down the page - on a thirty-order day the action
@@ -718,24 +710,33 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   display:flex; justify-content:center}
 .wl__go .wo__go{max-width:24rem}
 
-.wo{display:flex; align-items:flex-start; gap:.7rem; margin:0; padding:.85rem .9rem; cursor:pointer;
-  background:var(--glass-2); border:1px solid var(--glass-line); border-radius:14px;
-  transition:border-color var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out)}
-.wo:hover{border-color:color-mix(in srgb,var(--brand) 55%,transparent); transform:translateY(-1px)}
-.wo:focus-within{border-color:var(--brand)}
-.wo__pick{width:17px; height:17px; margin-top:.15rem; flex:none; cursor:pointer; accent-color:var(--brand)}
-.wo__body{display:flex; flex-direction:column; gap:.35rem; min-width:0; flex:1}
-.wo:has(.wo__pick:checked){border-color:color-mix(in srgb,var(--brand) 55%,transparent);
-  background:color-mix(in srgb,var(--brand) 7%,var(--panel-2))}
-.wo__top{display:flex; align-items:center; justify-content:space-between; gap:.5rem}
-.wo__when{font-size:.74rem; color:var(--dim); white-space:nowrap}
-.wo__id{font-size:.82rem; color:var(--fg); overflow-wrap:anywhere; line-height:1.3}
-.wo__who{display:flex; align-items:baseline; justify-content:space-between; gap:.6rem;
-  font-size:.84rem; color:var(--muted)}
-.wo__who b{color:var(--fg); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap}
-.wo__car{display:flex; align-items:center; gap:.35rem; font-size:.78rem; color:var(--muted)}
+/* --- the queue, one row per parcel --- */
+.wtab__wrap{padding:0 1rem}
+.wtab{width:100%; border-collapse:separate; border-spacing:0; font-size:.86rem}
+/* Not sticky. The wrapper scrolls sideways on a narrow screen, and a horizontal scroll
+   container is a scroll container in both directions - a header pinned to it lands part
+   way down the table instead of at the top of the viewport. The commit bar follows the
+   page down; the header does not need to. */
+.wtab thead th{text-align:left;
+  font-size:.68rem; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--dim);
+  padding:.55rem .7rem; white-space:nowrap; border-bottom:1px solid var(--line)}
+.wtab tbody td{padding:.6rem .7rem; border-bottom:1px solid var(--line); vertical-align:middle}
+.wtab tbody tr:last-child td{border-bottom:0}
+.wtab .num{text-align:right; font-variant-numeric:tabular-nums}
+.wtab__pick{width:1%; padding-right:0}
+.wtab__who{max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.wtab__car{display:inline-flex; align-items:center; gap:.35rem; color:var(--muted)}
+.wtab__sla{width:1%}
+.wo{cursor:pointer; transition:background var(--t-fast)}
+.wo:hover td{background:var(--glass-2)}
+.wo:focus-within td{background:var(--glass-2)}
+/* Selected is the resting state here - everything arrives ticked - so the mark is a
+   quiet rail down the left rather than a wash of colour across forty rows. */
+.wo:has(.wo__pick:checked) td:first-child{box-shadow:inset 3px 0 0 var(--brand)}
+.wo:not(:has(.wo__pick:checked)) td{color:var(--dim)}
+.wo__pick{width:17px; height:17px; flex:none; cursor:pointer; accent-color:var(--brand)}
 /* --- the SLA chip: how long is left, and how loudly to say so --- */
-.sla{display:inline-flex; align-items:center; gap:.38rem; align-self:flex-start; margin-top:.15rem;
+.sla{display:inline-flex; align-items:center; gap:.38rem; align-self:flex-start; white-space:nowrap;
   padding:.24rem .6rem .24rem .45rem; border-radius:999px; font-size:.73rem; font-weight:600;
   border:1px solid color-mix(in srgb,var(--sla) 42%,transparent);
   background:color-mix(in srgb,var(--sla) 13%,transparent); color:var(--sla);
@@ -752,10 +753,11 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   55%{box-shadow:0 0 0 5px color-mix(in srgb,var(--sla) 0%,transparent)}}
 @media (max-width:640px){ .sla__at{display:none} }
 @media (prefers-reduced-motion:reduce){ .sla{animation:none !important} }
-.wo__car .ico{width:14px; height:14px; color:var(--muted)}
-/* A card outside the chosen courier stays readable but steps back. */
-.wo--dim{opacity:.45}
-.wo--dim:hover{opacity:1}
+.wtab__car .ico{width:14px; height:14px; color:var(--muted)}
+/* A row outside the chosen courier stays readable but steps back. */
+.wo--dim td{opacity:.42}
+.wo--dim:hover td{opacity:1}
+@media (max-width:820px){ .wtab__who{max-width:9rem} }
 .wl__bar .chip b{margin-left:.25rem; font-weight:600; font-variant-numeric:tabular-nums}
 .wo__in{display:flex; gap:.35rem}
 .wo__in .trk{flex:1; width:auto; min-width:0}
@@ -2384,9 +2386,6 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const rows = pending(orders, arranged);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
 
-  const byAction = {};
-  for (const row of rows) (byAction[row.next.action] ??= []).push(row);
-
   const carriers = new Map();
   for (const { order } of rows) {
     const name = order.carrier || 'Belum ditentukan';
@@ -2398,21 +2397,13 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
       >${escape(name)} <b>${n}</b></button>`)
     .join('');
 
-  const GROUPS = {
-    tiktok_rts: { title: 'Tokopedia &amp; TikTok Shop' },
-    shopee_ship: { title: 'Shopee' },
-    shopify_arrange: { title: 'Shopify' },
-  };
-
   // Waiting on the courier, not on us. Shown as a count so the page is not mistaken for
   // the whole picture, but never as a task.
   const waiting = orders.filter((o) => o.stage === 'to_ship' && !nextAction(o, arranged)).length;
   const moving = orders.filter((o) => o.stage === 'shipping').length;
 
-  // A worklist, not a report: the action is the point, so each order is a card with the
-  // button given real weight rather than a row whose primary control is the smallest
-  // thing on screen. Raw platform statuses are dropped - the section heading already
-  // says what is needed, and AWAITING_SHIPMENT means nothing to the person packing.
+  // A worklist, not a report. Raw platform statuses are dropped: AWAITING_SHIPMENT means
+  // nothing to the person packing, and every row here needs the same single move anyway.
   // One form around everything, so the whole day's shipments go out on one click. Both
   // marketplace paths are handled server-side from the same selection - the operator
   // should not have to know that Shopee and TikTok batch differently.
@@ -2441,49 +2432,53 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     </span>`;
   };
 
-  const card = ({ order: o }) => {
-    return `<label class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
+  /**
+   * One row per parcel, newest first.
+   *
+   * Cards grouped by channel read well with five orders and stop working at fifty: the
+   * same six facts land in a different place on every card, the eye has to re-find them
+   * each time, and three headings push the oldest work off the screen. A table puts each
+   * fact in a column, so scanning forty rows for the one that is nearly late is one
+   * downward glance rather than forty separate reads.
+   *
+   * The channel moves into a column rather than a heading. It still matters - it decides
+   * which stack the label prints on - but it is not what the bench sorts by. Time is.
+   *
+   * `wo` and `wo__pick` are kept as the class names because the selection, the courier
+   * filters and the cut-off filter all find their row with closest('.wo'), and a row is
+   * as good a thing to find as a card.
+   */
+  const row = ({ order: o }) => `<tr class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
       data-early="${o.createdAt < cutoff ? '1' : '0'}">
-      <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
-        aria-label="Pilih ${escape(o.id)}">
-      <span class="wo__body">
-        <span class="wo__top">
-          ${channelTag(o)}
-          <span class="wo__when">${escape(dateTime(o.createdAt, o.channel))}</span>
-        </span>
-        <span class="wo__id mono">${escape(o.id)}</span>
-        <span class="wo__who">
-          <span>${escape(o.buyer) || '<span class="dim">tanpa nama</span>'}</span>
-          <b class="mono">${escape(rupiah(o.total))}</b>
-        </span>
-        ${o.channel === 'shopify'
-          // Shopify records no courier until the parcel is already gone, so an empty
-          // line there is the normal case and saying so every time is just noise.
-          ? (o.carrier ? `<span class="wo__car">${svg('truck')}${escape(o.carrier)}</span>` : '')
-          : `<span class="wo__car">${svg('truck')}${o.carrier
-              ? escape(o.carrier)
-              : '<span class="dim">kurir belum ditentukan</span>'}</span>`}
-        ${deadline(o)}
-      </span>
-    </label>`;
-  };
+      <td class="wtab__pick">
+        <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
+          aria-label="Pilih ${escape(o.id)}">
+      </td>
+      <td>${channelTag(o)}</td>
+      <td class="mono nowrap">${escape(o.id)}</td>
+      <td class="wtab__who">${escape(o.buyer) || '<span class="dim">tanpa nama</span>'}</td>
+      <td class="dim nowrap">${escape(dateTime(o.createdAt, o.channel))}</td>
+      <td class="num mono nowrap">${escape(rupiah(o.total))}</td>
+      <td class="nowrap">${o.carrier
+        ? `<span class="wtab__car">${svg('truck')}${escape(o.carrier)}</span>`
+        // Shopify books its courier outside Shopify, so an empty one there is the normal
+        // case rather than something missing.
+        : (o.channel === 'shopify' ? '<span class="dim">&mdash;</span>' : '<span class="dim">belum ditentukan</span>')}</td>
+      <td class="wtab__sla">${deadline(o) || '<span class="dim">&mdash;</span>'}</td>
+    </tr>`;
 
-  const section = (action, list) => {
-    const meta = GROUPS[action];
-    return `<section class="wl">
-      <header class="wl__h">
-        <h3>${meta.title}<span class="wl__n">${list.length}</span></h3>
-      </header>
-      <div class="wl__grid">${list.map(card).join('')}</div>
-    </section>`;
-  };
-
-  // Arranging shipment comes before recording a dispatch, so the sections follow the
-  // order a day actually runs in rather than whatever order the channels answered.
-  const sections = Object.entries(byAction)
-    .sort(([a], [b]) => Object.keys(GROUPS).indexOf(a) - Object.keys(GROUPS).indexOf(b))
-    .map(([action, list]) => section(action, list))
-    .join('');
+  // Newest first, which is the order `pending` already returns them in. Every channel
+  // stamps in UTC+8 now, so comparing the epochs across them means what it looks like.
+  const table = `<div class="scroll wtab__wrap">
+    <table class="wtab">
+      <thead><tr>
+        <th class="wtab__pick"><span class="vh">Pilih</span></th>
+        <th>Kanal</th><th>Pesanan</th><th>Pembeli</th><th>Waktu</th>
+        <th class="num">Total</th><th>Kurir</th><th>Batas kirim</th>
+      </tr></thead>
+      <tbody>${rows.map(row).join('')}</tbody>
+    </table>
+  </div>`;
 
   return shell({ user,
     title: 'Proses Pesanan',
@@ -2578,6 +2573,19 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   function setAll(v) { picks.forEach(function (p) { p.checked = v; }); sync(); }
 
   picks.forEach(function (p) { p.addEventListener('change', sync); });
+
+  // The whole row picks, not just the seventeen pixels of the tickbox. A row is one
+  // parcel, so anywhere on it is the same instruction - except the deadline chip, which
+  // carries a title worth reading without changing what is selected.
+  Array.prototype.forEach.call(form.querySelectorAll('tr.wo'), function (tr) {
+    tr.addEventListener('click', function (e) {
+      if (e.target.closest('input, a, button, .sla')) return;
+      var pick = tr.querySelector('.wo__pick');
+      if (!pick) return;
+      pick.checked = !pick.checked;
+      sync();
+    });
+  });
   toggle.addEventListener('click', function () {
     setAll(toggle.getAttribute('aria-pressed') !== 'true');
   });
@@ -2619,7 +2627,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
             <span class="strip__grow"></span>
             <button class="chip" type="button" id="pickall" aria-pressed="true">Kosongkan semua</button>
           </div>
-          ${sections}
+          ${table}
           <div class="wl__go">
             <button class="wo__go" type="submit" id="go">Atur pengiriman <span id="n">${rows.length}</span> pesanan</button>
           </div>

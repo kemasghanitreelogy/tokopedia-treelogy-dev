@@ -456,11 +456,14 @@ test('the worklist hides machine statuses and is not a report table', () => {
     ...common, csrf: 'tok',
   });
 
-  // A raw enum means nothing to the person packing; the section heading already says it.
+  // A raw enum means nothing to the person packing, and every row here needs the same
+  // move anyway, so the status never reaches the screen.
   assert.ok(!html.includes('AWAITING_SHIPMENT'), 'raw platform status leaked into the UI');
   assert.ok(!html.includes('READY_TO_SHIP'), 'raw platform status leaked into the UI');
-  assert.ok(!html.includes('<table'), 'a worklist should not be a report table');
-  assert.equal((html.match(/class="wo"/g) ?? []).length, 2, 'every order should be a card');
+  // One table, one row per parcel. Cards grouped by channel read well with five orders
+  // and stop working at fifty: the same six facts land somewhere different on each card.
+  assert.match(html, /<table class="wtab">/);
+  assert.equal((html.match(/class="wo"/g) ?? []).length, 2, 'satu baris per pesanan');
 });
 
 test('both marketplace paths commit through one button', () => {
@@ -491,7 +494,10 @@ test('Shopify stands in the same queue, under the same button', () => {
     ...common, csrf: 'tok',
   });
   assert.match(html, /SHOPIFY1/);
-  assert.match(html, /<h3>Shopify<span class="wl__n">1<\/span>/);
+  // The channel is a column now rather than a heading. It still decides which stack the
+  // label prints on, but it is not what the bench sorts by - time is.
+  assert.ok(!html.includes('wl__n'), 'tidak ada lagi judul per kanal');
+  assert.match(html, />Shopify</, 'kanalnya tetap disebut di barisnya');
   assert.match(html, /name="order" value="shopify:SHOPIFY1"/, 'ikut satu seleksi dengan yang lain');
   assert.match(html, /Atur pengiriman <span id="n">2<\/span> pesanan/, 'satu tombol untuk dua kanal');
   assert.ok(!html.includes('Cetak'), 'label dicetak di menu Label, bukan di sini');
@@ -639,7 +645,7 @@ test('the shipment queue names the courier before anything is committed', () => 
     ...common, csrf: 'tok',
   });
 
-  assert.equal((html.match(/class="wo__car"/g) ?? []).length, 3, 'every card should name its courier');
+  assert.equal((html.match(/class="wtab__car"/g) ?? []).length, 3, 'setiap baris menyebut kurirnya');
   assert.match(html, /data-carrier="JNE Reguler"[^>]*>JNE Reguler <b>2<\/b>/, 'couriers should be counted');
   assert.match(html, /data-carrier=""[^>]*>Semua kurir <b>3<\/b>/);
 });
@@ -652,7 +658,7 @@ test('an order with no courier yet says so rather than showing a blank', () => {
     }],
     ...common, csrf: 'tok',
   });
-  assert.ok(html.includes('kurir belum ditentukan'), 'an empty courier should be stated, not implied');
+  assert.ok(html.includes('belum ditentukan'), 'kurir kosong harus dinyatakan, bukan dibiarkan kosong');
   assert.match(html, /data-carrier="Belum ditentukan"/);
 });
 
@@ -1052,5 +1058,28 @@ test('every page that is handed a message actually shows it', () => {
     let html;
     try { html = render(); } catch { continue; }
     assert.ok(html.includes('PESAN-UJI-12345'), `halaman ${name} menelan pesannya`);
+  }
+});
+
+test('the queue is one table, newest parcel first', () => {
+  const at = (mins) => 1790220000 - mins * 60;
+  const mk = (channel, id, mins) => ({
+    channel, id, status: channel === 'shopee' ? 'READY_TO_SHIP' : 'AWAITING_SHIPMENT',
+    stage: 'to_ship', createdAt: at(mins), buyer: 'b', carrier: 'JNE', tracking: '',
+    total: 1000, lines: [], packageNumber: 'P', packageId: 'p',
+  });
+  const html = renderProcess({
+    // Deliberately out of order, and deliberately mixing channels: the old page grouped
+    // by channel, which put an order from this morning under a heading below one from
+    // three days ago.
+    orders: [mk('shopee', 'LAMA', 600), mk('tokopedia', 'BARU', 5), mk('shopee', 'TENGAH', 120)],
+    ...common, csrf: 'tok',
+  });
+  const order = ['BARU', 'TENGAH', 'LAMA'].map((id) => html.indexOf(id));
+  assert.ok(order[0] < order[1] && order[1] < order[2], 'terbaru di atas');
+  // One table, and the header names every column the bench reads.
+  assert.equal((html.match(/<table class="wtab">/g) ?? []).length, 1);
+  for (const column of ['Kanal', 'Pesanan', 'Pembeli', 'Waktu', 'Total', 'Kurir', 'Batas kirim']) {
+    assert.ok(html.includes(`>${column}<`), `kolom ${column} tidak ada`);
   }
 });

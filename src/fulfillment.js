@@ -3,7 +3,8 @@ import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
 import { mapLimit, batches } from './omni.js';
-import { shippingMethod, shippingMethods, shipBody, needsPickupTime, PICKUP, DROPOFF } from './shopee/pickup.js';
+import { refreshOrders } from './orders-refresh.js';
+import { shippingMethod, shippingMethods, shipBody, PICKUP, DROPOFF } from './shopee/pickup.js';
 import { shopifyGraphql } from './shopify/client.js';
 import { isShopifyConfigured } from './shopify/config.js';
 import { markArranged } from './shopify/label.js';
@@ -212,7 +213,7 @@ export async function shopifyFulfill(orderGid, { trackingNumber, company, notify
  * Run one action. Kept deliberately singular: shipping is irreversible, so a mistake
  * should cost one order, not a batch. The audit record is written either way.
  */
-export async function runAction({ action, order, trackingNumber, company }) {
+export async function runAction({ action, order, trackingNumber, company, refresh = refreshOrders }) {
   const started = Date.now();
   let outcome;
   try {
@@ -229,6 +230,9 @@ export async function runAction({ action, order, trackingNumber, company }) {
   }
 
   await writeAudit({ results: [outcome] }, { guards: { action } }).catch(() => {});
+  // The platform moved, so our copy has to move with it or the order stays in the queue
+  // it was just taken out of. See src/orders-refresh.js.
+  if (outcome.status === 'ok') await refresh([{ channel: order.channel, id: order.id }]);
   return outcome;
 }
 
@@ -432,7 +436,12 @@ export async function arrangeShopee(orders, { pickupTimes = {}, methods = null, 
  * parcel having moved, and the gap between the two is what an operator sees when the
  * queue still holds orders the dashboard just called done.
  */
-export async function massArrange(orders, { pickupTimes = {}, methods = null } = {}) {
+export async function massArrange(orders, {
+  pickupTimes = {}, methods = null, refresh = refreshOrders,
+  // Injected only by tests, the same way the single-channel helpers take them: a batch
+  // that cannot be exercised without a live shop is a batch nobody exercises.
+  shopee: shopeeDeps = {}, tiktok: tiktokDeps = {},
+} = {}) {
   guard(`pengiriman ${orders.length} pesanan`);
 
   const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
@@ -440,8 +449,8 @@ export async function massArrange(orders, { pickupTimes = {}, methods = null } =
   const shopify = orders.filter((o) => o.channel === 'shopify');
 
   const [tiktokResults, shopeeResults, shopifyResults] = await Promise.all([
-    arrangeTikTok(tiktok).catch((error) => tiktok.map((o) => failed(o, error.message))),
-    arrangeShopee(shopee, { pickupTimes, methods }).catch((error) => shopee.map((o) => failed(o, error.message))),
+    arrangeTikTok(tiktok, tiktokDeps).catch((error) => tiktok.map((o) => failed(o, error.message))),
+    arrangeShopee(shopee, { pickupTimes, methods, ...shopeeDeps }).catch((error) => shopee.map((o) => failed(o, error.message))),
     shopify.length === 0
       ? Promise.resolve([])
       : markArranged(shopify.map((o) => o.id), { by: 'dashboard' })
@@ -451,6 +460,7 @@ export async function massArrange(orders, { pickupTimes = {}, methods = null } =
 
   const results = [...tiktokResults, ...shopeeResults, ...shopifyResults];
   await writeAudit({ results }, { guards: { action: 'mass_arrange' } }).catch(() => {});
+  await refresh(results.filter((r) => r.status === 'ok').map((r) => ({ channel: r.channel, id: r.id })));
   return {
     results,
     succeeded: results.filter((r) => r.status === 'ok').length,

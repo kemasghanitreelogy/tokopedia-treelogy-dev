@@ -118,6 +118,23 @@ export async function refreshAccessToken({ config }) {
  * TikTok had already invalidated: the CLI refreshed into .env, the deployment kept a
  * frozen copy of an older .env, and the two chains diverged.
  */
+/**
+ * Copy a token pair onto one in-memory config.
+ *
+ * Separate from persisting because `loadConfig()` hands every caller its own object, so
+ * a refresh that only updated the requester's copy would leave everybody else holding an
+ * access token TikTok had already replaced.
+ */
+export function applyTokens(config, tokens) {
+  config.accessToken = tokens.accessToken;
+  config.refreshToken = tokens.refreshToken;
+  config.accessTokenExpireAt = tokens.accessTokenExpireAt;
+  config.refreshTokenExpireAt = tokens.refreshTokenExpireAt;
+  if (tokens.openId) config.openId = tokens.openId;
+  if (tokens.sellerName) config.sellerName = tokens.sellerName;
+  return config;
+}
+
 export async function persistTokens(config, tokens, { saveBundle = true } = {}) {
   const updates = {
     ACCESS_TOKEN: tokens.accessToken,
@@ -128,12 +145,7 @@ export async function persistTokens(config, tokens, { saveBundle = true } = {}) 
   if (tokens.openId) updates.OPEN_ID = tokens.openId;
   if (tokens.sellerName) updates.SELLER_NAME = tokens.sellerName;
 
-  config.accessToken = tokens.accessToken;
-  config.refreshToken = tokens.refreshToken;
-  config.accessTokenExpireAt = tokens.accessTokenExpireAt;
-  config.refreshTokenExpireAt = tokens.refreshTokenExpireAt;
-  if (tokens.openId) config.openId = tokens.openId;
-  if (tokens.sellerName) config.sellerName = tokens.sellerName;
+  applyTokens(config, tokens);
 
   try {
     if (config.envPath) updateEnv(config.envPath, updates);
@@ -187,3 +199,40 @@ export async function hydrateFromBundle(config) {
   }
   return config;
 }
+
+
+/* --------------------------------------------------- one refresh at a time */
+
+/**
+ * The refresh, shared by every caller that arrives while it is running.
+ *
+ * TikTok rotates the refresh token on every refresh, so a second refresh started before
+ * the first has finished rotates it again and kills the pair the first one just stored.
+ * That is not a theoretical race: order detail is fetched eight at a time and shipments
+ * six at a time, and an expired token means every one of those workers reaches this at
+ * the same instant. Losing the rotation means re-authorising through Partner Center by
+ * hand, which is an outage, not an inconvenience.
+ *
+ * Shopee solved the same problem in src/shopee/session.js and the reasoning is identical;
+ * this is that guard for the other platform.
+ *
+ * `loadConfig()` returns a fresh object per call, so the waiters are handed the new pair
+ * to apply to their own copy - otherwise they would queue politely and then go on to use
+ * the token that was just replaced.
+ */
+let refreshing = null;
+
+export async function refreshTokensOnce(config, { refresh = refreshAccessToken, persist = persistTokens } = {}) {
+  if (!refreshing) {
+    refreshing = (async () => {
+      const tokens = await refresh({ config });
+      await persist(config, tokens);
+      return tokens;
+    })().finally(() => { refreshing = null; });
+  }
+  const tokens = await refreshing;
+  return applyTokens(config, tokens);
+}
+
+/** Only for tests: forget any refresh believed to be in flight. */
+export const resetRefreshGuard = () => { refreshing = null; };

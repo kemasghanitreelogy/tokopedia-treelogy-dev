@@ -271,3 +271,47 @@ test('a parcel with no package number is refused by name rather than sent', asyn
   assert.equal(results[0].status, 'failed');
   assert.match(results[0].error, /nomor paket/);
 });
+
+test('a batch brings our copy of everything that moved back into line', async () => {
+  const { massArrange } = await import('../src/fulfillment.js');
+  const shopee = fakeShopee();
+  const asked = [];
+  const result = await massArrange(
+    ['A', 'B'].map((id) => shopeeOrder(id)),
+    {
+      methods: dropoffPlans(['A', 'B']),
+      shopee: { session, call: shopee.call, shipOne: async () => {} },
+      refresh: async (selection) => { asked.push(...selection.map((o) => o.id)); },
+    },
+  );
+  // The screen is drawn from our table, so a shipment nobody told the table about is a
+  // parcel that stays in the queue it was just taken out of.
+  assert.equal(result.succeeded, 2);
+  assert.deepEqual(asked.sort(), ['A', 'B']);
+});
+
+test('only what actually moved is re-read, never what was refused', async () => {
+  const { massArrange } = await import('../src/fulfillment.js');
+  const asked = [];
+  const shopee = fakeShopee();
+  const result = await massArrange(
+    [shopeeOrder('A'), shopeeOrder('B', { packageNumber: '' })],
+    {
+      methods: dropoffPlans(['A']),
+      shopee: { session, call: shopee.call, shipOne: async () => {} },
+      refresh: async (selection) => { asked.push(...selection.map((o) => o.id)); },
+    },
+  );
+  assert.equal(result.failed, 1);
+  assert.deepEqual(asked, ['A'], 'yang gagal tidak ikut dibaca ulang');
+});
+
+test('a single action reconciles too, and a failed one leaves the table alone', async () => {
+  const { runAction } = await import('../src/fulfillment.js');
+  const asked = [];
+  const refresh = async (selection) => { asked.push(...selection.map((o) => `${o.channel}:${o.id}`)); };
+
+  const bad = await runAction({ action: 'tidak-ada', order: { channel: 'shopee', id: 'X' }, refresh });
+  assert.equal(bad.status, 'failed');
+  assert.deepEqual(asked, [], 'tidak ada yang berubah, tidak ada yang perlu disegarkan');
+});

@@ -1,5 +1,5 @@
 import { buildSignedUrl } from './sign.js';
-import { refreshAccessToken, persistTokens } from './auth.js';
+import { refreshTokensOnce } from './auth.js';
 import { fetchWithTimeout, TIMEOUTS } from './http.js';
 
 /**
@@ -100,7 +100,7 @@ export async function callApi({
   };
 
   if (allowRefresh && config.refreshToken && accessTokenExpired(config)) {
-    await persistTokens(config, await refreshAccessToken({ config }));
+    await refreshTokensOnce(config);
   }
 
   let { payload, httpStatus } = await sendOnce({
@@ -112,7 +112,7 @@ export async function callApi({
   });
 
   if (TOKEN_INVALID_CODES.has(payload.code) && allowRefresh && config.refreshToken) {
-    await persistTokens(config, await refreshAccessToken({ config }));
+    await refreshTokensOnce(config);
     ({ payload, httpStatus } = await sendOnce({
       config,
       method,

@@ -1622,10 +1622,38 @@ ${celebration(flash)}
     window.setTimeout(function () { if (e.defaultPrevented) endNavigation(); }, 0);
   }, true);
 
-  // Coming back through history shows a cached page; a stuck skeleton would be a lie.
+  // One press, one write.
+  //
+  // Arranging a batch takes seconds and nothing on the button changes while it does, so
+  // the operator presses it again - ten times in ninety seconds, in the run that prompted
+  // this. Every one of those is a real POST that ships real parcels, and the ones that
+  // overlap are two shipments of the same order racing each other at the platform.
+  //
+  // Bound after the skeleton handler and in the bubble phase, so a confirmation dialog
+  // that cancels the submit has already had its say and the button is never left dead on
+  // a press that went nowhere.
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (e.defaultPrevented || form.hasAttribute('data-download') || form.getAttribute('target') === '_blank') return;
+    var buttons = form.querySelectorAll('button[type="submit"], button:not([type])');
+    window.setTimeout(function () {
+      if (e.defaultPrevented) return;
+      Array.prototype.forEach.call(buttons, function (button) {
+        button.disabled = true;
+        button.dataset.busy = '1';
+      });
+    }, 0);
+  });
+
+  // Coming back through history shows a cached page, and a button disabled by a submit
+  // that has since finished would be a page nobody can use.
   window.addEventListener('pageshow', function () {
     progress.classList.remove('on');
     loader.classList.remove('on');
+    Array.prototype.forEach.call(document.querySelectorAll('[data-busy]'), function (button) {
+      button.disabled = false;
+      delete button.dataset.busy;
+    });
   });
 
   // A focused number input changes value on wheel. On a page that writes stock and

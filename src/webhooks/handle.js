@@ -138,6 +138,18 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   // custom_id probe already closes; the worst a lost race costs is a ledger entry that
   // has to be re-learned from Jurnal.
   const result = await runSync({ orders: [order], accounts: await chartOfAccounts(), dryRun: false, limit: 1, lock: false });
+  // Held back by its own backoff: this order has failed before and its next attempt is
+  // not due yet. Said plainly rather than as "nothing was processed", because those are
+  // different facts and only one of them means somebody should look.
+  if (result.results.length === 0 && result.waiting > 0) {
+    const held = result.waitingOrders[0] ?? {};
+    const outcome = {
+      status: 'waiting', customId, attempts: held.attempts ?? null,
+      reason: `gagal ${held.attempts ?? '?'}x sebelumnya - menunggu percobaan berikutnya`,
+    };
+    console.log(`webhook/${channel}: ${order.id} ${reason} -> ${outcome.status} (${outcome.reason})`);
+    return outcome;
+  }
   const outcome = result.results[0] ?? { status: 'ignored', reason: 'tidak ada yang diproses' };
 
   if (outcome.status === 'created') invalidate('jurnal');

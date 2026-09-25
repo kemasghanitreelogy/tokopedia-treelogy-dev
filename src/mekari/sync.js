@@ -1,6 +1,7 @@
 import { readDoc, updateDoc } from '../store/index.js';
 import { mekari, isMekariConfigured, MekariError, QuotaExhaustedError } from './client.js';
 import { claimInvoice, releaseInvoice } from './claim.js';
+import { loadRetryBook, isDue, recordOutcomes } from './retry.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomId, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
@@ -267,13 +268,33 @@ export function drained(results, { dryRun = false } = {}) {
   return results.filter((r) => (dryRun ? r.status === 'dry-run' : SETTLED.has(r.status))).length;
 }
 
-/** Orders worth posting, oldest first so the books read in the order things happened. */
-export function postable(orders, ledger) {
+/**
+ * Orders worth posting, oldest first so the books read in the order things happened.
+ *
+ * `retry` is the book of past failures. An order serving its backoff is held back, which
+ * is the whole point of having one: ten orders whose SKU is missing from the master data
+ * were retried every quarter of an hour for a week, and every attempt spent requests out
+ * of a monthly package against a fact that had not changed. Without a book, every caller
+ * behaves exactly as it did before - the dashboard's overview passes none, and should not.
+ */
+export function postable(orders, ledger, { retry = null, now = Date.now() } = {}) {
   return orders
     .filter((o) => POSTABLE_STAGES.has(o.stage))
     .filter((o) => o.finance?.lines?.length > 0)
     .filter((o) => !ledger.orders[customIdFor(o)])
+    .filter((o) => !retry || isDue(retry.orders?.[customIdFor(o)], now))
     .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** Orders held back by a backoff this run, so a recap can say so rather than lose them. */
+export function waiting(orders, ledger, { retry = null, now = Date.now() } = {}) {
+  if (!retry) return [];
+  return orders
+    .filter((o) => POSTABLE_STAGES.has(o.stage))
+    .filter((o) => o.finance?.lines?.length > 0)
+    .filter((o) => !ledger.orders[customIdFor(o)])
+    .filter((o) => !isDue(retry.orders?.[customIdFor(o)], now))
+    .map((o) => ({ customId: customIdFor(o), channel: o.channel, id: o.id, ...retry.orders[customIdFor(o)] }));
 }
 
 /**
@@ -686,7 +707,7 @@ export async function runSync({ orders, accounts = null, dryRun = true, limit = 
   // A dry run reads only, so it never queues behind a live one.
   const held = lock ? await acquireLock() : { acquired: true, held: false };
   if (!held.acquired) {
-    return { dryRun, skipped: 'terkunci', lockedSince: held.since, considered: 0, created: 0, exists: 0, failed: 0, results: [] };
+    return { dryRun, skipped: 'terkunci', lockedSince: held.since, considered: 0, created: 0, exists: 0, failed: 0, waiting: 0, waitingOrders: [], results: [] };
   }
 
   try {
@@ -700,7 +721,11 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
   const ledger = await loadSyncLedger();
   // Contacts already settled with Jurnal, so a repeat buyer costs no request at all.
   rememberContacts(ledger.contacts);
-  const backlog = postable(orders, ledger);
+  // What has failed before and when it may be tried again. A dry run reads it too, so a
+  // preview tells the truth about what the real run would actually attempt.
+  const retry = await loadRetryBook();
+  const backlog = postable(orders, ledger, { retry });
+  const held = waiting(orders, ledger, { retry });
   const queue = backlog.slice(0, limit);
   const results = [];
   const stopAt = deadlineMs ? Date.now() + deadlineMs : Infinity;
@@ -757,6 +782,9 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
   if (!dryRun) {
     ledger.ready_at = new Date().toISOString();
     await saveSyncLedger(ledger);
+    // Written after the ledger, never before: an order recorded as failing that actually
+    // landed would be chased forever, and one cleared that did not land would be lost.
+    await recordOutcomes(results, { orders: queue });
   }
 
   const count = (status) => results.filter((r) => r.status === status).length;
@@ -782,6 +810,11 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
     mismatch: count('mismatch'),
     // Left out of the ledger on purpose; the next run takes them again.
     deferred: count('deferred'),
+    // Failed before and serving a backoff, so not attempted this run. Counted separately
+    // from everything else because they are neither done nor forgotten, and a recap that
+    // cannot say that is how an order goes missing quietly.
+    waiting: held.length,
+    waitingOrders: held,
     results,
     undone,
     voided: undone.filter((u) => u.outcome === 'voided').length,

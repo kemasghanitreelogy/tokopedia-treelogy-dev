@@ -23,15 +23,26 @@ import { wibDayStart, wibDate } from '../range.js';
  */
 
 /** @param {{from: string, until?: number}} options */
-export async function dailyRecap({ from, until = Math.floor(Date.now() / 1000) } = {}) {
+export async function dailyRecap({
+  from, until = Math.floor(Date.now() / 1000),
+  // Injectable for the same reason reconcile's readers are: the rule deciding what counts
+  // as an unbooked sale is worth testing without a database and a live API behind it.
+  readOrders = ordersInRange, readInvoices = invoiceCatalogue,
+} = {}) {
   const since = wibDayStart(from);
   if (since === null) throw new Error(`tanggal tidak valid: ${from}`);
 
   const [orders, catalogue] = await Promise.all([
-    ordersInRange({ since, until }),
-    invoiceCatalogue({ since: from }),
+    readOrders({ since, until }),
+    readInvoices({ since: from }),
   ]);
   const inJurnal = ours(catalogue.invoices);
+
+  // Named, not just counted. A day that reads "3 belum difakturkan" tells an operator
+  // there is a problem; it does not tell them which three sales, which is what they need
+  // to do anything about it - and it is what a Telegram message has to carry.
+  const missingOrders = [];
+  const uninvoiceable = [];
 
   const days = new Map();
   const day = (key) => {
@@ -50,6 +61,17 @@ export async function dailyRecap({ from, until = Math.floor(Date.now() / 1000) }
     if (!inJurnal.has(customIdFor(order))) {
       row.missing += 1;
       row.missingValue += value;
+      const detail = {
+        customId: customIdFor(order), channel: order.channel, id: order.id,
+        total: value, day: key, stage: order.stage,
+        customer: order.customer ?? order.buyer ?? null, orderedAt: order.createdAt,
+      };
+      // An order carrying no priced lines cannot be made into an invoice at all - the
+      // sweep has always skipped it - so it is separated here rather than reported every
+      // night as a sale somebody forgot to post. Both are missing; only one is actionable
+      // in the same way.
+      if (order.finance?.lines?.length > 0) missingOrders.push(detail);
+      else uninvoiceable.push({ ...detail, reason: 'tanpa baris keuangan - tidak bisa dibuat faktur' });
     }
   }
 
@@ -75,6 +97,8 @@ export async function dailyRecap({ from, until = Math.floor(Date.now() / 1000) }
     // what the books hold that the orders do not explain.
     missing: rows.reduce((n, r) => n + r.missing, 0),
     missingValue: rows.reduce((n, r) => n + r.missingValue, 0),
+    missingOrders: missingOrders.sort((a, b) => a.orderedAt - b.orderedAt),
+    uninvoiceable,
     orderValue: rows.reduce((n, r) => n + r.orderValue, 0),
     invoiceValue: rows.reduce((n, r) => n + r.invoiceValue, 0),
     requests: catalogue.requests,

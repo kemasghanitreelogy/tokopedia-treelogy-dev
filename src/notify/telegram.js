@@ -135,6 +135,117 @@ export async function notifySyncFailures({ source, results = [], channelErrors =
   return sendTelegram(html, { ...options, key });
 }
 
+/**
+ * Orders that have been tried enough times to know the problem is not clearing itself.
+ *
+ * Deliberately different from formatFailures, which groups by reason and is right for a
+ * batch that just failed all at once. This one is per order and says everything needed to
+ * act without opening anything: which sale, whose, how much, since when, how many tries,
+ * and the error exactly as Jurnal phrased it.
+ *
+ * The rule on top is that a first failure is not news. Most of them are a moment's bad
+ * weather and are gone by the next sweep. What deserves a person is an order that has
+ * been refused three times over an hour, because by then something is actually wrong.
+ */
+export function formatStuckOrders(entries = [], { now = Date.now() } = {}) {
+  const lines = [`<b>🚨 ${entries.length} pesanan belum masuk Jurnal</b> — sudah dicoba berulang kali`];
+
+  for (const e of entries.slice(0, 10)) {
+    const since = e.first_failed_at ? Math.max(0, Math.round((now - Date.parse(e.first_failed_at)) / 60_000)) : null;
+    const rupiah = Number.isFinite(Number(e.total)) && e.total !== null
+      ? `Rp${Number(e.total).toLocaleString('id-ID')}` : 'nilai tidak terbaca';
+    const ordered = Number.isFinite(Number(e.ordered_at)) ? wibDate(Number(e.ordered_at)) : null;
+
+    lines.push(
+      `\n• <b>${escapeHtml(e.channel ?? '?')}</b> <code>${escapeHtml(e.order_id ?? e.customId)}</code>` +
+      (e.customer ? ` — ${escapeHtml(String(e.customer).slice(0, 40))}` : '') +
+      `\n  ${rupiah}${ordered ? ` · pesanan ${escapeHtml(ordered)}` : ''}` +
+      `\n  gagal <b>${e.attempts ?? '?'}×</b>${since === null ? '' : ` selama ${formatSpan(since)}`}` +
+      `\n  <code>${escapeHtml(String(e.error ?? 'tanpa alasan').slice(0, 300))}</code>`,
+    );
+  }
+  if (entries.length > 10) lines.push(`\n…dan ${entries.length - 10} pesanan lagi`);
+
+  lines.push(`\n<a href="${dashboardLink()}">Buka tab Jurnal</a>`);
+  return lines.join('\n');
+}
+
+/** Minutes into something a person reads without doing arithmetic. */
+function formatSpan(minutes) {
+  if (minutes < 60) return `${minutes} menit`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)} jam`;
+  return `${Math.round(minutes / (60 * 24))} hari`;
+}
+
+/**
+ * Report the stuck orders, and say which ones were reported so they are not repeated.
+ *
+ * The dedupe key carries the attempt counts, not just the order ids, so the next message
+ * about the same orders only goes out once they have actually been tried again - and a
+ * newly stuck order always gets through even while an old one is still stuck.
+ */
+export async function notifyStuckOrders(entries = [], options = {}) {
+  if (entries.length === 0) return { sent: false, reason: 'tidak ada yang macet' };
+  const key = `stuck|${entries.map((e) => `${e.customId}@${e.attempts}`).sort().join(',')}`;
+  return sendTelegram(formatStuckOrders(entries, options), { ...options, key });
+}
+
+/**
+ * The nightly proof that every sale is in the books, and the list when it is not.
+ *
+ * This is the only check that asks Jurnal rather than our own ledger. The sweep's retry
+ * book knows about orders the sweep attempted; it cannot know about one it never saw -
+ * an order whose stage moved to completed a fortnight after it was placed, outside the
+ * seven days the sweep looks at, or one that was lost while a channel could not be read.
+ * Comparing the whole corpus against the books catches those, and nothing else does.
+ *
+ * Silent when a scan came back short: a truncated read makes invoices look absent that
+ * are merely unread, and an alert built on that is worse than no alert.
+ */
+export function formatUninvoiced({ from, missingOrders = [], uninvoiceable = [], missingValue = 0 } = {}, { now = Date.now() } = {}) {
+  const lines = [
+    `<b>📕 ${missingOrders.length} pesanan belum ada fakturnya di Jurnal</b>`,
+    `sejak ${escapeHtml(from)} · senilai Rp${Number(missingValue).toLocaleString('id-ID')}`,
+  ];
+
+  for (const o of missingOrders.slice(0, 12)) {
+    const age = Number.isFinite(Number(o.orderedAt))
+      ? Math.max(0, Math.round((now / 1000 - Number(o.orderedAt)) / 86400)) : null;
+    lines.push(
+      `\n• <b>${escapeHtml(o.channel ?? '?')}</b> <code>${escapeHtml(o.id ?? o.customId)}</code>` +
+      (o.customer ? ` — ${escapeHtml(String(o.customer).slice(0, 40))}` : '') +
+      `\n  Rp${Number(o.total ?? 0).toLocaleString('id-ID')} · ${escapeHtml(o.day ?? '?')}` +
+      `${age === null ? '' : ` · ${age} hari lalu`} · ${escapeHtml(o.stage ?? '?')}`,
+    );
+  }
+  if (missingOrders.length > 12) lines.push(`\n…dan ${missingOrders.length - 12} pesanan lagi`);
+
+  if (uninvoiceable.length > 0) {
+    lines.push(`\n<i>${uninvoiceable.length} pesanan lain tidak bisa dibuat faktur sama sekali (tanpa baris keuangan):</i>`);
+    lines.push(uninvoiceable.slice(0, 6).map((o) => `<code>${escapeHtml(o.id ?? o.customId)}</code>`).join(', '));
+  }
+
+  lines.push(`\n<a href="${dashboardLink()}">Buka tab Jurnal</a>`);
+  return lines.join('\n');
+}
+
+/** Report the nightly audit, if it found anything and if it can be trusted. */
+export async function notifyUninvoiced(recap, options = {}) {
+  if (recap?.complete === false) {
+    // Said out loud rather than swallowed: a night with no audit is not a clean night.
+    return sendTelegram(
+      `<b>⚠️ Audit faktur tidak bisa diselesaikan</b>\nHanya ${recap.walked} dari ${recap.expected} faktur terbaca, jadi malam ini tidak ada jaminan setiap pesanan sudah dibukukan.`,
+      { ...options, key: `audit-incomplete|${recap.from}|${recap.walked}` },
+    );
+  }
+  const missingOrders = recap?.missingOrders ?? [];
+  const uninvoiceable = recap?.uninvoiceable ?? [];
+  if (missingOrders.length === 0 && uninvoiceable.length === 0) return { sent: false, reason: 'semua pesanan sudah dibukukan' };
+
+  const key = `uninvoiced|${[...missingOrders, ...uninvoiceable].map((o) => o.customId).sort().join(',')}`;
+  return sendTelegram(formatUninvoiced(recap, options), { ...options, key });
+}
+
 /** Something broke before any order was even attempted - the run itself died. */
 export async function notifyCrash({ source, error }, options = {}) {
   const html = [

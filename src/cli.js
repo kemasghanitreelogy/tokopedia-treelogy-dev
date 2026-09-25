@@ -20,6 +20,8 @@ import { readCatalog } from './inventory.js';
 import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './ledger.js';
 import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
+import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
+import { ordersForPrinting } from './orders-by-id.js';
 import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
 import { postingAccounts, requiredAccounts, AccountMissingError } from './mekari/accounts.js';
 import { isMekariConfigured, QuotaExhaustedError } from './mekari/client.js';
@@ -34,7 +36,7 @@ import { redateInvoices } from './mekari/redate.js';
 import { repoolPayments } from './mekari/repool.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
 import { recoverShopee } from './webhooks/recover.js';
-import { sendTelegram, notifySyncFailures, notifyStockRisk, isTelegramConfigured } from './notify/telegram.js';
+import { sendTelegram, notifySyncFailures, notifyStockRisk, notifyStuckOrders, notifyUninvoiced, isTelegramConfigured } from './notify/telegram.js';
 import { syncProductImages, refreshImageManifest } from './mekari/images.js';
 import { rebuildLedgerFromJurnal } from './mekari/rebuild.js';
 import { pullHistory } from './history/ingest.js';
@@ -74,9 +76,10 @@ Usage:
   npm run mekari:coa          Setel akun ongkir & tag di Jurnal, tampilkan kebijakan per sumber (butuh --yes)
   npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
+  npm run mekari:retry        Pesanan yang gagal masuk Jurnal & jadwal percobaannya (--now untuk paksa)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
-  npm run mekari:recap        Bandingkan pesanan vs faktur per hari (rekap harian finance)
+  npm run mekari:recap        Bandingkan pesanan vs faktur per hari (--notify kirim yang belum difakturkan)
   npm run mekari:redate       Perbaiki tanggal faktur agar ikut jam platformnya (butuh --yes)
   npm run mekari:repool       Pindahkan setoran dari bank ke akun penampung kanal (butuh --yes)
                               --from=YYYY-MM-DD dan --limit=N untuk mencicil sesuai kuota
@@ -796,7 +799,7 @@ async function reportQuotaExhausted() {
 async function cmdMekariSync(config, args = []) {
   if (!isMekariConfigured()) { console.log(fail('MEKARI_APP_CLIENT_ID / SECRET belum diisi')); return 1; }
 
-  const orders = await mekariOrders(args);
+  const orders = await withOverdue(await mekariOrders(args));
   const accounts = await chartArg();
 
   const preview = await runSync({ orders, accounts, dryRun: true, limit: 1000 });
@@ -830,12 +833,80 @@ async function cmdMekariSync(config, args = []) {
     const result = await runSync({ orders, accounts, dryRun: false, limit });
     if (result.skipped) { console.log(`${warn('run lain sedang berjalan, dilewati')}\n`); return 0; }
     if (result.quotaExhausted) return reportQuotaExhausted();
-    await notifySyncFailures({ source: 'CLI mekari:sync', results: result.results });
+    // Not notifySyncFailures here, deliberately. This runs every quarter of an hour in a
+    // fresh process, so its in-memory "same failure, same hour" guard is empty every time
+    // - ten orders with a missing SKU would have messaged the phone four times an hour for
+    // seven days. The retry book knows which orders have been tried enough times to be
+    // worth reporting, and remembers what it already said across runs.
+    await reportStuck();
     return printSyncResult(result);
   } catch (error) {
     if (!(error instanceof QuotaExhaustedError)) throw error;
     return reportQuotaExhausted();
   }
+}
+
+/**
+ * The window, plus everything that failed before and is due again.
+ *
+ * Without this the sweep is bounded by its own `--7d`: an order that keeps failing for
+ * eight days falls out of the window and is never attempted again - silently, with the
+ * sale missing from the accounts and nobody told. The book remembers them past the edge
+ * of the window, and this is where they are read back in.
+ */
+async function withOverdue(orders) {
+  const book = await loadRetryBook();
+  const due = overdue(book);
+  if (due.length === 0) return orders;
+
+  const have = new Set(orders.map((o) => `${o.channel}:${o.id}`));
+  const missing = due
+    .filter((e) => e.channel && e.id && !have.has(`${e.channel}:${e.id}`))
+    .map((e) => ({ channel: e.channel, id: e.id }));
+  if (missing.length === 0) return orders;
+
+  // The database first, the platform only for what it does not hold - the same reader the
+  // label printer uses, for the same reason.
+  const found = await ordersForPrinting(missing).catch(() => ({ orders: [] }));
+  if (found.orders.length > 0) {
+    console.log(info(`${found.orders.length} pesanan gagal lama diambil kembali di luar jendela`));
+  }
+  const unreadable = missing.length - found.orders.length;
+  if (unreadable > 0) console.log(warn(`${unreadable} pesanan gagal lama tidak bisa dibaca ulang - dicoba lagi run berikutnya`));
+  return [...orders, ...found.orders];
+}
+
+/** Tell a person about the orders that have been refused often enough to matter. */
+async function reportStuck() {
+  const stuck = escalations(await loadRetryBook());
+  if (stuck.length === 0) return;
+  const sent = await notifyStuckOrders(stuck);
+  console.log(fail(`${stuck.length} pesanan macet belum masuk Jurnal${sent.sent ? ' - dikabarkan ke Telegram' : ''}`));
+  for (const e of stuck.slice(0, 10)) console.log(`    ${e.customId} (gagal ${e.attempts}x): ${e.error}`);
+  // Only after the message is away: a send that failed must be tried again next run.
+  if (sent.sent) await markAlerted(stuck.map((e) => e.customId));
+}
+
+/** What is waiting, why, and how long it has been waiting. */
+async function cmdMekariRetry(args = []) {
+  if (args.includes('--now')) {
+    const n = await retryNow();
+    console.log(`\n  ${ok(`${n} pesanan dijadwalkan ulang untuk run berikutnya`)}\n`);
+    return 0;
+  }
+  const book = await loadRetryBook();
+  const rows = Object.entries(book.orders ?? {});
+  if (rows.length === 0) { console.log(`\n  ${ok('tidak ada pesanan yang gagal')}\n`); return 0; }
+
+  console.log(`\n  ${rows.length} pesanan belum masuk Jurnal\n`);
+  for (const [customId, e] of rows.sort((a, b) => (b[1].attempts ?? 0) - (a[1].attempts ?? 0))) {
+    const due = Number(e.next_at ?? 0) <= Date.now()
+      ? 'siap dicoba' : `tunggu ${Math.ceil((Number(e.next_at) - Date.now()) / 60000)} menit`;
+    console.log(`    ${customId.padEnd(34)} gagal ${String(e.attempts ?? '?').padStart(3)}x  ${due}`);
+    console.log(`      sejak ${e.first_failed_at ?? '-'}  ·  ${String(e.error ?? '').slice(0, 90)}`);
+  }
+  console.log(`\n  ${info('--now untuk mencoba semuanya lagi di run berikutnya')}\n`);
+  return 0;
 }
 
 async function cmdMekariStatus() {
@@ -1209,6 +1280,27 @@ async function cmdMekariRecap(config, args = []) {
     console.log(`  ${fail(`PINDAI TIDAK LENGKAP - ${r.walked} dari ${r.expected} faktur terbaca, angka di atas tidak bisa dipercaya`)}`);
   }
   console.log(`  ${info(`${r.requests} permintaan ke Jurnal${r.cached ? ' (pakai hasil pindai tersimpan)' : ''}`)}\n`);
+
+  if ((r.missingOrders ?? []).length > 0) {
+    console.log(`  pesanan yang belum punya faktur:`);
+    for (const o of r.missingOrders.slice(0, 20)) {
+      console.log(`    ${o.day}  ${String(o.channel).padEnd(12)} ${String(o.id).padEnd(22)} ${rupiah(o.total).padStart(14)}  ${o.stage}`);
+    }
+    if (r.missingOrders.length > 20) console.log(`    ...dan ${r.missingOrders.length - 20} lagi`);
+    console.log('');
+  }
+  if ((r.uninvoiceable ?? []).length > 0) {
+    console.log(`  ${warn(`${r.uninvoiceable.length} pesanan tidak bisa dibuat faktur sama sekali (tanpa baris keuangan)`)}`);
+    for (const o of r.uninvoiceable.slice(0, 10)) console.log(`    ${o.day}  ${o.channel} ${o.id}`);
+    console.log('');
+  }
+
+  // The nightly proof. Asks Jurnal, not our ledger, so it catches an order the sweep
+  // never even saw - which is the one case the retry book cannot know about.
+  if (args.includes('--notify')) {
+    const sent = await notifyUninvoiced(r);
+    if (sent.sent) console.log(`  ${info('dikabarkan ke Telegram')}\n`);
+  }
   return r.missing > 0 ? 1 : 0;
 }
 
@@ -1506,6 +1598,7 @@ const COMMANDS = {
   'mekari:coa': cmdMekariCoa,
   'mekari:restate': cmdMekariRestate,
   'mekari:dedupe': cmdMekariDedupe,
+  'mekari:retry': (config, args) => cmdMekariRetry(args),
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
   'mekari:recap': cmdMekariRecap,

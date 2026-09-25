@@ -91,7 +91,8 @@ test('a second process cannot post an order this one is already posting', async 
     globalThis.fetch = realFetch;
   }
   assert.ok(!fetched.some((call) => call.startsWith('POST')), `tidak ada create: ${fetched.join(', ')}`);
-  assert.equal(outcome.status, 'busy', 'dilewati, bukan bikin faktur kedua');
+  assert.equal(outcome.status, 'deferred', 'ditunda, bukan bikin faktur kedua');
+  assert.equal(outcome.busy, true);
   assert.equal(outcome.customId, 'TRL-shopee-260924UVXBBSDM');
 
   await releaseInvoice('TRL-shopee-260924UVXBBSDM', { owner: 'sweep' });

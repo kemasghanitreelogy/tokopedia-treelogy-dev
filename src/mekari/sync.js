@@ -413,9 +413,13 @@ async function postWithClaim(order, customId, options) {
     if (already?.id) {
       return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: already.id };
     }
+    // Reported as a deferral rather than as its own status, because that is exactly what
+    // it is - come back next sweep - and because every consumer already knows what a
+    // deferral means: not counted as failed, not written to the ledger, taken again next
+    // time. A status nobody recognises would have gone missing from the recap entirely.
     return {
-      customId, id: order.id, channel: order.channel, status: 'busy',
-      error: 'sedang diposting proses lain - dilewati, bukan gagal',
+      customId, id: order.id, channel: order.channel, status: 'deferred', busy: true,
+      error: `sedang diposting proses lain (${claim.owner ?? 'tidak diketahui'}) - dilewati, bukan gagal`,
     };
   }
 

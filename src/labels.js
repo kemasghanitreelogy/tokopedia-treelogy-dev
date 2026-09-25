@@ -434,7 +434,48 @@ export const PRINTABLE_STAGES = new Set(['to_ship', 'shipping']);
  * still read under their bare id, so nothing that was printed yesterday comes back today.
  */
 export const printKey = (channel, id) => `${channel}:${id}`;
-const wasPrinted = (printed, order) => printed[printKey(order.channel, order.id)] ?? printed[order.id] ?? null;
+export const printedEntry = (printed, order) => printed[printKey(order.channel, order.id)] ?? printed[order.id] ?? null;
+const wasPrinted = printedEntry;
+
+/**
+ * Which print run an order belongs to.
+ *
+ * Entries written before batches existed carry no id, and there are plenty of them. They
+ * fall back to the moment and the person, which is what a batch actually is: markPrinted
+ * is called once per run, so every order in a run shares one timestamp and one operator.
+ * The fallback can merge two runs that landed in the same second by the same person, and
+ * that is an acceptable reading of history - far better than showing old prints as one
+ * batch each.
+ */
+export function printBatchKey(entry) {
+  if (!entry) return null;
+  return entry.batch ?? `${entry.at ?? 0}|${entry.by ?? ''}`;
+}
+
+/**
+ * Group printed orders by the run that printed them, newest run first.
+ *
+ * Only the most recent print is grouped on, because that is all the ledger keeps: an
+ * order reprinted this afternoon belongs to this afternoon's batch, and `times` says it
+ * has been through the printer before.
+ *
+ * @param {Array<{order: object, readiness?: object}>} rows
+ * @param {object} printed the print ledger
+ */
+export function printBatches(rows, printed = {}) {
+  const batches = new Map();
+  for (const row of rows) {
+    const entry = printedEntry(printed, row.order);
+    const key = printBatchKey(entry) ?? 'tanpa-catatan';
+    if (!batches.has(key)) {
+      batches.set(key, { key, at: entry?.at ?? null, by: entry?.by ?? '', rows: [] });
+    }
+    batches.get(key).rows.push({ ...row, entry });
+  }
+  // Newest first, and the ones with no record at all last - they are the least useful and
+  // the least certain, so they do not get to sit above a batch that knows its own time.
+  return [...batches.values()].sort((a, b) => (b.at ?? -1) - (a.at ?? -1));
+}
 
 /**
  * What, if anything, this order needs from the label printer right now.

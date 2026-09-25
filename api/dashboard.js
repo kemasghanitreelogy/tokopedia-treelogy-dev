@@ -1090,10 +1090,16 @@ export default async function handler(req, res) {
       // Shopify prints are remembered here, not there; the page cannot tell what still
       // needs a label without it.
       const printed = await printedLabels().catch(() => ({}));
+      const showReprints = url.searchParams.get('reprint') === '1';
+      // Only the reprint list names who printed, so the roster is only read for it. An
+      // email is a fine identifier and a poor label; the batch header says "Vanya".
+      const people = showReprints
+        ? Object.fromEntries((await listUsers().catch(() => [])).map((u) => [u.email, u.name]))
+        : {};
       console.log(`dashboard/labels: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderLabels({ user,
-        ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed,
-        showReprints: url.searchParams.get('reprint') === '1',
+        ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, people,
+        showReprints,
       }));
       return;
     }

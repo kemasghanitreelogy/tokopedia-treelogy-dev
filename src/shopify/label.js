@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
@@ -402,15 +403,25 @@ export async function printedLabels() {
   return doc?.printed ?? {};
 }
 
-/** @param {string[]} ids order names, exactly as they appear on the order */
-export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1000) } = {}) {
-  if (ids.length === 0) return;
+/**
+ * Record that these labels came out of the printer, as one batch.
+ *
+ * The batch is what makes the reprint list readable. Forty parcels printed in one click
+ * are one act by one person at one moment, and listing them as forty unrelated rows asks
+ * the operator to reconstruct that from timestamps. An id is minted per call so two
+ * batches inside the same second are still two batches - the second being a common
+ * enough boundary that "same timestamp, same person" would eventually merge two runs.
+ *
+ * @param {string[]} ids order keys, exactly as the print path writes them
+ */
+export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1000), batch = `${at}-${randomUUID().slice(0, 8)}` } = {}) {
+  if (ids.length === 0) return batch;
   await updateDoc(PRINTED_DOC, (current) => {
     const next = current ?? structuredClone(EMPTY);
     for (const id of ids) {
       const existing = next.printed[id];
       next.printed[id] = {
-        at, by,
+        at, by, batch,
         // A reprint does not rewrite history; it counts.
         first: existing?.first ?? at,
         times: (existing?.times ?? 0) + 1,
@@ -418,6 +429,7 @@ export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1
     }
     return next;
   }, structuredClone(EMPTY));
+  return batch;
 }
 
 /**

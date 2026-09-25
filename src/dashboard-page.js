@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omn
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { labelReadiness } from './labels.js';
+import { labelReadiness, printBatches } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
@@ -823,6 +823,12 @@ tr.grp td{padding:.9rem .6rem .35rem; border-bottom:1px solid var(--line);
   font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
 tr.grp .grp__t{font-weight:600; color:var(--fg); letter-spacing:.02em; text-transform:none; font-size:.9rem}
 tr.grp .grp__n{margin-left:.5rem; font-size:.7rem; color:var(--dim)}
+/* A person's name is not a label: the uppercase on tr.grp is right for "KAPSUL 90" and
+   wrong for "Vanya". Both of these opt out of it. */
+tr.grp .grp__by{margin-left:.55rem; font-size:.8rem; font-weight:500; letter-spacing:0;
+  text-transform:none; color:var(--muted)}
+tr.grp .grp__n--batch{text-transform:none; letter-spacing:0}
+tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:pointer}
 @media (max-width:900px){ .stt__note{display:none} .stt thead th:last-child{display:none} }
 
 .st{transition:background var(--t-fast)}
@@ -3619,7 +3625,7 @@ const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURICompon
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, user = null }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, user = null }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
@@ -3641,27 +3647,55 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
 
   const READY_TONE = { needsPrint: 'ok', reprint: 'flag' };
 
-  const rows = candidates
-    .map(({ order: o, readiness }) => {
-      const stage = STAGE_META[o.stage];
-      // Everything listed is printable, so everything listed starts ticked.
-      ticked += 1;
-      const checked = ' checked';
-      // The stage pill is redundant here - every row on this page is printable by
-      // definition, and the readiness note already says what matters.
-      return `<tr>
-        <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${checked}
-          aria-label="Cetak label ${escape(o.id)}"></td>
-        <td>${channelTag(o)}</td>
-        <td>
-          <span class="mono nowrap">${escape(o.id)}</span>
-          <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
-        </td>
-        <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
-        <td class="nowrap"><span class="${READY_TONE[readiness.state]}">${escape(readiness.note)}</span></td>
-      </tr>`;
-    })
-    .join('');
+  const labelRow = ({ order: o, readiness, entry = null }, batchKey = null) => {
+    // Everything listed is printable, so everything listed starts ticked.
+    ticked += 1;
+    // The stage pill is redundant here - every row on this page is printable by
+    // definition, and the readiness note already says what matters.
+    const times = Number(entry?.times ?? 0);
+    return `<tr>
+      <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
+        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''} aria-label="Cetak label ${escape(o.id)}"></td>
+      <td>${channelTag(o)}</td>
+      <td>
+        <span class="mono nowrap">${escape(o.id)}</span>
+        <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
+      </td>
+      <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
+      <td class="nowrap"><span class="${READY_TONE[readiness.state]}">${escape(readiness.note)}</span>${
+        times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}</td>
+    </tr>`;
+  };
+
+  /*
+   * The reprint list is grouped by the run that printed it.
+   *
+   * Forty parcels printed in one click are one act, by one person, at one moment. Listed
+   * flat they read as forty unrelated rows and the operator has to reconstruct the run
+   * from timestamps - which is exactly the thing they are looking for when they open this
+   * list at all: "the batch Vanya printed at eleven, print it again".
+   *
+   * The daily list is not grouped, because nothing there has been printed yet.
+   */
+  const personName = (email) => people[email] || String(email || '').split('@')[0] || 'tidak diketahui';
+
+  const rows = showReprints
+    ? printBatches(candidates, printed).map((batch) => {
+        const when = batch.at ? dateTime(batch.at) : 'waktu tidak tercatat';
+        const who = batch.by ? escape(personName(batch.by)) : 'pencetak tidak tercatat';
+        // A checkbox on the heading, because reprinting one whole run is the reason this
+        // list is open: "the batch Vanya printed at eleven, print it again".
+        return `<tr class="grp" data-batch="${escape(batch.key)}"><td colspan="5">
+          <label class="grp__sel">
+            <input type="checkbox" class="grp__pick" data-batch="${escape(batch.key)}" checked
+              aria-label="Pilih batch ${escape(when)} oleh ${who}">
+            <span class="grp__t">${escape(when)}</span>
+          </label>
+          <span class="grp__by">${who}</span>
+          <span class="grp__n grp__n--batch">${batch.rows.length} label</span>
+        </td></tr>${batch.rows.map((r) => labelRow(r, batch.key)).join('')}`;
+      }).join('')
+    : candidates.map(labelRow).join('');
 
 
 
@@ -3733,10 +3767,32 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     toggle.textContent = allOn ? 'Kosongkan semua' : 'Pilih semua';
     toggle.setAttribute('aria-pressed', allOn ? 'true' : 'false');
   }
-  function setAll(value) { picks.forEach(function (p) { p.checked = value; }); sync(); }
+  function setAll(value) { picks.forEach(function (p) { p.checked = value; }); syncBatches(); sync(); }
 
-  picks.forEach(function (p) { p.addEventListener('change', sync); });
+  // One checkbox per print run, on its heading. Reprinting a whole batch is the reason
+  // this list is open, and ticking forty rows by hand to do it is not a feature.
+  var batchPicks = Array.prototype.slice.call(document.querySelectorAll('.grp__pick'));
+  function rowsOf(key) {
+    return picks.filter(function (p) { return p.getAttribute('data-batch') === key; });
+  }
+  function syncBatches() {
+    batchPicks.forEach(function (b) {
+      var mine = rowsOf(b.getAttribute('data-batch'));
+      var on = mine.filter(function (p) { return p.checked; }).length;
+      b.checked = mine.length > 0 && on === mine.length;
+      b.indeterminate = on > 0 && on < mine.length;
+    });
+  }
+  batchPicks.forEach(function (b) {
+    b.addEventListener('change', function () {
+      rowsOf(b.getAttribute('data-batch')).forEach(function (p) { p.checked = b.checked; });
+      sync();
+    });
+  });
+
+  picks.forEach(function (p) { p.addEventListener('change', function () { syncBatches(); sync(); }); });
   head.addEventListener('change', function () { setAll(head.checked); });
+  syncBatches();
   toggle.addEventListener('click', function () {
     setAll(toggle.getAttribute('aria-pressed') !== 'true');
   });

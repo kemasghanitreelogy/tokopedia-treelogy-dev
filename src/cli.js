@@ -1126,6 +1126,10 @@ async function cmdMekariReconcile(config, args = []) {
   console.log(`  ${r.corrected.length} nomor faktur dikoreksi  ·  ${r.forgotten.length} entri dilupakan (fakturnya tidak ada di Jurnal)`);
   for (const row of r.forgotten.slice(0, 8)) console.log(`    lupakan ${row.customId} (dulu #${row.was ?? '-'})`);
   if (r.forgotten.length > 8) console.log(`    ...dan ${r.forgotten.length - 8} lagi`);
+  if (r.kept.length > 0) {
+    console.log(`  ${r.kept.length} entri dipertahankan walau fakturnya tidak ada (memang sengaja dihapus)`);
+    for (const row of r.kept.slice(0, 8)) console.log(`    simpan  ${row.customId} (${row.why}, dulu #${row.was ?? '-'})`);
+  }
 
   // What the sweep will have to write afterwards, which is the number that matters.
   const akanDitulis = r.forgotten.length;

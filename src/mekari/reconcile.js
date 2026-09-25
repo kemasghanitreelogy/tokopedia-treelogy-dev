@@ -35,20 +35,27 @@ export const invoicesSince = async (since, options = {}) =>
  * @param {{from: string, dryRun?: boolean}} options
  * @returns {Promise<object>} what the ledger said, what Jurnal says, and what changed
  */
-export async function reconcileLedger({ from, dryRun = true } = {}) {
+export async function reconcileLedger({
+  from, dryRun = true,
+  // Named so the rule itself can be tested without a database, an API and a store behind
+  // it. The defaults are the real thing; nothing but a test ever passes these.
+  readOrders = ordersInRange, readInvoices = invoicesSince, readLedger = loadSyncLedger,
+  forget = forgetSyncLedgerEntries, save = saveSyncLedger,
+} = {}) {
   const since = wibDayStart(from);
   if (since === null) throw new Error(`tanggal tidak valid: ${from}`);
   const until = Math.floor(Date.now() / 1000);
 
   const [orders, inJurnal, ledger] = await Promise.all([
-    ordersInRange({ since, until }),
-    invoicesSince(from),
-    loadSyncLedger(),
+    readOrders({ since, until }),
+    readInvoices(from),
+    readLedger(),
   ]);
 
   const windowed = new Map(orders.map((order) => [customIdFor(order), order]));
   const corrected = [];
   const forgotten = [];
+  const kept = [];
 
   for (const [customId] of windowed) {
     const held = ledger.orders?.[customId];
@@ -59,15 +66,27 @@ export async function reconcileLedger({ from, dryRun = true } = {}) {
       if (!held || held.invoice_id !== real.id) corrected.push({ customId, from: held?.invoice_id ?? null, to: real.id, total: real.total });
       continue;
     }
+    // An invoice we deleted on purpose is *supposed* to be absent.
+    //
+    // A cancelled order has its invoice voided, and the ledger records that so the sale
+    // can never be written again. Forgetting that entry because Jurnal no longer holds
+    // the invoice destroys the one record of the decision and leaves nothing but the
+    // order's stage between a re-opened cancellation and a sale back in the books. Five
+    // of these were erased on 25 September before it was noticed. The same goes for an
+    // entry held for review: it names a problem somebody still has to answer for.
+    if (held?.voided || held?.needs_review) {
+      kept.push({ customId, was: held.invoice_id ?? null, why: held.voided ? 'voided' : 'needs_review' });
+      continue;
+    }
     // Jurnal does not have it. An entry saying otherwise is what stops it being written.
     if (held) forgotten.push({ customId, was: held.invoice_id ?? null });
   }
 
   if (dryRun) {
-    return { from, dryRun: true, ordersInWindow: windowed.size, inJurnal: inJurnal.size, inLedger: Object.keys(ledger.orders ?? {}).length, corrected, forgotten };
+    return { from, dryRun: true, ordersInWindow: windowed.size, inJurnal: inJurnal.size, inLedger: Object.keys(ledger.orders ?? {}).length, corrected, forgotten, kept };
   }
 
-  if (forgotten.length > 0) await forgetSyncLedgerEntries(forgotten.map((f) => f.customId));
+  if (forgotten.length > 0) await forget(forgotten.map((f) => f.customId));
   if (corrected.length > 0) {
     const patch = { version: 1, orders: {} };
     for (const row of corrected) {
@@ -81,8 +100,8 @@ export async function reconcileLedger({ from, dryRun = true } = {}) {
         reconciled: true,
       };
     }
-    await saveSyncLedger(patch);
+    await save(patch);
   }
 
-  return { from, dryRun: false, ordersInWindow: windowed.size, inJurnal: inJurnal.size, inLedger: Object.keys(ledger.orders ?? {}).length, corrected, forgotten };
+  return { from, dryRun: false, ordersInWindow: windowed.size, inJurnal: inJurnal.size, inLedger: Object.keys(ledger.orders ?? {}).length, corrected, forgotten, kept };
 }

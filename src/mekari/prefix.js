@@ -29,7 +29,11 @@ export const PREFIXES = {
   // describes the whole convention, and so a manual invoice can be looked up here.
   CS: { label: 'Consignment', channel: null },
   LB: { label: 'La Brisa', channel: null },
-  DP: { label: 'WhatsApp / direct sales', channel: null },
+  // The only offline source whose goods leave in a parcel, and therefore the only one a
+  // shipping label means anything for. A walk-in carries the goods out of the shop, and
+  // consignment, La Brisa and wholesale go out as a delivery somebody drives, not as a
+  // waybill a courier scans. Printing one for those is paper nobody sticks to anything.
+  DP: { label: 'WhatsApp / direct sales', channel: null, ships: true },
   DW: { label: 'Walk-in', channel: null },
   WS: { label: 'Wholesale', channel: null },
   // Shopify splits by how the buyer paid.
@@ -124,3 +128,13 @@ export function orderCode(order) {
   const bare = String(order.id ?? '').replace(/^#/, '');
   return `${orderPrefix(order)}-${bare}`;
 }
+
+
+/**
+ * Whether a typed-in sale from this source goes out as a parcel.
+ *
+ * Asked of the source rather than inferred from whether an address was filled in: an
+ * address on a walk-in is where the customer lives, not where the goods are going, and a
+ * label was printed for one on 24 Sep because of exactly that guess.
+ */
+export const sourceShips = (source) => Boolean(PREFIXES[String(source ?? '').toUpperCase()]?.ships);

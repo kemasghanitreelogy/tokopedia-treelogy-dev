@@ -178,12 +178,28 @@ test('every verdict carries a reason a human can act on', async () => {
   }
 });
 
-test('a typed-in sale with an address is a label we draw; without one it is nothing', () => {
-  assert.equal(labelReadiness({ channel: 'manual', id: 'DP-1', stage: 'completed', shipTo: 'Jl. Nakula 5, Salatiga' }).state, 'needsPrint');
-  assert.equal(labelReadiness({ channel: 'manual', id: 'DP-1', stage: 'completed', shipTo: 'Jl. Nakula 5, Salatiga' }, { 'DP-1': { at: 1 } }).state, 'reprint');
-  const walkIn = labelReadiness({ channel: 'manual', id: 'DW-1', stage: 'completed', shipTo: '' });
-  assert.equal(walkIn.state, 'none');
-  assert.match(walkIn.note, /tanpa alamat/);
+test('only the typed-in sales that leave in a parcel get a label', () => {
+  const manual = (source, shipTo) => ({ channel: 'manual', id: `${source}-1`, source, stage: 'completed', shipTo });
+  const address = 'Jl. Nakula 5, Salatiga';
+
+  // WhatsApp and direct sales are posted to somebody, so they get the sheet.
+  assert.equal(labelReadiness(manual('DP', address)).state, 'needsPrint');
+  assert.equal(labelReadiness(manual('DP', address), { 'manual:DP-1': { at: 1 } }).state, 'reprint');
+  assert.equal(labelReadiness(manual('DP', '')).state, 'none', 'tanpa alamat tidak ada yang bisa ditulis');
+
+  // The rest do not. A walk-in is standing at the counter holding the goods, and the
+  // address on the transaction is where they live - which is why deciding this from the
+  // address printed a label for one on 24 Sep.
+  for (const source of ['DW', 'CS', 'LB', 'WS']) {
+    const out = labelReadiness(manual(source, address));
+    assert.equal(out.state, 'none', source);
+    assert.match(out.note, /tidak dikirim lewat kurir/, source);
+  }
+  // The note names the source, so the reason reads as a fact about that sale.
+  assert.match(labelReadiness(manual('DW', address)).note, /^Walk-in/);
+  // A source nobody has heard of does not quietly become printable.
+  assert.equal(labelReadiness(manual('ZZ', address)).state, 'none');
+  assert.equal(labelReadiness({ channel: 'manual', id: 'X', stage: 'completed', shipTo: address }).state, 'none');
 });
 
 test('the TikTok waybill is fetched with the packing slip attached to it', () => {

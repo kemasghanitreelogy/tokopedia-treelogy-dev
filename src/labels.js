@@ -1,5 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import { buildShopifyLabels, reservePickNumbers } from './shopify/label.js';
+import { PREFIXES, sourceShips } from './mekari/prefix.js';
 import { loadConfig } from './config.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
@@ -461,9 +462,18 @@ export function labelReadiness(order, printed = {}) {
   }
 
   // A sale typed in by hand has no marketplace and no waybill either; its label is the
-  // same sheet Shopify's is, drawn from what the operator typed. Without an address there
-  // is nothing to put on it - a walk-in who carried the goods out needs no label.
+  // same sheet Shopify's is, drawn from what the operator typed.
+  //
+  // Only the sources whose goods leave in a parcel get one, which today is WhatsApp and
+  // direct sales alone. This used to be decided by whether an address had been filled in,
+  // and a walk-in printed a label on 24 Sep because of it: the address on a walk-in is
+  // where the customer lives, not where the goods are going. They are standing at the
+  // counter holding them.
   if (order.channel === 'manual') {
+    if (!sourceShips(order.source)) {
+      const what = PREFIXES[String(order.source ?? '').toUpperCase()]?.label ?? 'Transaksi ini';
+      return { state: 'none', note: `${what} tidak dikirim lewat kurir` };
+    }
     if (!String(order.shipTo ?? '').trim()) return { state: 'none', note: 'tanpa alamat, tidak perlu label' };
     if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
     return { state: 'needsPrint', note: 'siap dicetak' };

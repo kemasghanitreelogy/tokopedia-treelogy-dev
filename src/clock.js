@@ -156,6 +156,19 @@ export const CHANNEL_ZONES = {
 };
 
 
+/**
+ * The bench clock: where the work happens, as opposed to where a sale came from.
+ *
+ * A printed label, unlike an order, has no platform behind it. What it has is a person
+ * standing at a printer, and that person is in Bali - the same person who types in a
+ * walk-in sale, which is why this points at the same table entry rather than naming
+ * Makassar a second time. If the bench ever moves, both move together, because they are
+ * the same room.
+ */
+export const BENCH_CHANNEL = 'manual';
+export const benchZone = () => zoneForChannel(BENCH_CHANNEL);
+export const benchDate = (epochSeconds) => channelDate(epochSeconds, BENCH_CHANNEL);
+
 /** @returns {{name: string, label: string, offsetHours: number}} */
 export function zoneForChannel(channel) {
   const name = CHANNEL_ZONES[channel];

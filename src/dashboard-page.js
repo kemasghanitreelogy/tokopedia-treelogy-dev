@@ -1,9 +1,9 @@
-import { businessToday, zoneLabel, zoneName, zoneForChannel, ZONES } from './clock.js';
+import { businessToday, zoneLabel, zoneName, zoneForChannel, BENCH_CHANNEL, ZONES } from './clock.js';
 import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omni.js';
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets } from './labels.js';
+import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
@@ -3709,9 +3709,13 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   const printDays = printDaysIn(allBatches);
   const shownLabels = shownBatches.reduce((n, b) => n + b.rows.length, 0);
 
+  // A print has no platform behind it, so it is stamped on the clock of the bench it came
+  // off - Bali, the same clock a typed-in sale is entered on. Named on screen, because a
+  // time sitting next to other times in other zones has to say whose it is.
+  const printZone = printZoneLabel();
   const rows = showReprints
     ? shownBatches.map((batch) => {
-        const when = batch.at ? dateTime(batch.at) : 'waktu tidak tercatat';
+        const when = batch.at ? `${dateTime(batch.at, BENCH_CHANNEL)} ${printZone}` : 'waktu tidak tercatat';
         const who = batch.by ? escape(personName(batch.by)) : 'pencetak tidak tercatat';
         // A checkbox on the heading, because reprinting one whole run is the reason this
         // list is open: "the batch Vanya printed at eleven, print it again".
@@ -3785,7 +3789,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
       <span class="rpf__n">${shownBatches.length} batch &middot; ${shownLabels} label${
         filtering ? ` <span class="dim">dari ${allBatches.length} batch</span>` : ''}</span>
     </form>
-    <p class="rpf__hint">Cetakan tercatat ${escape(dayHint)}. Filter tanggal dan pencetak menumpuk di atas pengelompokan per batch.</p>`;
+    <p class="rpf__hint">Cetakan tercatat ${escape(dayHint)} (jam ${escape(printZone)}). Filter tanggal dan pencetak menumpuk di atas pengelompokan per batch.</p>`;
 
   return shell({ user,
     title: 'Cetak Label',

@@ -2,7 +2,7 @@ import { PDFDocument } from 'pdf-lib';
 import { buildShopifyLabels, reservePickNumbers } from './shopify/label.js';
 import { PREFIXES, sourceShips } from './mekari/prefix.js';
 import { loadConfig } from './config.js';
-import { wibDate } from './range.js';
+import { benchDate, benchZone } from './clock.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
@@ -478,8 +478,18 @@ export function printBatches(rows, printed = {}) {
   return [...batches.values()].sort((a, b) => (b.at ?? -1) - (a.at ?? -1));
 }
 
-/** The calendar day a run was printed on, on the house clock the operator works to. */
-export const printDay = (batch) => (batch?.at ? wibDate(batch.at) : null);
+/**
+ * The calendar day a run was printed on, on the clock of the bench it was printed at.
+ *
+ * Not the house clock. A label has no platform behind it - it has a person at a printer,
+ * and that person is in Bali. Filing a print at 23:30 WITA under the previous day, which
+ * is what WIB does to it, would put it in the wrong bucket for "kemarin" and disagree
+ * with the time printed on its own heading.
+ */
+export const printDay = (batch) => (batch?.at ? benchDate(batch.at) : null);
+
+/** What to call that clock on screen, so a time is never shown without saying whose. */
+export const printZoneLabel = () => benchZone().label;
 
 /**
  * Narrow the runs to a date range and a person, both optional, both stacking.
@@ -516,12 +526,12 @@ export function filterPrintBatches(batches, { from = null, to = null, by = null 
  * disagreed with the timestamps above it would be worse than no chip at all.
  */
 export function reprintPresets(now = Math.floor(Date.now() / 1000)) {
-  const today = wibDate(now);
-  const yesterday = wibDate(now - 86_400);
+  const today = benchDate(now);
+  const yesterday = benchDate(now - 86_400);
   return [
     { id: 'today', label: 'Hari ini', from: today, to: today },
     { id: 'yesterday', label: 'Kemarin', from: yesterday, to: yesterday },
-    { id: '7d', label: '7 hari', from: wibDate(now - 6 * 86_400), to: today },
+    { id: '7d', label: '7 hari', from: benchDate(now - 6 * 86_400), to: today },
   ];
 }
 

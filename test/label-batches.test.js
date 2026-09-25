@@ -193,7 +193,7 @@ test('the daily list has no reprint filter at all', () => {
 
 /* ------------------------------------------------------- one-click ranges */
 
-test('today and yesterday are closed ranges on the house clock', async () => {
+test('today and yesterday are closed ranges on the bench clock', async () => {
   const { reprintPresets } = await import('../src/labels.js');
   const presets = reprintPresets(1790300000); // 25 Sep 2026, 08.33 WIB
 
@@ -205,12 +205,32 @@ test('today and yesterday are closed ranges on the house clock', async () => {
   assert.equal(presets[2].from, '2026-09-19');
 });
 
-test('the day boundary is the one the run headings are printed in', async () => {
-  const { reprintPresets, printDay } = await import('../src/labels.js');
-  // 17.30 UTC is already the next day in WIB, and the heading above the rows says so too.
-  const lateEvening = Date.parse('2026-09-24T17:30:00Z') / 1000;
-  assert.equal(reprintPresets(lateEvening)[0].from, '2026-09-25');
-  assert.equal(printDay({ at: lateEvening }), '2026-09-25');
+test('a print is filed on the clock of the bench it came off, not the house clock', async () => {
+  const { reprintPresets, printDay, printZoneLabel } = await import('../src/labels.js');
+  /*
+   * The hour that tells the two apart. 16.30 UTC is 23.30 on 24 September in Jakarta and
+   * 00.30 on the 25th in Bali, where the printer is. Filing it under the 24th would put
+   * it in the wrong bucket for "kemarin" and contradict the time on its own heading.
+   */
+  const acrossMidnight = Date.parse('2026-09-24T16:30:00Z') / 1000;
+  assert.equal(printDay({ at: acrossMidnight }), '2026-09-25');
+  assert.equal(reprintPresets(acrossMidnight)[0].from, '2026-09-25', 'hari ini ikut jam meja');
+  assert.equal(reprintPresets(acrossMidnight)[1].from, '2026-09-24');
+  assert.equal(printZoneLabel(), 'WITA');
+});
+
+test('a heading says which clock its time is on', () => {
+  // 16.30 UTC: 23.30 in Jakarta, 00.30 the next day in Bali. The heading has to show the
+  // Bali reading, and has to say so - a bare time beside the order times in the rows
+  // below, which are on their own platforms' clocks, would be a trap.
+  const at = Date.parse('2026-09-24T16:30:00Z') / 1000;
+  const html = page({
+    showReprints: true,
+    printed: { 'shopee:260918AAA': { at, by: 'vanya@treelogy.com', batch: 'b1', times: 1 } },
+    people: staff,
+  });
+  assert.match(html, /<span class="grp__t">25 Sep, 00\.30 WITA<\/span>/);
+  assert.match(html, /jam WITA/, 'dan bilah filternya menyebut jam yang sama');
 });
 
 test('the quick chips are one click and carry the printer through', () => {

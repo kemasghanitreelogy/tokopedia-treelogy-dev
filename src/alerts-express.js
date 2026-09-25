@@ -1,5 +1,5 @@
 import { raiseAlert } from './alerts.js';
-import { expressService, isExpress, TIER_TEXT } from './express.js';
+import { expressService, isInstant, INSTANT } from './express.js';
 import { channelDate, zoneForChannel, BENCH_CHANNEL } from './clock.js';
 
 /**
@@ -29,15 +29,14 @@ const benchTime = (epochSeconds) => new Date(Number(epochSeconds) * 1000).toLoca
 
 export function expressAlert(order) {
   const service = expressService(order);
-  if (!service) return null;
-  const text = TIER_TEXT[service.tier];
+  if (service?.tier !== INSTANT) return null;
   const items = (order.lines ?? []).reduce((n, line) => n + (Number(line.qty) || 0), 0);
 
   return {
     key: `express:${order.channel}:${order.id}`,
     kind: 'express',
-    tone: text.tone,
-    title: text.title,
+    tone: 'act',
+    title: 'Instant — driver segera dijemput',
     body: `${CHANNEL_NAMES[order.channel] ?? order.channel} · ${order.id}`,
     href: '/api/dashboard?view=labels',
     data: {
@@ -67,6 +66,16 @@ export const FRESH_MS = 6 * 60 * 60_000;
 /** A burst cannot become a wall: nobody reads the seventh popup anyway. */
 const MAX_PER_SWEEP = 5;
 
+/**
+ * Only the instant tier rings.
+ *
+ * Same day - Paxel - is a pickup too, and the classifier still says so, but a driver
+ * coming at some point today is not something to drop a box for. It was ringing at first
+ * and the operator asked for it to stop, which is the right call: 60 of the 134 pickups
+ * in the database are Paxel, so it was close to half the noise for the least of the
+ * urgency. An alert channel that carries the merely interesting is one people mute.
+ */
+
 /** Stages where a driver has not taken the parcel yet, so packing it still matters. */
 const UNSHIPPED = new Set(['to_ship', 'shipping']);
 
@@ -83,7 +92,7 @@ const UNSHIPPED = new Set(['to_ship', 'shipping']);
 export async function ringExpressBacklog(orders = [], { now = Date.now() } = {}) {
   const wanted = orders
     .filter((o) => UNSHIPPED.has(o.stage))
-    .filter((o) => isExpress(o))
+    .filter((o) => isInstant(o))
     .filter((o) => Number(o.createdAt) * 1000 > now - FRESH_MS)
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
     .slice(0, MAX_PER_SWEEP);

@@ -27,10 +27,14 @@ test('the couriers that dispatch a driver now', () => {
   assert.equal(expressService(order('Gojek'))?.tier, INSTANT);
 });
 
-test('same day is its own tier - a driver comes today, not now', () => {
+test('same day is still classified, and deliberately does not ring', () => {
+  // Paxel is a pickup and the classifier says so; a driver coming at some point today is
+  // not something to drop a box for. 60 of the 134 pickups in the database are Paxel, so
+  // ringing for it was close to half the noise for the least of the urgency.
   assert.equal(expressService(order('Paxel'))?.tier, SAME_DAY);
   assert.equal(isExpress(order('Paxel')), true);
-  assert.equal(isInstant(order('Paxel')), false, 'tidak sepenting instant, tapi tetap dijemput');
+  assert.equal(isInstant(order('Paxel')), false);
+  assert.equal(expressAlert({ channel: 'tokopedia', id: 'P', carrier: 'Paxel' }), null, 'tidak ada popup');
 });
 
 test('DHL Express is not a motorbike, and matching on "express" would have said it was', () => {
@@ -72,6 +76,15 @@ test('the alert says which sale, whose, how much and when it landed', () => {
 
 test('an ordinary order produces no alert at all', () => {
   assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier: 'JNE Reguler' }), null);
+});
+
+test('every alert that is raised is an instant one', () => {
+  for (const carrier of ['GrabExpress Instant', 'GoSend Instant Prioritas', 'Grab', 'Gojek']) {
+    assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier })?.data.tier, INSTANT, carrier);
+  }
+  for (const carrier of ['Paxel', 'JNE Reguler', 'DHL Express', 'J&T Express']) {
+    assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier }), null, carrier);
+  }
 });
 
 test('the doorbell rings once however many times the platform pushes', async () => {
@@ -189,8 +202,12 @@ test('a parcel the webhook never announced still rings', async () => {
   // Shopee's pushes cannot be verified by signature and are rate limited per shop, so a
   // missed one is ordinary - and a missed push for an instant order is the exact case
   // this whole feature exists for.
-  const rung = await ringExpressBacklog([parcel('MISSED'), parcel('ORDINARY', { carrier: 'JNE Reguler' })]);
-  assert.deepEqual(rung.map((r) => r.data.id), ['MISSED']);
+  const rung = await ringExpressBacklog([
+    parcel('MISSED'),
+    parcel('ORDINARY', { carrier: 'JNE Reguler' }),
+    parcel('SAMEDAY', { carrier: 'Paxel' }),
+  ]);
+  assert.deepEqual(rung.map((r) => r.data.id), ['MISSED'], 'sapuan pun hanya instant');
 });
 
 test('it never rings twice for what the webhook already caught', async () => {

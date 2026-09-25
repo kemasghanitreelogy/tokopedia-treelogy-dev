@@ -57,8 +57,12 @@ export function expressService(order) {
 export const isExpress = (order) => Boolean(expressService(order));
 export const isInstant = (order) => expressService(order)?.tier === INSTANT;
 
-/** How the tier reads on screen, in the language the bench works in. */
-export const TIER_TEXT = {
-  [INSTANT]: { title: 'Instant — driver segera dijemput', tone: 'act' },
-  [SAME_DAY]: { title: 'Same day — driver datang hari ini', tone: 'warn' },
-};
+/*
+ * No screen wording lives here any more.
+ *
+ * This file answers one question - what kind of handover is this courier - and the
+ * answer is the same whether anybody is told about it. Which of those answers is worth
+ * interrupting a person for is a separate decision, and it changed once already: same
+ * day used to raise a popup and no longer does. Keeping the two apart means that change
+ * touched the alert and not the classifier.
+ */

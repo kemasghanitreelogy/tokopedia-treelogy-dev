@@ -2,6 +2,7 @@ import { PDFDocument } from 'pdf-lib';
 import { buildShopifyLabels, reservePickNumbers } from './shopify/label.js';
 import { PREFIXES, sourceShips } from './mekari/prefix.js';
 import { loadConfig } from './config.js';
+import { wibDate } from './range.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
@@ -475,6 +476,57 @@ export function printBatches(rows, printed = {}) {
   // Newest first, and the ones with no record at all last - they are the least useful and
   // the least certain, so they do not get to sit above a batch that knows its own time.
   return [...batches.values()].sort((a, b) => (b.at ?? -1) - (a.at ?? -1));
+}
+
+/** The calendar day a run was printed on, on the house clock the operator works to. */
+export const printDay = (batch) => (batch?.at ? wibDate(batch.at) : null);
+
+/**
+ * Narrow the runs to a date range and a person, both optional, both stacking.
+ *
+ * Whole runs, not rows: a batch is one moment and one operator, so half of it can never
+ * match. That is also what makes the two filters compose without a rule - each one either
+ * keeps a run or drops it.
+ *
+ * A run with no recorded date cannot be placed on a calendar, so any date bound at all
+ * excludes it. Better a filtered list that is certainly right than one padded with rows
+ * that might belong.
+ */
+export function filterPrintBatches(batches, { from = null, to = null, by = null } = {}) {
+  return batches.filter((batch) => {
+    if (by && batch.by !== by) return false;
+    if (!from && !to) return true;
+    const day = printDay(batch);
+    if (!day) return false;
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    return true;
+  });
+}
+
+/** Everyone who appears as the printer of a run, for the filter's own list. */
+export function printersIn(batches) {
+  const seen = new Map();
+  for (const batch of batches) {
+    if (!batch.by) continue;
+    seen.set(batch.by, (seen.get(batch.by) ?? 0) + batch.rows.length);
+  }
+  return [...seen.entries()]
+    .map(([email, labels]) => ({ email, labels }))
+    .sort((a, b) => b.labels - a.labels);
+}
+
+/** The days runs happened on, newest first, for a filter that offers only real days. */
+export function printDaysIn(batches) {
+  const seen = new Map();
+  for (const batch of batches) {
+    const day = printDay(batch);
+    if (!day) continue;
+    seen.set(day, (seen.get(day) ?? 0) + batch.rows.length);
+  }
+  return [...seen.entries()]
+    .map(([day, labels]) => ({ day, labels }))
+    .sort((a, b) => b.day.localeCompare(a.day));
 }
 
 /**

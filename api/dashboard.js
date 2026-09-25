@@ -1096,10 +1096,19 @@ export default async function handler(req, res) {
       const people = showReprints
         ? Object.fromEntries((await listUsers().catch(() => [])).map((u) => [u.email, u.name]))
         : {};
+      // Read off the query string and sanitised here rather than trusted in the page: a
+      // date that is not a date filters nothing and is dropped, which is the same result
+      // as not asking for one.
+      const day = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(value ?? '') ? value : '');
+      const reprintFilter = {
+        from: day(url.searchParams.get('pfrom')),
+        to: day(url.searchParams.get('pto')),
+        by: String(url.searchParams.get('pby') ?? '').slice(0, 120),
+      };
       console.log(`dashboard/labels: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderLabels({ user,
         ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, people,
-        showReprints,
+        showReprints, reprintFilter,
       }));
       return;
     }

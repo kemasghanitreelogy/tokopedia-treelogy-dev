@@ -113,3 +113,80 @@ test('the daily list is not grouped, because nothing on it has been printed yet'
   const html = page({ showReprints: false, printed: {} });
   assert.doesNotMatch(html, /<tr class="grp">/);
 });
+
+/* ---------------------------------------------------------------- filters */
+
+const batch = (key, at, by, n = 1) => ({ key, at, by, rows: Array.from({ length: n }, (_, i) => ({ order: { id: `${key}-${i}` } })) });
+
+test('a date range and a person stack, and either alone still works', async () => {
+  const { filterPrintBatches } = await import('../src/labels.js');
+  // 1790300000 is 25 Sep WIB, 1790261000 is 24 Sep WIB, 1789900000 is 20 Sep WIB.
+  const all = [batch('b3', 1790300000, 'vanya@x'), batch('b2', 1790261000, 'kemas@x'), batch('b1', 1789900000, 'vanya@x')];
+
+  assert.deepEqual(filterPrintBatches(all, {}).map((b) => b.key), ['b3', 'b2', 'b1'], 'tanpa filter, semuanya');
+  assert.deepEqual(filterPrintBatches(all, { from: '2026-09-24' }).map((b) => b.key), ['b3', 'b2']);
+  assert.deepEqual(filterPrintBatches(all, { to: '2026-09-24' }).map((b) => b.key), ['b2', 'b1']);
+  assert.deepEqual(filterPrintBatches(all, { from: '2026-09-24', to: '2026-09-24' }).map((b) => b.key), ['b2']);
+  assert.deepEqual(filterPrintBatches(all, { by: 'vanya@x' }).map((b) => b.key), ['b3', 'b1']);
+  // Stacked: the person narrows what the dates left.
+  assert.deepEqual(filterPrintBatches(all, { from: '2026-09-24', by: 'vanya@x' }).map((b) => b.key), ['b3']);
+  assert.deepEqual(filterPrintBatches(all, { from: '2026-09-24', by: 'kemas@x' }).map((b) => b.key), ['b2']);
+});
+
+test('a run whose date was never recorded cannot be placed on a calendar', async () => {
+  const { filterPrintBatches } = await import('../src/labels.js');
+  const all = [batch('tanpa-catatan', null, ''), batch('b1', 1790300000, 'vanya@x')];
+  assert.deepEqual(filterPrintBatches(all, {}).map((b) => b.key), ['tanpa-catatan', 'b1'], 'tetap ada saat tidak disaring');
+  // Any date bound at all excludes it: better certainly right than padded with maybes.
+  assert.deepEqual(filterPrintBatches(all, { from: '2020-01-01' }).map((b) => b.key), ['b1']);
+});
+
+test('the filter offers the days and people that actually printed, biggest first', async () => {
+  const { printersIn, printDaysIn } = await import('../src/labels.js');
+  const all = [batch('b3', 1790300000, 'vanya@x', 3), batch('b2', 1790261000, 'kemas@x', 1), batch('b1', 1789900000, 'vanya@x', 2)];
+
+  assert.deepEqual(printersIn(all), [{ email: 'vanya@x', labels: 5 }, { email: 'kemas@x', labels: 1 }]);
+  assert.deepEqual(printDaysIn(all).map((d) => d.day), ['2026-09-25', '2026-09-24', '2026-09-20'], 'terbaru dulu');
+  assert.equal(printDaysIn(all)[0].labels, 3);
+});
+
+const printedThree = {
+  'shopee:260918AAA': { at: 1790261000, by: 'vanya@treelogy.com', batch: 'b1', times: 1 },
+  'shopee:260918BBB': { at: 1790261000, by: 'vanya@treelogy.com', batch: 'b1', times: 1 },
+  'tiktok_shop:586000CCC': { at: 1790300000, by: 'kemas@treelogy.com', batch: 'b2', times: 1 },
+};
+const staff = { 'vanya@treelogy.com': 'Vanya', 'kemas@treelogy.com': 'Kemas Ghani' };
+
+test('the filter bar is its own form, never nested inside the one that prints', () => {
+  const html = page({ showReprints: true, printed: printedThree, people: staff });
+  assert.match(html, /<form class="filters rpf" method="get">/);
+  // A form cannot be nested in another, and filtering must not be one slip from printing.
+  assert.ok(html.indexOf('class="filters rpf"') < html.indexOf('action="/api/labels"'));
+  assert.match(html, /name="pfrom"/);
+  assert.match(html, /name="pto"/);
+  assert.match(html, /<option value="vanya@treelogy\.com">Vanya \(2\)<\/option>/);
+  assert.match(html, /<option value="kemas@treelogy\.com">Kemas Ghani \(1\)<\/option>/);
+  assert.match(html, /2 batch &middot; 3 label/);
+});
+
+test('filtering to one day leaves that run grouped and drops the rest', () => {
+  const html = page({ showReprints: true, printed: printedThree, people: staff, reprintFilter: { from: '2026-09-25', to: '2026-09-25' } });
+  assert.match(html, /<span class="grp__by">Kemas Ghani<\/span>/);
+  assert.doesNotMatch(html, /<span class="grp__by">Vanya<\/span>/);
+  assert.match(html, /1 batch &middot; 1 label <span class="dim">dari 2 batch<\/span>/);
+  assert.match(html, /Hapus filter/);
+  // The date it was filtered on comes back in the field, so it can be adjusted not retyped.
+  assert.match(html, /id="pfrom" name="pfrom" value="2026-09-25"/);
+});
+
+test('a filter that matches nothing says so, and offers the way back', () => {
+  const html = page({ showReprints: true, printed: printedThree, people: staff, reprintFilter: { from: '2020-01-01', to: '2020-01-02' } });
+  assert.match(html, /Tidak ada batch cetak yang cocok dengan filter ini/);
+  assert.match(html, /Hapus filter/);
+  // The bar stays on screen: an empty result the operator cannot change is a dead end.
+  assert.match(html, /<form class="filters rpf" method="get">/);
+});
+
+test('the daily list has no reprint filter at all', () => {
+  assert.doesNotMatch(page({ showReprints: false, printed: {} }), /class="filters rpf"/);
+});

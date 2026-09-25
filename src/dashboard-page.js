@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omn
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { labelReadiness, printBatches } from './labels.js';
+import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
@@ -829,6 +829,10 @@ tr.grp .grp__by{margin-left:.55rem; font-size:.8rem; font-weight:500; letter-spa
   text-transform:none; color:var(--muted)}
 tr.grp .grp__n--batch{text-transform:none; letter-spacing:0}
 tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:pointer}
+.rpf{margin-bottom:.35rem}
+.rpf__to{color:var(--dim); padding:0 .1rem}
+.rpf__n{font-size:.8rem; color:var(--muted); white-space:nowrap}
+.rpf__hint{margin:0 .15rem 1rem; font-size:.78rem; color:var(--dim)}
 @media (max-width:900px){ .stt__note{display:none} .stt thead th:last-child{display:none} }
 
 .st{transition:background var(--t-fast)}
@@ -944,7 +948,7 @@ tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:poin
 .apply .chip{color:var(--muted); font-weight:500; background:var(--glass); border:1px solid var(--glass-line); box-shadow:none}
 .apply .chip:hover{color:var(--fg); background:var(--glass-2); filter:none}
 .apply button:disabled{opacity:.45; cursor:not-allowed; filter:none}
-.pick,#head{width:17px; height:17px; cursor:pointer; accent-color:var(--brand)}
+.pick,#head,.grp__pick{width:17px; height:17px; cursor:pointer; accent-color:var(--brand)}
 select.dr__in{width:auto; text-align:left; cursor:pointer}
 
 .daterange{display:flex; align-items:center; gap:.4rem; background:var(--glass);
@@ -3625,7 +3629,7 @@ const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURICompon
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, user = null }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, reprintFilter = {}, user = null }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
@@ -3679,8 +3683,32 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
    */
   const personName = (email) => people[email] || String(email || '').split('@')[0] || 'tidak diketahui';
 
+  /*
+   * The filters stack on the grouping rather than replacing it.
+   *
+   * They narrow which runs are shown; inside a shown run nothing changes. That is only
+   * coherent because a run is one moment and one operator, so a date and a person can
+   * never keep half of one - which is what lets the two compose without a rule for what
+   * happens when they disagree.
+   *
+   * The choices offered are the days and people that actually printed something, taken
+   * from before the filter is applied, so narrowing never removes the option that would
+   * widen it again.
+   */
+  const allBatches = showReprints ? printBatches(candidates, printed) : [];
+  const filter = {
+    from: reprintFilter.from || '',
+    to: reprintFilter.to || '',
+    by: reprintFilter.by || '',
+  };
+  const filtering = Boolean(filter.from || filter.to || filter.by);
+  const shownBatches = showReprints ? filterPrintBatches(allBatches, filter) : [];
+  const printers = printersIn(allBatches);
+  const printDays = printDaysIn(allBatches);
+  const shownLabels = shownBatches.reduce((n, b) => n + b.rows.length, 0);
+
   const rows = showReprints
-    ? printBatches(candidates, printed).map((batch) => {
+    ? shownBatches.map((batch) => {
         const when = batch.at ? dateTime(batch.at) : 'waktu tidak tercatat';
         const who = batch.by ? escape(personName(batch.by)) : 'pencetak tidak tercatat';
         // A checkbox on the heading, because reprinting one whole run is the reason this
@@ -3703,6 +3731,36 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     .map(([id, meta]) => `<option value="${escape(id)}" ${id === defaultSize ? 'selected' : ''}>${escape(meta.label)}</option>`)
     .join('');
 
+  // Its own GET form, above the print form rather than inside it: a form cannot be nested
+  // in another, and filtering must never be one slip away from sending a print job.
+  const dayHint = printDays.length > 0
+    ? `${printDays[printDays.length - 1].day} s/d ${printDays[0].day}` : 'belum ada cetakan';
+  const reprintFilters = !showReprints ? '' : `
+    <form class="filters rpf" method="get">
+      <input type="hidden" name="view" value="labels">
+      <input type="hidden" name="reprint" value="1">
+      <label class="dr__lbl" for="pfrom">Tanggal cetak</label>
+      <input class="dr__in" type="date" id="pfrom" name="pfrom" value="${escape(filter.from)}"
+        min="${escape(printDays.length ? printDays[printDays.length - 1].day : '')}"
+        max="${escape(printDays.length ? printDays[0].day : '')}" aria-label="Dicetak sejak tanggal">
+      <span class="rpf__to">&ndash;</span>
+      <input class="dr__in" type="date" id="pto" name="pto" value="${escape(filter.to)}"
+        min="${escape(printDays.length ? printDays[printDays.length - 1].day : '')}"
+        max="${escape(printDays.length ? printDays[0].day : '')}" aria-label="Dicetak sampai tanggal">
+      <label class="dr__lbl" for="pby">Pencetak</label>
+      <select class="dr__in" id="pby" name="pby">
+        <option value="">Semua (${printers.reduce((n, p2) => n + p2.labels, 0)} label)</option>
+        ${printers.map((p2) => `<option value="${escape(p2.email)}"${p2.email === filter.by ? ' selected' : ''}>${
+          escape(personName(p2.email))} (${p2.labels})</option>`).join('')}
+      </select>
+      <button class="chip" type="submit">Terapkan</button>
+      ${filtering ? '<a class="chip" href="?view=labels&reprint=1">Hapus filter</a>' : ''}
+      <span class="grow"></span>
+      <span class="rpf__n">${shownBatches.length} batch &middot; ${shownLabels} label${
+        filtering ? ` <span class="dim">dari ${allBatches.length} batch</span>` : ''}</span>
+    </form>
+    <p class="rpf__hint">Cetakan tercatat ${escape(dayHint)}. Filter tanggal dan pencetak menumpuk di atas pengelompokan per batch.</p>`;
+
   return shell({ user,
     title: 'Cetak Label',
     range, errors, shopeeShop, generatedAt,
@@ -3716,13 +3774,19 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         ${stat('Atur pengiriman', String(counts.arrange), counts.arrange > 0 ? 'flag' : '')}
         ${stat('Sudah jalan', String(counts.reprint))}
       </div>`,
-    body: candidates.length === 0
-      ? `<p class="empty">${showReprints
-          ? 'Tidak ada label yang bisa dicetak.'
-          : 'Semua label sudah dicetak.'}</p>
-         <div class="apply"><a class="chip" href="?view=labels&reprint=${showReprints ? '0' : '1'}">${
-           showReprints ? 'Kembali ke daftar harian' : 'Tampilkan cetak ulang'}</a></div>`
-      : `<form method="post" action="/api/labels" target="_blank">
+    body: (showReprints ? shownBatches.length === 0 : candidates.length === 0)
+      ? `${reprintFilters}
+         <p class="empty">${!showReprints
+          ? 'Semua label sudah dicetak.'
+          : filtering
+            ? 'Tidak ada batch cetak yang cocok dengan filter ini.'
+            : 'Tidak ada label yang bisa dicetak.'}</p>
+         <div class="apply">${filtering
+           ? '<a class="chip" href="?view=labels&reprint=1">Hapus filter</a>'
+           : `<a class="chip" href="?view=labels&reprint=${showReprints ? '0' : '1'}">${
+              showReprints ? 'Kembali ke daftar harian' : 'Tampilkan cetak ulang'}</a>`}</div>`
+      : `${reprintFilters}
+        <form method="post" action="/api/labels" target="_blank">
           <input type="hidden" name="csrf" value="${escape(csrf)}">
           <div class="filters">
             <label class="dr__lbl" for="size">Ukuran label</label>

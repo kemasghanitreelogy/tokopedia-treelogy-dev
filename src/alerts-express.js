@@ -1,5 +1,5 @@
 import { raiseAlert } from './alerts.js';
-import { expressService, TIER_TEXT } from './express.js';
+import { expressService, isExpress, TIER_TEXT } from './express.js';
 import { channelDate, zoneForChannel, BENCH_CHANNEL } from './clock.js';
 
 /**
@@ -53,6 +53,47 @@ export function expressAlert(order) {
       placedDay: order.createdAt ? channelDate(order.createdAt, order.channel) : '',
     },
   };
+}
+
+/**
+ * How fresh a parcel has to be for its arrival to still be news.
+ *
+ * Six hours covers a working day's worth of a missed push without ringing about a parcel
+ * from last Tuesday. The point of the sweep is to catch a webhook that never came, not
+ * to re-announce history.
+ */
+export const FRESH_MS = 6 * 60 * 60_000;
+
+/** A burst cannot become a wall: nobody reads the seventh popup anyway. */
+const MAX_PER_SWEEP = 5;
+
+/** Stages where a driver has not taken the parcel yet, so packing it still matters. */
+const UNSHIPPED = new Set(['to_ship', 'shipping']);
+
+/**
+ * The safety net behind the webhook.
+ *
+ * Shopee's pushes cannot be verified by signature and are rate limited per shop, so a
+ * missed one is entirely ordinary - and a missed push for an instant order is the exact
+ * case this whole feature exists for. The web service already re-reads the outstanding
+ * worklist every four minutes to keep the dashboard warm; this looks at what it found.
+ *
+ * It rings nothing the webhook already rang, because the feed refuses a repeated key.
+ */
+export async function ringExpressBacklog(orders = [], { now = Date.now() } = {}) {
+  const wanted = orders
+    .filter((o) => UNSHIPPED.has(o.stage))
+    .filter((o) => isExpress(o))
+    .filter((o) => Number(o.createdAt) * 1000 > now - FRESH_MS)
+    .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
+    .slice(0, MAX_PER_SWEEP);
+
+  const rung = [];
+  for (const order of wanted) {
+    const raised = await announceExpress(order);
+    if (raised) rung.push(raised);
+  }
+  return rung;
 }
 
 /** Ring the doorbell for this order, if it is one worth ringing for. */

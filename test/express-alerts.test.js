@@ -173,3 +173,60 @@ test('values from a marketplace go through the escaper, never straight into inne
   // And the link is a path on this site or it is not rendered at all.
   assert.match(doorbell, /samePath\(a\.href\)/);
 });
+
+/* ------------------------------------------------ the net behind the webhook */
+
+const { ringExpressBacklog, FRESH_MS } = await import('../src/alerts-express.js');
+
+const parcel = (id, over = {}) => ({
+  channel: 'shopee', id, carrier: 'GrabExpress Instant', stage: 'to_ship',
+  buyer: 'Budi', total: 100000, createdAt: Math.floor(Date.now() / 1000), lines: [{ qty: 1 }],
+  ...over,
+});
+
+test('a parcel the webhook never announced still rings', async () => {
+  await clearAlerts();
+  // Shopee's pushes cannot be verified by signature and are rate limited per shop, so a
+  // missed one is ordinary - and a missed push for an instant order is the exact case
+  // this whole feature exists for.
+  const rung = await ringExpressBacklog([parcel('MISSED'), parcel('ORDINARY', { carrier: 'JNE Reguler' })]);
+  assert.deepEqual(rung.map((r) => r.data.id), ['MISSED']);
+});
+
+test('it never rings twice for what the webhook already caught', async () => {
+  await clearAlerts();
+  await ringExpressBacklog([parcel('TWICE')]);
+  assert.deepEqual(await ringExpressBacklog([parcel('TWICE')]), [], 'kunci yang sama ditolak umpan');
+});
+
+test('a parcel the courier already took is not news', async () => {
+  await clearAlerts();
+  const rung = await ringExpressBacklog([
+    parcel('GONE', { stage: 'delivered' }),
+    parcel('DONE', { stage: 'completed' }),
+    parcel('VOID', { stage: 'cancelled' }),
+    parcel('HERE'),
+  ]);
+  assert.deepEqual(rung.map((r) => r.data.id), ['HERE']);
+});
+
+test('the sweep catches up, it does not re-announce history', async () => {
+  await clearAlerts();
+  const now = Date.now();
+  const rung = await ringExpressBacklog([
+    parcel('OLD', { createdAt: Math.floor((now - FRESH_MS - 60_000) / 1000) }),
+    parcel('FRESH', { createdAt: Math.floor((now - 60_000) / 1000) }),
+  ], { now });
+  assert.deepEqual(rung.map((r) => r.data.id), ['FRESH']);
+});
+
+test('a burst cannot become a wall, and the newest are the ones that ring', async () => {
+  await clearAlerts();
+  const now = Date.now();
+  const many = Array.from({ length: 9 }, (_, i) =>
+    parcel(`B${i}`, { createdAt: Math.floor((now - (9 - i) * 60_000) / 1000) }));
+
+  const rung = await ringExpressBacklog(many, { now });
+  assert.equal(rung.length, 5, 'nobody reads the seventh popup');
+  assert.deepEqual(rung.map((r) => r.data.id), ['B8', 'B7', 'B6', 'B5', 'B4'], 'terbaru dulu');
+});

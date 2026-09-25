@@ -21,6 +21,7 @@ import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
+import { ringExpressBacklog } from '../src/alerts-express.js';
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
@@ -136,7 +137,18 @@ export async function warmOrders() {
   for (const preset of ['7d', 'today']) {
     await ordersFor(resolveRange({ preset })).catch((error) => console.warn(`dashboard: pemanasan ${preset} gagal - ${error.message}`));
   }
-  await outstandingOrders().catch((error) => console.warn(`dashboard: pemanasan daftar pekerjaan gagal - ${error.message}`));
+  const work = await outstandingOrders().catch((error) => {
+    console.warn(`dashboard: pemanasan daftar pekerjaan gagal - ${error.message}`);
+    return null;
+  });
+
+  // The safety net behind the webhook. Shopee's pushes cannot be verified and are rate
+  // limited per shop, so a missed one is ordinary - and a missed push for an instant
+  // order is the exact case the doorbell exists for. Nothing the webhook already rang is
+  // rung again; the feed refuses a repeated key.
+  if (work?.orders?.length) {
+    await ringExpressBacklog(work.orders).catch((error) => console.warn(`alerts: sapuan express gagal - ${error.message}`));
+  }
 }
 
 const catalogComplete = (catalog) => Object.keys(catalog.errors ?? {}).length === 0;

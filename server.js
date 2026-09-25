@@ -23,6 +23,7 @@ const ROUTES = {
   '/api/labels': './api/labels.js',
   '/api/export': './api/export.js',
   '/api/status': './api/status.js',
+  '/api/events': './api/events.js',
   '/api/callback': './api/callback.js',
   '/api/mekari-sync': './api/mekari-sync.js',
   '/api/shopee/callback': './api/shopee/callback.js',
@@ -60,6 +61,9 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   if (url.pathname.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  // The event stream is held open on purpose and sets its own timeout; the ten-minute
+  // ceiling meant for a label print would cut the doorbell off mid-afternoon.
+  if (url.pathname === '/api/events') req.setTimeout(0);
 
   try {
     const handler = await handlerFor(url.pathname);

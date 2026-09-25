@@ -8,6 +8,7 @@ import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
 import { beatWebhook } from '../mekari/heartbeat.js';
 import { notifySyncFailures } from '../notify/telegram.js';
+import { announceExpress } from '../alerts-express.js';
 import { rememberOrder } from '../orders-source.js';
 
 /**
@@ -87,6 +88,12 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   const order = await readOrder({ channel, id, gid });
   if (!order) return { status: 'ignored', reason: 'pesanan tidak ditemukan di platform' };
   await rememberOrder(order, { source: `webhook:${channel}` });
+
+  // A driver may already be on the way for this one. Raised here, before anything is
+  // decided about accounting, because the useful window is minutes and whether the
+  // invoice posts has nothing to do with whether the parcel needs packing. It rings once
+  // per order however many times the platform pushes it.
+  await announceExpress(order);
 
   // The order has just changed in the database, so every cached list of orders is now a
   // description of the past. Without this the push was only half a push: the row was

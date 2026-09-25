@@ -1552,6 +1552,41 @@ a.rv__product:hover{color:var(--accent)}
 .who__n{font-size:.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11rem}
 .who__r{font-size:.62rem; color:var(--muted); letter-spacing:.06em; text-transform:uppercase}
 @media (max-width:640px){ .who__t{display:none} .who{padding:.2rem} }
+/* ---- the doorbell: an instant order arriving while somebody is looking elsewhere ----
+   Fixed, top right, under the pill rather than over it - the navigation must never be
+   the thing an alert covers. Not auto-dismissed: a parcel does not stop needing packing
+   because nobody watched the screen for eight seconds. */
+.alerts{position:fixed; top:calc(var(--top-offset) + .5rem); right:1.25rem; z-index:60;
+  display:flex; flex-direction:column; gap:.6rem; width:min(23rem,calc(100vw - 2.5rem));
+  pointer-events:none}
+.al{pointer-events:auto; padding:.85rem .95rem; border-radius:var(--radius-s);
+  background:color-mix(in srgb,var(--panel) 92%,transparent);
+  backdrop-filter:blur(var(--blur)) saturate(1.4); -webkit-backdrop-filter:blur(var(--blur)) saturate(1.4);
+  border:1px solid var(--glass-line); border-left:3px solid var(--act);
+  box-shadow:var(--shadow); animation:alin var(--t-base) var(--ease-out) both}
+.al--warn{border-left-color:var(--warn)}
+.al.is-out{animation:alout .24s var(--ease-soft) both}
+@keyframes alin{from{opacity:0; transform:translate3d(12px,-6px,0) scale(.98)} to{opacity:1; transform:none}}
+@keyframes alout{to{opacity:0; transform:translate3d(12px,0,0)}}
+@media (prefers-reduced-motion:reduce){ .al,.al.is-out{animation:none} }
+.al__top{display:flex; align-items:center; gap:.45rem; margin-bottom:.35rem}
+.al__tag{font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; font-weight:600;
+  padding:.15rem .45rem; border-radius:999px; color:var(--fg);
+  background:color-mix(in srgb,var(--act) 20%,transparent)}
+.al--warn .al__tag{background:color-mix(in srgb,var(--warn) 20%,transparent)}
+.al__id{font-family:"Fira Code",ui-monospace,monospace; font-size:.76rem; color:var(--muted)}
+.al__x{margin-left:auto; width:26px; height:26px; flex:none; border:0; border-radius:50%;
+  background:transparent; color:var(--dim); font-size:1.1rem; line-height:1; cursor:pointer}
+.al__x:hover{color:var(--fg); background:var(--glass-2)}
+.al__h{margin:0 0 .5rem; font-size:.92rem; font-weight:600; letter-spacing:-.01em}
+.al__d{display:grid; grid-template-columns:auto 1fr; gap:.15rem .6rem; margin:0; font-size:.8rem}
+.al__d dt{color:var(--dim)}
+.al__d dd{margin:0; color:var(--fg)}
+.al__go{display:inline-block; margin-top:.6rem; font-size:.8rem; font-weight:500;
+  text-decoration:none; color:var(--fg); padding:.3rem .7rem; border-radius:999px;
+  background:var(--glass); border:1px solid var(--glass-line)}
+.al__go:hover{border-color:var(--brand)}
+@media (max-width:640px){ .alerts{left:1.25rem; right:1.25rem; width:auto} }
 ${style}
 @media (prefers-reduced-motion:reduce){
   *{transition:none !important; animation:none !important}
@@ -1561,6 +1596,7 @@ ${style}
 </style>
 </head><body>
 <div id="nav-progress"></div>
+${user ? '<div id="alerts" class="alerts" aria-live="assertive" aria-label="Pemberitahuan pesanan instant"></div>' : ''}
 <dialog class="cf" id="confirm" aria-labelledby="cf-title">
   <div class="cf__box">
     <span class="cf__ico" id="cf-ico" aria-hidden="true">${svg('warn')}</span>
@@ -1841,6 +1877,104 @@ ${celebration(flash)}
       });
   });
 })();
+
+/*
+ * The doorbell.
+ *
+ * Everything else on this dashboard is pulled - a page opened, a list read. That is right
+ * for almost all of it and wrong for an instant order, where the channel dispatches a
+ * driver and the useful window is minutes. So one connection is held open and the server
+ * speaks first.
+ *
+ * EventSource, not a poll and not a websocket: it reconnects by itself, replays the last
+ * id it saw so a dropped connection costs nothing, and needs no upstream channel. Only
+ * for a signed-in page; the login screen has nothing to be told.
+ */
+${user ? `(function () {
+  if (!window.EventSource) return;
+  var box = document.getElementById('alerts');
+  if (!box) return;
+
+  var SEEN = 'treelogy.alert.seen';
+  function seen() { try { return Number(localStorage.getItem(SEEN)) || 0; } catch (e) { return 0; } }
+  function remember(id) { try { localStorage.setItem(SEEN, String(id)); } catch (e) {} }
+
+  function card(a) {
+    var d = a.data || {};
+    var el = document.createElement('article');
+    el.className = 'al al--' + (a.tone || 'act');
+    el.setAttribute('role', 'alert');
+    /*
+     * Escaped where it is built, not where it is used.
+     *
+     * A buyer's name is typed by a stranger on a marketplace and arrives here verbatim.
+     * The first cut of this interpolated the value straight into innerHTML so that the
+     * "3 item" separator could be an entity, and a headless-browser check caught
+     * "Dewi <b>x</b>" rendering as markup. Every value is escaped as it goes into the
+     * row, and only the separator - which this file wrote - is markup.
+     */
+    var rows = [
+      d.courier ? ['Kurir', esc(d.courier)] : null,
+      d.buyer ? ['Pembeli', esc(d.buyer)] : null,
+      d.total ? ['Nilai', esc(d.total) + (d.items ? ' &middot; ' + esc(d.items) + ' item' : '')] : null,
+      d.placedAt ? ['Masuk', esc(d.placedAt) + ' WITA'] : null,
+    ].filter(Boolean);
+
+    el.innerHTML =
+      '<div class="al__top"><span class="al__tag">' + esc(d.channelName || '') + '</span>' +
+      '<span class="al__id">' + esc(d.id || '') + '</span>' +
+      '<button type="button" class="al__x" aria-label="Tutup">&times;</button></div>' +
+      '<h3 class="al__h">' + esc(a.title || '') + '</h3>' +
+      '<dl class="al__d">' + rows.map(function (r) {
+        return '<dt>' + esc(r[0]) + '</dt><dd>' + r[1] + '</dd>';
+      }).join('') + '</dl>' +
+      (samePath(a.href) ? '<a class="al__go" href="' + esc(a.href) + '">Buka daftar label</a>' : '');
+
+    el.querySelector('.al__x').addEventListener('click', function () { close(el); });
+    return el;
+  }
+
+  /*
+   * A path on this site, and nothing else.
+   *
+   * Written without a regular expression on purpose: this whole block is emitted from a
+   * template literal, which eats backslashes, and a pattern like /^\/[\w-]*$/ arrives in
+   * the browser as something that does not parse. That cost an evening once already over
+   * an emoji filter; two character checks cannot be mangled. "//evil.com" is rejected
+   * too - it starts with a slash and is somebody else's host.
+   */
+  function samePath(href) {
+    var v = String(href == null ? '' : href);
+    return v.charAt(0) === '/' && v.charAt(1) !== '/';
+  }
+
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function close(el) {
+    el.classList.add('is-out');
+    setTimeout(function () { el.remove(); }, 260);
+  }
+
+  function show(a) {
+    // Oldest at the bottom: a burst reads top-down in the order it arrived, and the one
+    // that just landed is where the eye already is.
+    var el = card(a);
+    box.insertBefore(el, box.firstChild);
+    // Trimmed rather than stacked forever. Six is more than anyone reads at once.
+    while (box.children.length > 6) box.lastChild.remove();
+    remember(a.id);
+    // Deliberately not auto-dismissed. A parcel does not stop needing packing because
+    // nobody was looking at the screen for eight seconds.
+  }
+
+  var src = new EventSource('/api/events?since=' + seen());
+  src.addEventListener('alert', function (e) {
+    try { show(JSON.parse(e.data)); } catch (err) {}
+  });
+})();` : ''}
 </script>
 ${script ? `<script>
 ${script}

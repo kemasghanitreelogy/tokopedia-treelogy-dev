@@ -23,7 +23,13 @@ import { alertBus, alertsSince } from '../src/alerts.js';
  */
 
 const HEARTBEAT_MS = 25_000;
-const POLL_MS = 5_000;
+/**
+ * How often the store is re-read for alerts raised elsewhere.
+ *
+ * Overridable only so a test can watch the cross-process path complete in milliseconds
+ * instead of seconds. Production never sets it, and the default is what runs.
+ */
+const POLL_MS = Number(process.env.ALERT_POLL_MS) || 5_000;
 /** Long enough to outlive a deploy, short enough that a hung socket is not forever. */
 const MAX_LIFETIME_MS = 30 * 60_000;
 
@@ -104,7 +110,19 @@ export default async function handler(req, res) {
   };
 
   for (const timer of [poll, beat, life]) timer.unref?.();
-  req.on('close', stop);
+
+  /*
+   * The response, not the request.
+   *
+   * `req` emits 'close' when the *request* is complete, and a GET has no body - so it
+   * fired immediately, tore down the poll and unsubscribed from the bus while the socket
+   * stayed happily open. The stream looked alive: it connected, it replayed its backlog,
+   * and then it was deaf for ever. Caught against production, where an alert raised by a
+   * second process never arrived although it was plainly in the store.
+   *
+   * `res` emits 'close' when the response finishes or the connection goes away, and this
+   * response only finishes when we end it. That is the signal meant here.
+   */
   res.on('close', stop);
   res.on('error', stop);
 }

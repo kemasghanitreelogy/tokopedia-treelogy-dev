@@ -75,6 +75,11 @@ export const PRODUCTS = [
   { sku: 'Travel-Pouch', name: 'Travel Pouch', category: 'gift', gift: true, aliases: ['GFT-POUCH-001'] },
   { sku: 'Mystery-Gift', name: 'Mystery Gift', category: 'gift', gift: true, aliases: ['GFT-MYST-001'] },
   { sku: '1736924837905663963', name: 'Bamboo Scoop (free gift)', category: 'gift', gift: true },
+  // Listed on Shopee as "(FREE GIFT - DO NOT ORDER) Treelogy Gift with Purchase / Seed
+  // Oil 3ml", priced at Rp1.000.000 and discounted by exactly the same amount, so it
+  // costs the buyer nothing. Read off the live order, not guessed. Ten Shopee invoices
+  // from 18 to 25 September were refused for want of this line.
+  { sku: 'Oil-3ml', name: 'Moringa Seed Oil (free gift)', variant: '3 ml', category: 'gift', gift: true },
 
   // --- Bundle: a recipe, so availability can be derived from the parts
   {

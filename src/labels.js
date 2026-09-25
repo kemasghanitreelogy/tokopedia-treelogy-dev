@@ -504,6 +504,27 @@ export function filterPrintBatches(batches, { from = null, to = null, by = null 
   });
 }
 
+/**
+ * The date ranges worth a single click.
+ *
+ * Reprinting is overwhelmingly a same-day job - a parcel repacked, a label smudged, a
+ * sheet the printer ate - so today and yesterday carry almost all of it. They are both
+ * expressed as a closed range rather than an open one, so "kemarin" stays kemarin as the
+ * day goes on instead of quietly meaning "yesterday and everything since".
+ *
+ * On the house clock, the same one the run headings are printed in; a day boundary that
+ * disagreed with the timestamps above it would be worse than no chip at all.
+ */
+export function reprintPresets(now = Math.floor(Date.now() / 1000)) {
+  const today = wibDate(now);
+  const yesterday = wibDate(now - 86_400);
+  return [
+    { id: 'today', label: 'Hari ini', from: today, to: today },
+    { id: 'yesterday', label: 'Kemarin', from: yesterday, to: yesterday },
+    { id: '7d', label: '7 hari', from: wibDate(now - 6 * 86_400), to: today },
+  ];
+}
+
 /** Everyone who appears as the printer of a run, for the filter's own list. */
 export function printersIn(batches) {
   const seen = new Map();

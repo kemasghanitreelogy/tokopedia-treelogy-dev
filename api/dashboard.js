@@ -1108,7 +1108,7 @@ export default async function handler(req, res) {
       console.log(`dashboard/labels: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderLabels({ user,
         ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, people,
-        showReprints, reprintFilter,
+        showReprints, reprintFilter, now: Math.floor(Date.now() / 1000),
       }));
       return;
     }

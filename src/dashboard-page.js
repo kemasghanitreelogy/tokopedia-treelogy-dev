@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omn
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn } from './labels.js';
+import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets } from './labels.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
@@ -830,6 +830,8 @@ tr.grp .grp__by{margin-left:.55rem; font-size:.8rem; font-weight:500; letter-spa
 tr.grp .grp__n--batch{text-transform:none; letter-spacing:0}
 tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:pointer}
 .rpf{margin-bottom:.35rem}
+.rpf__quick{display:inline-flex; gap:.35rem; align-items:center; flex-wrap:wrap;
+  padding-right:.6rem; margin-right:.2rem; border-right:1px solid var(--glass-line)}
 .rpf__to{color:var(--dim); padding:0 .1rem}
 .rpf__n{font-size:.8rem; color:var(--muted); white-space:nowrap}
 .rpf__hint{margin:0 .15rem 1rem; font-size:.78rem; color:var(--dim)}
@@ -3629,7 +3631,7 @@ const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURICompon
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, reprintFilter = {}, user = null }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
@@ -3735,10 +3737,34 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   // in another, and filtering must never be one slip away from sending a print job.
   const dayHint = printDays.length > 0
     ? `${printDays[printDays.length - 1].day} s/d ${printDays[0].day}` : 'belum ada cetakan';
+  /*
+   * One click for the two days anybody actually asks for.
+   *
+   * Reprinting is a same-day job: a parcel is repacked, a label smudges, the printer eats
+   * a sheet. Typing two dates into a picker to say "today" is the kind of friction that
+   * makes a filter go unused, so today and yesterday are a chip each.
+   *
+   * They carry the printer through, because the filters stack: narrowing to today must
+   * not quietly widen the list back to everyone.
+   */
+  const presets = reprintPresets(now).map((preset) => {
+    const on = filter.from === preset.from && filter.to === preset.to;
+    const query = new URLSearchParams({ view: 'labels', reprint: '1', pfrom: preset.from, pto: preset.to });
+    if (filter.by) query.set('pby', filter.by);
+    return `<a class="chip${on ? ' is-on' : ''}" href="?${escape(query.toString())}">${escape(preset.label)}</a>`;
+  }).join('');
+
   const reprintFilters = !showReprints ? '' : `
     <form class="filters rpf" method="get">
       <input type="hidden" name="view" value="labels">
       <input type="hidden" name="reprint" value="1">
+      <span class="rpf__quick">${presets}${
+        // Only when a printer is also chosen. With nothing else filtering, clearing the
+        // dates and clearing the filter are the same act, and offering it twice makes
+        // the operator wonder what the difference is.
+        filter.by && (filter.from || filter.to)
+          ? `<a class="chip" href="?view=labels&reprint=1&pby=${escape(encodeURIComponent(filter.by))}">Semua tanggal</a>`
+          : ''}</span>
       <label class="dr__lbl" for="pfrom">Tanggal cetak</label>
       <input class="dr__in" type="date" id="pfrom" name="pfrom" value="${escape(filter.from)}"
         min="${escape(printDays.length ? printDays[printDays.length - 1].day : '')}"

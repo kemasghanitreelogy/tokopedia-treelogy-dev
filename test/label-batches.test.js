@@ -190,3 +190,63 @@ test('a filter that matches nothing says so, and offers the way back', () => {
 test('the daily list has no reprint filter at all', () => {
   assert.doesNotMatch(page({ showReprints: false, printed: {} }), /class="filters rpf"/);
 });
+
+/* ------------------------------------------------------- one-click ranges */
+
+test('today and yesterday are closed ranges on the house clock', async () => {
+  const { reprintPresets } = await import('../src/labels.js');
+  const presets = reprintPresets(1790300000); // 25 Sep 2026, 08.33 WIB
+
+  assert.deepEqual(presets.map((p) => p.id), ['today', 'yesterday', '7d']);
+  assert.deepEqual(presets[0], { id: 'today', label: 'Hari ini', from: '2026-09-25', to: '2026-09-25' });
+  // Closed at both ends, so "kemarin" stays kemarin as the day goes on rather than
+  // quietly coming to mean "yesterday and everything since".
+  assert.deepEqual(presets[1], { id: 'yesterday', label: 'Kemarin', from: '2026-09-24', to: '2026-09-24' });
+  assert.equal(presets[2].from, '2026-09-19');
+});
+
+test('the day boundary is the one the run headings are printed in', async () => {
+  const { reprintPresets, printDay } = await import('../src/labels.js');
+  // 17.30 UTC is already the next day in WIB, and the heading above the rows says so too.
+  const lateEvening = Date.parse('2026-09-24T17:30:00Z') / 1000;
+  assert.equal(reprintPresets(lateEvening)[0].from, '2026-09-25');
+  assert.equal(printDay({ at: lateEvening }), '2026-09-25');
+});
+
+test('the quick chips are one click and carry the printer through', () => {
+  const html = page({
+    showReprints: true, printed: printedThree, people: staff,
+    reprintFilter: { by: 'vanya@treelogy.com' }, now: 1790300000,
+  });
+  // Narrowing to today must not quietly widen the list back to everyone.
+  assert.match(html, /href="\?view=labels&amp;reprint=1&amp;pfrom=2026-09-25&amp;pto=2026-09-25&amp;pby=vanya%40treelogy\.com"[^>]*>Hari ini</);
+  assert.match(html, /pfrom=2026-09-24&amp;pto=2026-09-24&amp;pby=vanya%40treelogy\.com"[^>]*>Kemarin</);
+});
+
+test('the chip for the range in force is the one that looks pressed', () => {
+  const html = page({
+    showReprints: true, printed: printedThree, people: staff,
+    reprintFilter: { from: '2026-09-24', to: '2026-09-24' }, now: 1790300000,
+  });
+  assert.match(html, /<a class="chip is-on"[^>]*>Kemarin<\/a>/);
+  assert.match(html, /<a class="chip"[^>]*>Hari ini<\/a>/);
+  // With nothing else filtering, "clear the dates" and "clear the filter" are one act,
+  // and offering it twice only makes the operator wonder what the difference is.
+  assert.doesNotMatch(html, /Semua tanggal/);
+  assert.match(html, /Hapus filter/);
+});
+
+test('dropping just the dates is offered only when a printer would survive it', () => {
+  const html = page({
+    showReprints: true, printed: printedThree, people: staff,
+    reprintFilter: { from: '2026-09-24', to: '2026-09-24', by: 'vanya@treelogy.com' }, now: 1790300000,
+  });
+  assert.match(html, /href="\?view=labels&reprint=1&pby=vanya%40treelogy\.com">Semua tanggal<\/a>/);
+});
+
+test('nothing is pressed when no date is filtered, and no way-out chip is offered', () => {
+  const html = page({ showReprints: true, printed: printedThree, people: staff, now: 1790300000 });
+  assert.doesNotMatch(html, /chip is-on/);
+  assert.doesNotMatch(html, /Semua tanggal/);
+  assert.match(html, />Hari ini</);
+});

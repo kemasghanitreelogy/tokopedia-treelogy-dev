@@ -358,10 +358,37 @@ async function postInvoice(payload, { deadlineAt = null } = {}) {
 }
 
 /**
+ * One post at a time per order, for the whole process.
+ *
+ * Shopee sent two pushes for order 260924UVXBBSDM a second apart. Both read the ledger
+ * before either had written to it, both posted, and Jurnal made invoices 13728 and 13729
+ * - same customer, same Rp395.000, same day, and the same custom_id on both. The second
+ * one should have been refused; see the note in postOrder about why it was not.
+ *
+ * Sharing the promise makes the second caller wait for the first and then see the ledger
+ * entry it wrote, which is the same guard the Shopee session and the TikTok token refresh
+ * already use for the same reason.
+ */
+const posting = new Map();
+
+/** Only for tests: forget any post believed to be in flight. */
+export const resetPostGuard = () => posting.clear();
+
+/**
  * Post one order. Returns what happened rather than throwing, so a single bad order
  * cannot stop the rest of the run.
  */
-export async function postOrder(order, { accounts = null, dryRun = true, deadlineAt = null } = {}) {
+export async function postOrder(order, options = {}) {
+  const key = customIdFor(order);
+  const running = posting.get(key);
+  if (running) return running;
+
+  const attempt = postOrderUncoordinated(order, options).finally(() => posting.delete(key));
+  posting.set(key, attempt);
+  return attempt;
+}
+
+async function postOrderUncoordinated(order, { accounts = null, dryRun = true, deadlineAt = null } = {}) {
   const customId = customIdFor(order);
   let payload;
   let expectedTotal;
@@ -381,13 +408,23 @@ export async function postOrder(order, { accounts = null, dryRun = true, deadlin
   }
   if (isReadOnly()) throw new ReadOnlyError(`faktur ${customId}`);
 
-  // No read-before-write. Jurnal refuses a second invoice with the same custom_id with a
-  // 409, which is a stronger duplicate check than any probe we could make - it is done by
-  // the server, atomically, at the moment of writing - and it costs nothing extra, where
-  // the probe cost one request per order out of a budget of forty a minute. The probe was
-  // also blind to every Shopify order: the '#' in their ids breaks Jurnal's routing and
-  // the lookup answered "not found" for invoices that plainly existed.
+  // Read before write, because Jurnal's 409 does not actually guard this.
   //
+  // This used to say the opposite: that a repeated custom_id is refused by the server,
+  // atomically, and that a probe was a wasted request. Shopee order 260924UVXBBSDM
+  // disproved it - invoices 13728 and 13729, same customer, same Rp395.000, same day, and
+  // both carrying custom_id "TRL-shopee-260924UVXBBSDM". Jurnal took both. The one time
+  // the constraint was seen to fail before this, the '#' in a Shopify id was blamed and
+  // the id was normalised; there is no '#' here, so the constraint simply is not one.
+  //
+  // The old objection to probing was cost, one request per order out of forty a minute.
+  // It only runs on the create path, which is a few dozen orders a day, and the other
+  // objection - that the lookup was blind to Shopify ids - went away with the '#'.
+  const already = await findExisting(order, { deadlineAt }).catch(() => null);
+  if (already?.id) {
+    return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: already.id, total: expectedTotal };
+  }
+
   // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now
   // names its own buyer, so the contact is made to exist first.
   try {

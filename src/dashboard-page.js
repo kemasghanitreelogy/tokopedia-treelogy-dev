@@ -782,29 +782,55 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 @media (max-width:640px){ .wl__grid{padding:0 .75rem} }
 
 /* --- stock editing --- */
-.st__grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:.7rem; padding:1rem}
-.st__grid .grp{grid-column:1/-1; margin:.75rem 0 -.15rem; display:flex; align-items:baseline; gap:.5rem}
-.st__grid .grp:first-child{margin-top:0}
-.st{display:flex; flex-direction:column; gap:.5rem; padding:.85rem .9rem; border-radius:14px;
-  background:var(--glass-2); border:1px solid var(--glass-line);
-  transition:border-color var(--t-base) var(--ease-out), background var(--t-base) var(--ease-out)}
+/* --- stock as a table: every channel under its own heading --- */
+.stt__wrap{padding:0 1rem}
+.stt{width:100%; border-collapse:separate; border-spacing:0; font-size:.86rem}
+.stt thead th{text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--line);
+  font-size:.68rem; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--dim)}
+.stt thead th.stt__q{text-align:right}
+.stt thead .cm{border:0; background:transparent; padding:0; font-size:.7rem}
+.stt tbody td{padding:.45rem .6rem; border-bottom:1px solid var(--line); vertical-align:middle}
+.stt tbody tr:last-child td{border-bottom:0}
+.st:hover td{background:var(--glass-2)}
+/* The state colours the left edge instead of the whole row: forty rows washed in amber
+   is a page that reads as one alarm rather than the four that need attention. */
+.st td:first-child{box-shadow:inset 3px 0 0 transparent}
+.st--new td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+.st--held td:first-child{box-shadow:inset 3px 0 0 var(--act)}
+.st--drift td:first-child{box-shadow:inset 3px 0 0 var(--info)}
+.st--ready td:first-child{box-shadow:inset 3px 0 0 var(--good)}
+.st--blind td:first-child{box-shadow:inset 3px 0 0 var(--bad)}
+.st--dirty td{background:color-mix(in srgb,var(--brand) 9%,transparent)}
+.stt__pic{width:1%; padding-right:0}
+.stt__pic img,.stt__nopic{width:38px; height:38px; border-radius:9px; object-fit:cover; display:block;
+  background:var(--panel-2); border:1px solid var(--line)}
+.stt__name{min-width:12rem}
+.stt__t{display:block; font-weight:600; letter-spacing:-.01em}
+.stt__sku{display:block; font-size:.72rem; color:var(--dim)}
+.stt__q{width:1%; text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+/* A number that disagrees with the master is the whole point of the column. */
+.stt__q--off{color:var(--act); font-weight:600}
+.stt__q--bad{color:var(--bad); font-weight:600}
+.stt__edit{width:1%; white-space:nowrap}
+/* In a card the field stretched to fill the width. In a row it only has to hold four
+   digits, and anything wider pushes the status column off a laptop screen. */
+.stt__edit .st__edit{margin:0; display:inline-flex}
+.stt__edit .st__in{flex:none; width:5.5rem}
+.stt__edit .st__fix{margin-left:.3rem; vertical-align:middle}
+.stt__note{font-size:.78rem; min-width:11rem}
+.stt__note .st__vouch{margin-top:.2rem}
+tr.grp td{padding:.9rem .6rem .35rem; border-bottom:1px solid var(--line);
+  font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
+tr.grp .grp__t{font-weight:600; color:var(--fg); letter-spacing:.02em; text-transform:none; font-size:.9rem}
+tr.grp .grp__n{margin-left:.5rem; font-size:.7rem; color:var(--dim)}
+@media (max-width:900px){ .stt__note{display:none} .stt thead th:last-child{display:none} }
+
+.st{transition:background var(--t-fast)}
 .st[hidden]{display:none}
-.st--new{border-style:dashed}
-/* The left edge carries the state so a problem is visible without reading the card. */
-.st--new{box-shadow:inset 3px 0 0 var(--muted)}
-.st--held,.st--drift{box-shadow:inset 3px 0 0 var(--warn)}
-.st--ready{box-shadow:inset 3px 0 0 var(--good)}
-.st--blind{box-shadow:inset 3px 0 0 var(--bad)}
 .filters .chip b{margin-left:.3rem; font-weight:600; font-variant-numeric:tabular-nums}
 .filters .chip b.ok{color:var(--good)}
 .filters .chip b.flag{color:var(--warn)}
 .chip.is-on b{color:inherit}
-.st--dirty{border-color:var(--brand); background:color-mix(in srgb,var(--brand) 8%,var(--panel-2))}
-.st__head{display:flex; flex-direction:column; gap:.1rem; min-width:0}
-.st__name{font-size:.9rem; font-weight:500; line-height:1.3}
-.st__sku{font-size:.7rem; color:var(--dim)}
-.st__ch{display:flex; gap:.5rem; flex-wrap:wrap; padding:.4rem 0; border-top:1px solid var(--line);
-  border-bottom:1px solid var(--line)}
 .cm{display:inline-flex; align-items:center; gap:.3rem; font-size:.84rem; padding:.2rem .45rem;
   border-radius:7px; background:var(--panel); border:1px solid var(--line)}
 .cm__i{width:13px; height:13px; flex:none; fill:var(--accent)}
@@ -845,13 +871,6 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 .st__vouch input{width:15px; height:15px; flex:none; cursor:pointer; accent-color:var(--brand)}
 .st__bar{gap:.75rem; flex-wrap:wrap}
 .st__apply{display:flex; align-items:center; gap:.5rem}
-.st__grid .st{animation:rise 340ms var(--ease-out) both}
-.st__grid .st:nth-child(6n+1){animation-delay:120ms}
-.st__grid .st:nth-child(6n+2){animation-delay:160ms}
-.st__grid .st:nth-child(6n+3){animation-delay:200ms}
-.st__grid .st:nth-child(6n+4){animation-delay:240ms}
-.st__grid .st:nth-child(6n+5){animation-delay:280ms}
-.st__grid .st:nth-child(6n){animation-delay:320ms}
 @media (max-width:640px){ .st__grid{padding:.75rem} }
 
 .act{gap:.3rem}
@@ -3755,9 +3774,10 @@ const CHANNEL_MARKS = {
  * and is never written by sync, so the card has to say so or an operator will reasonably
  * assume all three move together.
  */
-function channelChip(key, qty, { failed = false, off = false } = {}) {
+function channelChip(key, qty, { failed = false, off = false, header = false } = {}) {
   const mark = CHANNEL_MARKS[key];
-  const value = failed ? '<b class="stop">?</b>' : qty === null ? '<b class="dim">&mdash;</b>' : `<b>${qty}</b>`;
+  // As a column heading it is the channel itself being named, not one SKU's number.
+  const value = header ? '' : failed ? '<b class="stop">?</b>' : qty === null ? '<b class="dim">&mdash;</b>' : `<b>${qty}</b>`;
   const title = mark.readOnly
     ? `${mark.label} - hanya dibaca, tidak ikut disinkronkan`
     : `${mark.label} - ikut disinkronkan`;
@@ -3783,7 +3803,7 @@ function channelChip(key, qty, { failed = false, off = false } = {}) {
  * says plainly what saving will do. Editing is local to the ledger; pushing to the
  * marketplaces stays a separate, deliberate click.
  */
-export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, filter = 'all', user = null }) {
+export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, filter = 'all', images = {}, user = null }) {
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const listed = catalog.skus.filter((e) => e.tiktok || e.shopee || e.shopify);
   const blind = Object.keys(errors ?? {}).length > 0;
@@ -3831,7 +3851,22 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
     });
   }
 
-  const cardFor = (entry, { grouped }) => {
+  /**
+   * One row per SKU, grouped by product, wide enough to compare across channels.
+   *
+   * Cards showed three variants across the screen and pushed the fourth product below the
+   * fold, so telling the 90 gram powder from the 180 meant scrolling between them. The
+   * three channel figures are the thing being compared, and a column each puts them under
+   * one another where a difference is a shape rather than something to read twice.
+   *
+   * The picture is here for the same reason it is on the manual form: it is the check
+   * against writing the 90 gram figure onto the 180.
+   *
+   * `st`, `grp`, `st__in` and the data attributes are kept exactly as they were - the
+   * search, the filters, the dirty marking and the steppers all find their row through
+   * them, and a row is as good a thing to find as a card.
+   */
+  const rowFor = (entry, { grouped }) => {
       const product = findProduct(entry.sku);
       const row = ledger?.skus?.[entry.sku];
       const master = row && !row.alias_of ? row.qty : null;
@@ -3841,9 +3876,10 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
         ['tiktok', entry.tiktok?.qty ?? null, errors.tiktok],
         ['shopee', entry.shopee?.qty ?? null, errors.shopee],
         ['shopify', entry.shopify?.qty ?? null, errors.shopify],
-      ].filter(([, qty, failed]) => qty !== null || failed);
+      ];
+      const shown = channels.filter(([, qty, failed]) => qty !== null || failed);
 
-      const values = channels.map(([, q]) => q).filter((q) => typeof q === 'number');
+      const values = shown.map(([, q]) => q).filter((q) => typeof q === 'number');
       const spread = values.length > 1 && new Set(values).size > 1;
 
       // What saving this number would actually do, in one line the operator can act on.
@@ -3853,12 +3889,12 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
       // to nudge the value up and back down to make the button light up.
       const heldBySeed = mine.some((c) => /angka awal/.test(c.reason ?? ''));
 
-      // One state per card drives its colour, its filter bucket and its count. Deriving
+      // One state per row drives its colour, its filter bucket and its count. Deriving
       // all three from the same value is what keeps the chips honest.
       let state;
       let note;
       if (blind) { state = 'blind'; note = '<span class="stop">sebagian kanal tidak terbaca</span>'; }
-      else if (!row) { state = 'new'; note = '<span class="flag">belum dikelola &mdash; isi untuk mulai</span>'; }
+      else if (!row) { state = 'new'; note = '<span class="flag">belum dikelola</span>'; }
       else if (row.alias_of) { state = 'alias'; note = `<span class="dim">ikut ${escape(row.alias_of)}</span>`; }
       else if (mine.some((c) => c.reason)) {
         state = 'held';
@@ -3867,55 +3903,75 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
         state = 'ready';
         note = `<span class="ok">siap ditulis ke ${mine.length} listing</span>`;
       } else if (spread) { state = 'drift'; note = '<span class="flag">kanal belum seragam</span>'; }
-      else { state = 'ok'; note = '<span class="ok">semua kanal sudah sama</span>'; }
+      else { state = 'ok'; note = '<span class="ok">sinkron</span>'; }
 
       if (state === 'new' || state === 'held' || state === 'drift') needsAttention += 1;
       counts[state] = (counts[state] ?? 0) + 1;
 
       const suggestion = spread && values.length > 0 ? Math.min(...values) : null;
+      const picture = images[entry.sku]?.thumb || images[entry.sku]?.url || '';
+      const title = grouped && product?.variant ? product.variant : (product?.name ?? entry.title);
 
-      return `<div class="st st--${state}" data-state="${state}" data-drift="${spread ? '1' : '0'}"
+      const cell = ([key, qty, failed]) => {
+        if (failed) return `<td class="stt__q stt__q--bad" title="${escape(key)} tidak terbaca">?</td>`;
+        if (qty === null) return '<td class="stt__q dim">&mdash;</td>';
+        const off = master !== null && qty !== master;
+        return `<td class="stt__q${off ? ' stt__q--off' : ''}">${qty}</td>`;
+      };
+
+      return `<tr class="st st--${state}" data-state="${state}" data-drift="${spread ? '1' : '0'}"
         data-lowest="${suggestion ?? ''}">
-        <div class="st__head">
-          <span class="st__name">${grouped && product?.variant
-            ? product.variant
-            : escape(product?.name ?? entry.title)}</span>
-          <span class="st__sku mono">${escape(entry.sku)}</span>
-        </div>
-        <div class="st__ch">
-          ${channels.map(([key, qty, failed]) => channelChip(key, qty, {
-            failed: Boolean(failed),
-            off: typeof qty === 'number' && master !== null && qty !== master,
-          })).join('')}
-        </div>
-        <div class="st__edit">
-          <button class="st__b" type="button" data-step="-1" aria-label="Kurangi ${escape(entry.sku)}">&minus;</button>
-          <input class="st__in mono" type="number" min="0" step="1" inputmode="numeric"
-            name="qty:${escape(entry.sku)}" value="${master ?? ''}" placeholder="&mdash;"
-            data-original="${master ?? ''}" aria-label="Stok ${escape(entry.sku)}">
-          <button class="st__b" type="button" data-step="1" aria-label="Tambah ${escape(entry.sku)}">+</button>
+        <td class="stt__pic">${picture
+          ? `<img src="${escape(picture)}" alt="" loading="lazy" decoding="async">`
+          : '<span class="stt__nopic" aria-hidden="true"></span>'}</td>
+        <td class="stt__name">
+          <span class="stt__t">${escape(title)}</span>
+          <span class="stt__sku mono">${escape(entry.sku)}</span>
+        </td>
+        ${channels.map(cell).join('')}
+        <td class="stt__edit">
+          <div class="st__edit">
+            <button class="st__b" type="button" data-step="-1" aria-label="Kurangi ${escape(entry.sku)}">&minus;</button>
+            <input class="st__in mono" type="number" min="0" step="1" inputmode="numeric"
+              name="qty:${escape(entry.sku)}" value="${master ?? ''}" placeholder="&mdash;"
+              data-original="${master ?? ''}" aria-label="Stok ${escape(entry.sku)}">
+            <button class="st__b" type="button" data-step="1" aria-label="Tambah ${escape(entry.sku)}">+</button>
+          </div>
           ${suggestion !== null
             ? `<button class="st__fix" type="button" data-set="${suggestion}" title="Pakai angka terendah antar kanal">= ${suggestion}</button>`
             : ''}
-        </div>
-        <p class="st__note">${note}</p>
-        ${heldBySeed ? `<label class="st__vouch">
-          <input type="checkbox" name="vouch:${escape(entry.sku)}" value="1">
-          <span>Saya konfirmasi stoknya memang ${master}</span>
-        </label>` : ''}
-      </div>`;
+        </td>
+        <td class="stt__note">
+          ${note}
+          ${heldBySeed ? `<label class="st__vouch">
+            <input type="checkbox" name="vouch:${escape(entry.sku)}" value="1">
+            <span>konfirmasi ${master}</span>
+          </label>` : ''}
+        </td>
+      </tr>`;
   };
 
-  const cards = ordered
-    .map((group) => {
+  // One table, one tbody: the group headings are rows among the rows, which is what lets
+  // the search hide a heading whose whole group went away.
+  const cards = `<table class="stt">
+    <thead><tr>
+      <th class="stt__pic"><span class="vh">Gambar</span></th>
+      <th>Produk</th>
+      ${['tiktok', 'shopee', 'shopify']
+        .map((key) => `<th class="stt__q">${channelChip(key, null, { header: true })}</th>`).join('')}
+      <th class="stt__edit">Stok induk</th>
+      <th>Status</th>
+    </tr></thead>
+    <tbody>${ordered.map((group) => {
       const many = group.items.length > 1;
-      // A heading over a single card would only repeat that card's own title.
+      // A heading over a single row would only repeat that row's own name, which the
+      // row already carries in full when it is not part of a group.
       const heading = many
-        ? `<h3 class="grp">${escape(group.name)}<span class="grp__n">${group.items.length} varian</span></h3>`
+        ? `<tr class="grp"><td colspan="7"><span class="grp__t">${escape(group.name)}</span><span class="grp__n">${group.items.length} varian</span></td></tr>`
         : '';
-      return heading + group.items.map((entry) => cardFor(entry, { grouped: many })).join('');
-    })
-    .join('');
+      return heading + group.items.map((entry) => rowFor(entry, { grouped: many })).join('');
+    }).join('')}</tbody>
+  </table>`;
 
   const ready = plan?.changes.length ?? 0;
   const held = (plan?.review.length ?? 0) + (plan?.blocked.length ?? 0);
@@ -3968,7 +4024,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
     body: `<form method="post" id="stockform" data-confirm="Simpan {n} perubahan stok ke ledger?">
         ${hidden}
         <input type="hidden" name="action" value="ledger_batch">
-        <div class="st__grid" id="rows">${cards}</div>
+        <div class="scroll stt__wrap" id="rows">${cards}</div>
         <p class="empty" id="empty" hidden></p>
         <div class="wl__go st__bar">
           <button class="wo__go" type="submit" id="save" disabled>Simpan <span id="n">0</span> perubahan</button>

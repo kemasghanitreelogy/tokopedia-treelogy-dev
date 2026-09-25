@@ -968,6 +968,9 @@ export default async function handler(req, res) {
         catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
         generatedAt: Date.now(), csrf, flash,
         filter: url.searchParams.get('filter') ?? 'all',
+        // The same thumbnails the manual form uses: picking a row by its picture is how
+        // somebody catches that they are about to write the 90 gram figure onto the 180.
+        images: await imagesByKey(),
       }));
       return;
     }

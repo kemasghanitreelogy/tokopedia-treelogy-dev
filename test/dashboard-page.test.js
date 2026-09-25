@@ -277,7 +277,10 @@ test('stock has its own editing surface, separate from browsing products', async
   const html = renderStock({ catalog, ledger, plan, ...common });
   assert.ok(html.includes('id="stockform"'), 'stock should be editable in place');
   assert.ok(html.includes('data-step'), 'a stepper makes the common adjustment one click');
-  assert.ok(!html.includes('<table'), 'editing should not be a report table');
+  // A table, but an editable one: the field is in the row, not behind a link to a page
+  // that opens one product at a time.
+  assert.match(html, /<table class="stt">/);
+  assert.match(html, /<input class="st__in mono"/);
 });
 
 test('every stock field starts from the saved value and knows it', () => {
@@ -520,7 +523,7 @@ test('a row held because it came from the seed offers a way to vouch for it', as
   };
   const html = renderStock({ catalog, ledger, plan: held, ...common });
   assert.match(html, /name="vouch:MRS-002"/, 'a held row needs a vouch control');
-  assert.ok(html.includes('Saya konfirmasi'), 'and it should say what it means');
+  assert.match(html, /konfirmasi 74/, 'dan menyebut angka yang sedang dikonfirmasi');
 });
 
 test('a row that is not held shows no vouch control', () => {
@@ -543,11 +546,11 @@ test('variants of one product are grouped together, singles are not', async () =
     ledger: { skus: {} }, plan, ...common,
   });
 
-  assert.match(html, /class="grp">Moringa Powder<span class="grp__n">3 varian/, 'the three sizes should form one group');
-  assert.ok(!html.includes('>Bamboo Scoop<span class="grp__n"'), 'a single product needs no heading');
+  assert.match(html, /class="grp__t">Moringa Powder<\/span><span class="grp__n">3 varian/, 'the three sizes should form one group');
+  assert.ok(!html.includes('>Bamboo Scoop</span><span class="grp__n"'), 'a single product needs no heading');
 
-  // Inside the group the card shows the variant, since the name is already the heading.
-  const order = [...html.matchAll(/class="st__name">([^<]*)/g)].map((m) => m[1].trim());
+  // Inside the group the row shows the variant, since the name is already the heading.
+  const order = [...html.matchAll(/class="stt__t">([^<]*)/g)].map((m) => m[1].trim());
   assert.deepEqual(order.slice(0, 3), ['45 gram', '90 gram', '180 gram'], 'sizes should read in numeric order');
 });
 
@@ -592,7 +595,11 @@ test('a channel out of step with the ledger is marked, not just listed', () => {
     catalog: { skus: [entry], errors: {} },
     ledger: { skus: { A: { qty: 10 } } }, plan, ...common,
   });
-  assert.equal((html.match(/<span class="cm[^"]*cm--off/g) ?? []).length, 1, 'only the channel that differs is flagged');
+  // The brand mark and the read-only lock belong to the channel, so they are said once
+  // in the column heading. What belongs to a row is whether that row's number differs.
+  // Matched on the cell, not the class name: the stylesheet mentions it too.
+  assert.equal((html.match(/<td class="stt__q stt__q--off"/g) ?? []).length, 1, 'only the channel that differs is flagged');
+  assert.equal((html.match(/<span class="cm[^"]*"/g) ?? []).length, 3, 'tiap kolom tetap menyebut kanalnya');
 });
 
 test('filter chips carry their own counts and survive in the URL', () => {

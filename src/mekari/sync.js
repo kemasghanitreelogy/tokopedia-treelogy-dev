@@ -1,5 +1,6 @@
 import { readDoc, updateDoc } from '../store/index.js';
 import { mekari, isMekariConfigured, MekariError, QuotaExhaustedError } from './client.js';
+import { claimInvoice, releaseInvoice } from './claim.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomId, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
@@ -342,7 +343,7 @@ export function syncOverview({ orders, ledger, accounts = null }) {
 async function postInvoice(payload, { deadlineAt = null } = {}) {
   const path = '/public/jurnal/api/v1/sales_invoices';
   try {
-    return await mekari({ method: 'POST', path, body: payload, deadlineAt, retryCreate: true });
+    return await mekari({ method: 'POST', path, body: payload, deadlineAt });
   } catch (error) {
     const complainsAboutEmail = error?.status === 422
       && /email/i.test(JSON.stringify(error?.body ?? ''))
@@ -351,7 +352,7 @@ async function postInvoice(payload, { deadlineAt = null } = {}) {
 
     const without = { sales_invoice: { ...payload.sales_invoice } };
     delete without.sales_invoice.email;
-    const result = await mekari({ method: 'POST', path, body: without, deadlineAt, retryCreate: true });
+    const result = await mekari({ method: 'POST', path, body: without, deadlineAt });
     console.warn(`mekari: email ${payload.sales_invoice.email} ditolak Jurnal - faktur dibuat tanpa email`);
     return result;
   }
@@ -383,9 +384,46 @@ export async function postOrder(order, options = {}) {
   const running = posting.get(key);
   if (running) return running;
 
-  const attempt = postOrderUncoordinated(order, options).finally(() => posting.delete(key));
+  const attempt = postWithClaim(order, key, options).finally(() => posting.delete(key));
   posting.set(key, attempt);
   return attempt;
+}
+
+/**
+ * The same exclusion again, one level out, because there is more than one process.
+ *
+ * The map above covers the web service answering webhooks. A systemd timer runs the sweep
+ * as its own process every quarter of an hour, and those two can reach one order at the
+ * same moment - the sweep takes a lock for its whole run, the webhook path takes none.
+ * The claim is held in the store, so whichever gets there first is the only one posting.
+ *
+ * Losing the claim is not a failure. The order is not going anywhere: either the holder
+ * is writing the invoice this second, or its claim expires and the next sweep picks the
+ * order up. Saying "busy" and moving on is the honest answer, and it keeps the loser from
+ * reporting a create that was somebody else's.
+ */
+async function postWithClaim(order, customId, options) {
+  if (options.dryRun) return postOrderUncoordinated(order, options);
+
+  const claim = await claimInvoice(customId);
+  if (!claim.claimed) {
+    // It may already be written. Asking costs one request and turns a "come back later"
+    // into a settled answer whenever the other process has finished.
+    const already = await findExisting(order, { deadlineAt: options.deadlineAt ?? null }).catch(() => null);
+    if (already?.id) {
+      return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: already.id };
+    }
+    return {
+      customId, id: order.id, channel: order.channel, status: 'busy',
+      error: 'sedang diposting proses lain - dilewati, bukan gagal',
+    };
+  }
+
+  try {
+    return await postOrderUncoordinated(order, options);
+  } finally {
+    if (claim.enforced) await releaseInvoice(customId, { owner: claim.owner });
+  }
 }
 
 async function postOrderUncoordinated(order, { accounts = null, dryRun = true, deadlineAt = null } = {}) {
@@ -434,9 +472,17 @@ async function postOrderUncoordinated(order, { accounts = null, dryRun = true, d
   }
 
   try {
-    // Safe to retry, unlike batch_create: the single-invoice endpoint rejects a repeated
-    // custom_id with 409 and hands back the existing id, so a retry after a timeout finds
-    // the first attempt rather than making a second copy.
+    // Not retried on a timeout, and this is a correction.
+    //
+    // The retry here used to be opted into, on the grounds that the single-invoice
+    // endpoint rejects a repeated custom_id with 409 and so a retry would find the first
+    // attempt rather than make a second copy. That is not true. Invoices 13728 and 13729
+    // both carry "TRL-shopee-260924UVXBBSDM"; the constraint is checked but not atomic,
+    // and a timeout after Jurnal has already stored the invoice would have retried
+    // straight into a duplicate - the same way 472 invoices once became 891.
+    //
+    // So a create that gets no answer raises UncertainWriteError, and the branch below
+    // resolves the uncertainty by asking Jurnal instead of guessing.
     const created = await postInvoice(payload, { deadlineAt });
     const invoice = created?.sales_invoice ?? created;
     // Jurnal has silently stored a different number than it was sent before - shipping
@@ -456,6 +502,21 @@ async function postOrderUncoordinated(order, { accounts = null, dryRun = true, d
       invoiceId: invoice?.id, transactionNo: invoice?.transaction_no, total: expectedTotal,
     };
   } catch (error) {
+    // No answer came back. The invoice may well be in Jurnal - what went missing is the
+    // response, not the work - so we ask, and if it is not there yet we leave the order
+    // exactly where it was. The next sweep probes again before it writes anything, which
+    // turns "we do not know" into a settled answer without ever risking a second copy.
+    if (error?.uncertain) {
+      const landed = await findExisting(order, { deadlineAt }).catch(() => null);
+      if (landed?.id) {
+        return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: landed.id, total: expectedTotal };
+      }
+      return {
+        customId, id: order.id, channel: order.channel, status: 'deferred', total: expectedTotal,
+        error: `${error.message} - belum ketemu di Jurnal, dicoba lagi di sweep berikutnya`,
+      };
+    }
+
     // Already in the books - a concurrent webhook or an earlier run got there first. That
     // is the idempotency working, not a failure; record it and move on.
     if (error.status === 409) {

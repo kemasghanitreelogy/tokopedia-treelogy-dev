@@ -64,3 +64,88 @@ test('the custom_id carries no character that breaks the lookup', async () => {
     assert.ok(!customIdFor({ channel, id: '#1/2' }).includes('#'));
   }
 });
+
+test('a second process cannot post an order this one is already posting', async () => {
+  const { postOrder, resetPostGuard } = await import('../src/mekari/sync.js');
+  const { claimInvoice, releaseInvoice } = await import('../src/mekari/claim.js');
+  const { closeStore } = await import('../src/store/index.js');
+  resetPostGuard();
+
+  // Stand in for the sweep, running as its own process, holding the claim right now.
+  const held = await claimInvoice('TRL-shopee-260924UVXBBSDM', { owner: 'sweep' });
+  assert.equal(held.claimed, true);
+
+  // Nothing may leave this machine. A test that reached Jurnal would be asserting about
+  // production's books, and the point here is precisely that no request is made to create.
+  const fetched = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    fetched.push(`${init?.method ?? 'GET'} ${url}`);
+    return new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
+  };
+
+  let outcome;
+  try {
+    outcome = await postOrder(order(), { dryRun: false });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.ok(!fetched.some((call) => call.startsWith('POST')), `tidak ada create: ${fetched.join(', ')}`);
+  assert.equal(outcome.status, 'busy', 'dilewati, bukan bikin faktur kedua');
+  assert.equal(outcome.customId, 'TRL-shopee-260924UVXBBSDM');
+
+  await releaseInvoice('TRL-shopee-260924UVXBBSDM', { owner: 'sweep' });
+  await closeStore();
+});
+
+test('a create that gets no answer is never sent twice', async () => {
+  const { postOrder, resetPostGuard } = await import('../src/mekari/sync.js');
+  const { closeStore, deleteDoc } = await import('../src/store/index.js');
+  const { CLAIMS_DOC } = await import('../src/mekari/claim.js');
+  resetPostGuard();
+  await deleteDoc(CLAIMS_DOC);
+
+  /*
+   * The second way a duplicate is made, and the one nobody was looking for.
+   *
+   * The create used to opt back into the client's retry, on the belief that a repeated
+   * custom_id would be refused with 409. It is not - 13728 and 13729 prove that - so a
+   * timeout after Jurnal had already stored the invoice would have retried straight into
+   * a second copy. Now it asks instead.
+   */
+  let creates = 0;
+  let stored = false;
+  const realFetch = globalThis.fetch;
+  const json = (body, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  globalThis.fetch = async (url, init) => {
+    const method = init?.method ?? 'GET';
+    const path = String(url);
+    if (method === 'POST' && path.includes('/contacts')) return json({ message: 'sudah ada' }, 409);
+    if (method === 'POST' && path.endsWith('/sales_invoices')) {
+      creates += 1;
+      // Jurnal took it; the answer is what went missing.
+      stored = true;
+      throw new Error('socket hang up');
+    }
+    if (method === 'GET' && path.includes('/sales_invoices/TRL-')) {
+      return stored
+        ? json({ sales_invoice: { id: 99123, transaction_no: 'SI-99123', original_amount: 395000 } })
+        : json({ message: 'not found' }, 404);
+    }
+    return json({});
+  };
+
+  let outcome;
+  try {
+    outcome = await postOrder(order('NOANSWER'), { dryRun: false });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert.equal(creates, 1, 'satu kali kirim, apa pun yang terjadi');
+  assert.equal(outcome.status, 'exists');
+  assert.equal(outcome.invoiceId, 99123);
+  await closeStore();
+});

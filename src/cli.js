@@ -21,6 +21,7 @@ import { loadLedger, saveLedger, seedLedger, emptyLedger, masterQty } from './le
 import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
+import { auditRecent } from './mekari/audit.js';
 import { ordersForPrinting } from './orders-by-id.js';
 import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
 import { postingAccounts, requiredAccounts, AccountMissingError } from './mekari/accounts.js';
@@ -76,10 +77,11 @@ Usage:
   npm run mekari:coa          Setel akun ongkir & tag di Jurnal, tampilkan kebijakan per sumber (butuh --yes)
   npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
+  npm run mekari:audit        Cek pesanan BARU sudah masuk Jurnal (--days=N, --notify) - hemat kuota
   npm run mekari:retry        Pesanan yang gagal masuk Jurnal & jadwal percobaannya (--now untuk paksa)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
-  npm run mekari:recap        Bandingkan pesanan vs faktur per hari (--notify kirim yang belum difakturkan)
+  npm run mekari:recap        Bandingkan pesanan vs faktur per hari, seluruh korpus (mahal kuota)
   npm run mekari:redate       Perbaiki tanggal faktur agar ikut jam platformnya (butuh --yes)
   npm run mekari:repool       Pindahkan setoran dari bank ke akun penampung kanal (butuh --yes)
                               --from=YYYY-MM-DD dan --limit=N untuk mencicil sesuai kuota
@@ -909,6 +911,42 @@ async function cmdMekariRetry(args = []) {
   return 0;
 }
 
+/**
+ * Did what arrived recently reach the books?
+ *
+ * Deliberately not mekari:recap. That walks Jurnal's whole invoice list - fifty requests
+ * out of a monthly package - and re-reports the same 979 August orders every night, none
+ * of which a message was ever going to fix. This asks about new data only, mostly from
+ * the local ledger, and touches Jurnal once per order the ledger does not already know.
+ * On an ordinary day that is no requests at all.
+ */
+async function cmdMekariAudit(config, args = []) {
+  const days = Number(args.find((a) => a.startsWith('--days='))?.slice('--days='.length)) || 1;
+  const r = await auditRecent({ days });
+
+  console.log(`\n  ${r.checked} pesanan layak faktur sejak ${r.from}  ·  ${r.ledgered} sudah tercatat  ·  ${r.probed} ditanyakan ke Jurnal`);
+  if (r.capped) console.log(`  ${warn('terlalu banyak yang tidak dikenal ledger - hanya sebagian ditanyakan agar kuota tidak habis')}`);
+
+  if (r.missingOrders.length === 0) {
+    console.log(`  ${ok('setiap pesanan baru sudah masuk Jurnal')}\n`);
+  } else {
+    console.log(`  ${fail(`${r.missingOrders.length} pesanan belum ada fakturnya (${rupiah(r.missingValue)})`)}`);
+    for (const o of r.missingOrders.slice(0, 20)) {
+      console.log(`    ${o.day}  ${String(o.channel).padEnd(12)} ${String(o.id).padEnd(22)} ${rupiah(o.total).padStart(14)}  ${o.stage}`);
+    }
+    console.log('');
+  }
+  if (r.uninvoiceable.length > 0) {
+    console.log(`  ${warn(`${r.uninvoiceable.length} pesanan tidak bisa dibuat faktur sama sekali (tanpa baris keuangan)`)}\n`);
+  }
+
+  if (args.includes('--notify')) {
+    const sent = await notifyUninvoiced(r);
+    if (sent.sent) console.log(`  ${info('dikabarkan ke Telegram')}\n`);
+  }
+  return r.missingOrders.length > 0 ? 1 : 0;
+}
+
 async function cmdMekariStatus() {
   const ledger = await loadSyncLedger();
   const rows = Object.entries(ledger.orders ?? {});
@@ -1599,6 +1637,7 @@ const COMMANDS = {
   'mekari:restate': cmdMekariRestate,
   'mekari:dedupe': cmdMekariDedupe,
   'mekari:retry': (config, args) => cmdMekariRetry(args),
+  'mekari:audit': cmdMekariAudit,
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
   'mekari:recap': cmdMekariRecap,

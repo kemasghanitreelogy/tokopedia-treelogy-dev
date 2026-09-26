@@ -34,14 +34,16 @@ ExecStart=-/usr/bin/node bin/tts.mjs forecast --notify
 ExecStart=-/usr/bin/node bin/tokopedia.mjs reviews --notify
 # Ulasan Shopee lewat Open API (product/get_comment), per produk, termasuk yang tanpa teks.
 ExecStart=-/usr/bin/node bin/shopee.mjs reviews --notify
-# The nightly proof that every sale reached the books.
+# The nightly proof that what arrived reached the books.
 #
-# The sweep only looks at seven days and only knows about orders it attempted. An order
-# whose stage moves to completed a fortnight after it was placed is outside that window,
-# and nothing else would ever notice it. This asks Jurnal directly, over everything since
-# August, and messages Telegram with the list if anything is missing. Non-zero exit is
-# expected when it finds something, so it must not stop the backup below it.
-ExecStart=-/usr/bin/node bin/tts.mjs mekari:recap --from=2026-08-01 --notify
+# Two days, not the whole corpus. The corpus version walked Jurnal's entire invoice list
+# every night - about fifty requests out of a monthly package - to re-report the same 979
+# August orders that a half-finished backfill never posted, which no nightly message was
+# ever going to fix, and which buried the thing worth watching. This asks only about new
+# data, answers most of it from the local ledger, and touches Jurnal once per order the
+# ledger does not already know: on an ordinary day, not at all. Two days rather than one
+# so a late-evening sale is never audited before the sweep has had its turn.
+ExecStart=-/usr/bin/node bin/tts.mjs mekari:audit --days=2 --notify
 # Snapshot Redis to disk and keep a dated copy; 30 days retained. BGSAVE is asynchronous,
 # so wait for it to finish before copying.
 ExecStart=/bin/sh -c 'mkdir -p /opt/treelogy/backup && redis-cli BGSAVE >/dev/null && while [ "$(redis-cli INFO persistence | tr -d "\r" | grep rdb_bgsave_in_progress | cut -d: -f2)" = "1" ]; do sleep 1; done && cp /var/lib/redis/dump.rdb /opt/treelogy/backup/treelogy-$(date +%%F).rdb && find /opt/treelogy/backup -name "*.rdb" -mtime +30 -delete'

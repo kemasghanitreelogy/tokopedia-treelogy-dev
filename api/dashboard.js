@@ -1011,9 +1011,22 @@ export default async function handler(req, res) {
       const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })), SWR);
       const used = manualCodes(ledger);
       const source = url.searchParams.get('source') ?? 'CS';
-      // The contact list is a convenience, not a requirement: a Jurnal that will not
-      // answer must not stop someone entering a sale they have in their hand.
-      const contacts = await listContacts().then((m) => [...m.keys()].sort()).catch(() => []);
+      /*
+       * The names come from the ledger, not from Jurnal.
+       *
+       * This used to call listContacts(), which pages through the whole contact book at
+       * a hundred a request: 2,089 contacts is twenty-one requests, spent every single
+       * time somebody opened this form, for a datalist that only autocompletes a name.
+       * The monthly package is the binding limit on this integration and the account
+       * reached 10,886 of 12,000 with a fortnight to go - a convenience cannot cost that.
+       *
+       * The ledger holds the same names: rememberContacts writes every buyer it has ever
+       * settled with Jurnal, and it is a store read, so it is free. Jurnal is asked only
+       * if that list is empty, which is a fresh install and nothing else.
+       */
+      const contacts = (ledger.contacts ?? []).length > 0
+        ? [...ledger.contacts].sort()
+        : await listContacts().then((m) => [...m.keys()].sort()).catch(() => []);
       // Reserved now, inside a store transaction, so this form and any other open at the
       // same moment hold different numbers. An abandoned form leaves a gap, never a repeat.
       const sequence = await reserveManualSequence();

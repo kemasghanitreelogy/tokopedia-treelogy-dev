@@ -3,6 +3,7 @@ import { readEnv } from '../env-file.js';
 import { reserveSlot } from '../store/index.js';
 import { ENV_PATH, ENV_LOCAL_PATH } from '../config.js';
 import { fetchWithTimeout, TIMEOUTS } from '../http.js';
+import { spend } from './budget.js';
 
 /**
  * Mekari API client.
@@ -292,7 +293,7 @@ export function describeFailure(payload) {
   return fields.length > 0 ? fields.join('; ') : '';
 }
 
-export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null, retryCreate = false }) {
+export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null, retryCreate = false, essential = false }) {
   // A POST creates something. Retrying one after a timeout or a 5xx risks a second copy,
   // because the first may well have succeeded - the response is what went missing, not
   // the work. Callers that know the endpoint de-duplicates (Jurnal's single sales invoice
@@ -300,6 +301,18 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
   // and must not.
   const creates = method === 'POST' && !retryCreate;
   if (!isMekariConfigured(config)) throw new MekariError('MEKARI_APP_CLIENT_ID / SECRET belum diisi');
+
+  /*
+   * The month's allowance, checked before the minute's.
+   *
+   * The limiter below stops a burst from earning a 429; it has never known how much of
+   * the monthly package is gone. Nothing did, which is how a run of corpus scans came to
+   * spend a fortnight's allowance in an afternoon. Writing an invoice for a sale that has
+   * already happened may dip into the reserve; a scan may not, however much somebody
+   * wants the answer.
+   */
+  const allowance = await spend(1, { essential });
+  if (!allowance.allowed) throw new QuotaExhaustedError(allowance.reason);
   const canWait = (ms) => deadlineAt === null || Date.now() + ms < deadlineAt;
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {

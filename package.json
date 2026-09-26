@@ -64,6 +64,7 @@
     "mekari:dedupe": "node bin/tts.mjs mekari:dedupe",
     "mekari:retry": "node bin/tts.mjs mekari:retry",
     "mekari:audit": "node bin/tts.mjs mekari:audit",
+    "mekari:budget": "node bin/tts.mjs mekari:budget",
     "mekari:reconcile": "node bin/tts.mjs mekari:reconcile",
     "mekari:settle": "node bin/tts.mjs mekari:settle",
     "mekari:recap": "node bin/tts.mjs mekari:recap",

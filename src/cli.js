@@ -22,6 +22,7 @@ import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
 import { auditRecent } from './mekari/audit.js';
+import { loadBudget, setBudget, dailyRation, RESERVE } from './mekari/budget.js';
 import { ordersForPrinting } from './orders-by-id.js';
 import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
 import { postingAccounts, requiredAccounts, AccountMissingError } from './mekari/accounts.js';
@@ -78,6 +79,7 @@ Usage:
   npm run mekari:restate      Hapus & tulis ulang faktur sejak tanggal tertentu (butuh --yes)
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
   npm run mekari:audit        Cek pesanan BARU sudah masuk Jurnal (--days=N, --notify) - hemat kuota
+  npm run mekari:budget       Sisa kuota bulanan Jurnal (--set=N --renews=YYYY-MM-DD)
   npm run mekari:retry        Pesanan yang gagal masuk Jurnal & jadwal percobaannya (--now untuk paksa)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
@@ -947,6 +949,44 @@ async function cmdMekariAudit(config, args = []) {
   return r.missingOrders.length > 0 ? 1 : 0;
 }
 
+/**
+ * What is left of the month's package, and what a day actually costs.
+ *
+ * Jurnal will not say - its quota endpoint answers 404 - so the figure is read off the
+ * Mekari console and typed in here. A number entered by hand and counted down honestly
+ * is worth more than a number nobody has, which is the state that let the account reach
+ * 10,886 of 12,000 with a fortnight to go.
+ */
+async function cmdMekariBudget(config, args = []) {
+  const set = args.find((a) => a.startsWith('--set='))?.slice('--set='.length);
+  const renews = args.find((a) => a.startsWith('--renews='))?.slice('--renews='.length);
+  if (set !== undefined) {
+    await setBudget({ remaining: Number(set), renewsOn: renews ?? null });
+    console.log(`\n  ${ok(`sisa kuota disetel ke ${Number(set).toLocaleString('id-ID')}${renews ? ` sampai ${renews}` : ''}`)}\n`);
+  }
+
+  const budget = await loadBudget();
+  if (budget.remaining === null || budget.remaining === undefined) {
+    console.log(`\n  ${warn('sisa kuota belum diisi - tidak ada yang membatasi')}`);
+    console.log(`  ${info('isi dari console Mekari: npm run mekari:budget -- --set=1114 --renews=2026-10-11')}\n`);
+  } else {
+    const ration = dailyRation(budget);
+    console.log(`\n  sisa ${Number(budget.remaining).toLocaleString('id-ID')} permintaan` +
+      (budget.renewsOn ? `  ·  diperbarui ${budget.renewsOn}` : '') +
+      (ration === null ? '' : `  ·  jatah ${ration}/hari`));
+    console.log(`  cadangan ${RESERVE} - di bawah itu hanya posting faktur yang boleh jalan`);
+    console.log(`  terakhir disetel ${budget.at ?? '-'}`);
+  }
+
+  const spent = Object.entries(budget.spent ?? {}).sort();
+  if (spent.length > 0) {
+    console.log(`\n  terpakai per hari (dihitung sendiri, bukan dari Mekari):`);
+    for (const [d, n] of spent.slice(-10)) console.log(`    ${d}  ${String(n).padStart(5)}`);
+  }
+  console.log('');
+  return 0;
+}
+
 async function cmdMekariStatus() {
   const ledger = await loadSyncLedger();
   const rows = Object.entries(ledger.orders ?? {});
@@ -1638,6 +1678,7 @@ const COMMANDS = {
   'mekari:dedupe': cmdMekariDedupe,
   'mekari:retry': (config, args) => cmdMekariRetry(args),
   'mekari:audit': cmdMekariAudit,
+  'mekari:budget': cmdMekariBudget,
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
   'mekari:recap': cmdMekariRecap,

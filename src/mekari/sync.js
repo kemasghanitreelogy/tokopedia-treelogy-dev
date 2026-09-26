@@ -364,7 +364,7 @@ export function syncOverview({ orders, ledger, accounts = null }) {
 async function postInvoice(payload, { deadlineAt = null } = {}) {
   const path = '/public/jurnal/api/v1/sales_invoices';
   try {
-    return await mekari({ method: 'POST', path, body: payload, deadlineAt });
+    return await mekari({ method: 'POST', path, body: payload, deadlineAt, essential: true });
   } catch (error) {
     const complainsAboutEmail = error?.status === 422
       && /email/i.test(JSON.stringify(error?.body ?? ''))
@@ -373,7 +373,7 @@ async function postInvoice(payload, { deadlineAt = null } = {}) {
 
     const without = { sales_invoice: { ...payload.sales_invoice } };
     delete without.sales_invoice.email;
-    const result = await mekari({ method: 'POST', path, body: without, deadlineAt });
+    const result = await mekari({ method: 'POST', path, body: without, deadlineAt, essential: true });
     console.warn(`mekari: email ${payload.sales_invoice.email} ditolak Jurnal - faktur dibuat tanpa email`);
     return result;
   }
@@ -445,13 +445,15 @@ async function postWithClaim(order, customId, options) {
   }
 
   try {
-    return await postOrderUncoordinated(order, options);
+    // The probe below is only paid for when the claim is not holding the line. See the
+    // note on `probeFirst` in postOrderUncoordinated.
+    return await postOrderUncoordinated(order, { ...options, probeFirst: !claim.enforced });
   } finally {
     if (claim.enforced) await releaseInvoice(customId, { owner: claim.owner });
   }
 }
 
-async function postOrderUncoordinated(order, { accounts = null, dryRun = true, deadlineAt = null } = {}) {
+async function postOrderUncoordinated(order, { accounts = null, dryRun = true, deadlineAt = null, probeFirst = true } = {}) {
   const customId = customIdFor(order);
   let payload;
   let expectedTotal;
@@ -471,21 +473,28 @@ async function postOrderUncoordinated(order, { accounts = null, dryRun = true, d
   }
   if (isReadOnly()) throw new ReadOnlyError(`faktur ${customId}`);
 
-  // Read before write, because Jurnal's 409 does not actually guard this.
-  //
-  // This used to say the opposite: that a repeated custom_id is refused by the server,
-  // atomically, and that a probe was a wasted request. Shopee order 260924UVXBBSDM
-  // disproved it - invoices 13728 and 13729, same customer, same Rp395.000, same day, and
-  // both carrying custom_id "TRL-shopee-260924UVXBBSDM". Jurnal took both. The one time
-  // the constraint was seen to fail before this, the '#' in a Shopify id was blamed and
-  // the id was normalised; there is no '#' here, so the constraint simply is not one.
-  //
-  // The old objection to probing was cost, one request per order out of forty a minute.
-  // It only runs on the create path, which is a few dozen orders a day, and the other
-  // objection - that the lookup was blind to Shopify ids - went away with the '#'.
-  const already = await findExisting(order, { deadlineAt }).catch(() => null);
-  if (already?.id) {
-    return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: already.id, total: expectedTotal };
+  /*
+   * Read before write, but only when nothing else is holding the line.
+   *
+   * Jurnal's 409 on a repeated custom_id is not atomic: Shopee order 260924UVXBBSDM has
+   * invoices 13728 and 13729, same customer, same Rp395.000, same day, both carrying
+   * "TRL-shopee-260924UVXBBSDM". Jurnal took both. That is why this probe exists.
+   *
+   * What it guards is the *concurrent* case, and the claim in the store now owns that -
+   * one caller wins it however many arrive together. The 409 remains perfectly reliable
+   * for the sequential case, a create minutes after the first has landed, which is the
+   * only case left when the claim is enforced. So the probe is paid for exactly when the
+   * claim could not be taken: an unreachable store.
+   *
+   * The cost is why it matters. It is one request per order out of a monthly package,
+   * and the account reached 10,886 of 12,000 with a fortnight to go. At forty-five
+   * invoices a day this halves what writing the books costs.
+   */
+  if (probeFirst) {
+    const already = await findExisting(order, { deadlineAt }).catch(() => null);
+    if (already?.id) {
+      return { customId, id: order.id, channel: order.channel, status: 'exists', invoiceId: already.id, total: expectedTotal };
+    }
   }
 
   // Jurnal refuses an invoice naming a contact it does not hold, and every invoice now

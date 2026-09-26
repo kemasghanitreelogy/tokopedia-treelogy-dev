@@ -239,6 +239,9 @@ export async function ensureContact(name, { deadlineAt = null, receivableId = nu
       method: 'POST',
       path: CONTACTS_PATH,
       deadlineAt,
+      // Jurnal refuses an invoice naming a contact it does not hold, so creating the
+      // buyer is part of writing the sale rather than a tool that can wait a month.
+      essential: true,
       body: {
         person: {
           display_name: wanted,

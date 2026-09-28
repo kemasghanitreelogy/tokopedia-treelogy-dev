@@ -60,6 +60,28 @@ export function nextAction(order, arranged = {}) {
   return null;
 }
 
+/**
+ * A snapshot we can prove is not settled yet.
+ *
+ * Shopee assigns the courier when the buyer pays, and for an instant courier that is a
+ * live booking with Grab or Gojek which takes a moment and can fail. A push that reaches
+ * us in those first seconds gives an order that is READY_TO_SHIP with no carrier on it,
+ * and nothing ever fills that in afterwards: the row is only rewritten when another push
+ * arrives or the nightly re-read runs.
+ *
+ * Order 2609287GUBMJ7N is what that costs. We stored it as arrangeable with no courier;
+ * by the time anybody looked, Shopee had it as CANCELLED with GrabExpress Instant and a
+ * LOGISTICS_INVALID package. It sat at the top of the worklist, ticked, waiting to be
+ * arranged - an order that no longer existed.
+ *
+ * An empty carrier on an arrangeable Shopee order is therefore not a fact about the
+ * order. It is a fact about our copy of it, and it is worth one read to settle.
+ */
+export const awaitingCarrier = (order) =>
+  order?.channel === 'shopee'
+  && (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP')
+  && !order.carrier;
+
 /** Orders still waiting on the seller, newest first, with the action each one needs. */
 export function pending(orders, arranged = {}) {
   return orders

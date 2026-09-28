@@ -28,23 +28,25 @@ export async function refreshOrders(selection, { read = fetchOrdersByIds, save =
   const wanted = (selection ?? [])
     .map(({ channel, id }) => ({ channel: String(channel ?? ''), id: String(id ?? '') }))
     .filter((row) => row.channel && row.id);
-  if (wanted.length === 0) return { refreshed: 0 };
+  if (wanted.length === 0) return { refreshed: 0, orders: [] };
 
   // The cache goes either way. It is keyed by range and the rows behind it have just
   // changed, so serving the old answer is wrong whether or not the re-read worked.
   try {
     // A typed-in sale has no platform to ask; it only ever lived in our table.
     const askable = wanted.filter((row) => row.channel !== 'manual');
-    if (askable.length === 0 || !hasDatabase()) return { refreshed: 0 };
+    if (askable.length === 0 || !hasDatabase()) return { refreshed: 0, orders: [] };
 
     const { orders } = await read(askable);
     if (orders.length > 0) await save(orders, { source: 'refresh' });
-    return { refreshed: orders.length, missing: askable.length - orders.length };
+    // Handed back as well as stored, so a caller refreshing rows it is about to draw can
+    // use them without a second trip through the database and its cache.
+    return { refreshed: orders.length, missing: askable.length - orders.length, orders };
   } catch (error) {
     // The platform write already happened and must not be reported as failed because the
     // read after it did not. The sweep picks these up within the quarter hour.
     console.warn(`orders: gagal menyegarkan ${wanted.length} pesanan - ${error.message}`);
-    return { refreshed: 0, error: error.message };
+    return { refreshed: 0, orders: [], error: error.message };
   } finally {
     invalidate('orders');
   }

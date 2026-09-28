@@ -16,12 +16,16 @@ import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
-import { runAction, massArrange, planArrangement } from '../src/fulfillment.js';
+import { runAction, massArrange, planArrangement, awaitingCarrier } from '../src/fulfillment.js';
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
+import { refreshOrders } from '../src/orders-refresh.js';
+
+/** One Shopee detail call takes fifty ids; this never needs more than a handful. */
+const CARRIER_REFRESH_MAX = 20;
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
@@ -1108,7 +1112,7 @@ export default async function handler(req, res) {
     // copy without tracking numbers and paid for a second database read to get it. The
     // worklists ignore the range entirely and read by stage instead.
     const started = Date.now();
-    const data = OUTSTANDING_VIEWS.has(view) ? await outstandingOrders() : await ordersFor(range);
+    let data = OUTSTANDING_VIEWS.has(view) ? await outstandingOrders() : await ordersFor(range);
     const took = () => `${Date.now() - started}ms`;
 
     if (view === 'labels') {
@@ -1141,6 +1145,31 @@ export default async function handler(req, res) {
     if (view === 'process') {
       // Arranging a Shopify order calls nothing, so only this says it has been done.
       const arranged = await arrangedOrders().catch(() => ({}));
+
+      /*
+       * Settle the rows we can prove are unsettled, before drawing them.
+       *
+       * A Shopee order that is arrangeable with no courier on it was read in the seconds
+       * after payment, while Shopee was still booking one - for an instant courier that
+       * is a live call to Grab or Gojek. Nothing fills it in afterwards, so the row keeps
+       * describing that moment until another push happens to arrive.
+       *
+       * 2609287GUBMJ7N is what that costs: stored as arrangeable with no courier, while
+       * Shopee had it CANCELLED with GrabExpress Instant and a dead package. It sat at
+       * the top of this worklist, ticked, waiting to be arranged. One read per page load,
+       * capped, and only for rows already known to be incomplete - a handful at most, and
+       * Shopee's budget rather than Jurnal's.
+       */
+      const unsettled = data.orders.filter(awaitingCarrier).slice(0, CARRIER_REFRESH_MAX);
+      if (unsettled.length > 0) {
+        const { orders: fresh } = await refreshOrders(unsettled.map((o) => ({ channel: o.channel, id: o.id })));
+        if (fresh.length > 0) {
+          const byId = new Map(fresh.map((o) => [`${o.channel}:${o.id}`, o]));
+          data = { ...data, orders: data.orders.map((o) => byId.get(`${o.channel}:${o.id}`) ?? o) };
+          console.log(`dashboard/process: ${fresh.length} pesanan tanpa kurir dibaca ulang dari platform`);
+        }
+      }
+
       console.log(`dashboard/process: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderProcess({ user, ...data, range, csrf, flash, arranged }));
       return;

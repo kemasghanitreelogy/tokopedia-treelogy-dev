@@ -24,6 +24,7 @@ const ROUTES = {
   '/api/export': './api/export.js',
   '/api/status': './api/status.js',
   '/api/events': './api/events.js',
+  '/api/alert-test': './api/alert-test.js',
   '/api/callback': './api/callback.js',
   '/api/mekari-sync': './api/mekari-sync.js',
   '/api/shopee/callback': './api/shopee/callback.js',

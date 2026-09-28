@@ -171,6 +171,7 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
   </section>`;
 
   return shell({
+    csrf,
     ...common, csrf, flash, user, kpis, body, style: STYLE, script: SCRIPT, log: true,
     title: locked ? `Log aktivitas · ${MENUS[locked]}` : 'Log aktivitas',
     // The tab row keeps the menu this log belongs to lit, so the page still feels like

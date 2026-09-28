@@ -145,6 +145,7 @@ export function renderUsers({ users, me, smtpReady, csrf, flash, ...common }) {
   const body = `<div class="um">${invite}${table}</div>`;
 
   return shell({
+    csrf,
     ...common, csrf, flash, title: 'Pengguna', view: 'users', kpis, body, hideRangeControls: true, user: me, style: STYLE, script: SCRIPT,
   });
 }

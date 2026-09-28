@@ -406,7 +406,7 @@ function orderDetail(order, index) {
 export function shell({
   title, range, errors = {}, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
   view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null, scope = null,
-  stale = false, staleSince = null, user = null, style = '', log = false,
+  stale = false, staleSince = null, user = null, style = '', log = false, csrf = null,
 }) {
   const who = user
     ? `<a class="who" href="?view=activity&amp;actor=${escape(user.id)}" title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
@@ -1632,8 +1632,8 @@ ${celebration(flash)}
     ${nav.tabs}
     <div class="tools">
       ${who}
-      ${user ? `<button class="iconbtn" id="soundtest" type="button"
-        aria-label="Tes bunyi alarm pickup" title="Tes bunyi alarm pickup">${svg('bell')}</button>` : ''}
+      ${user ? `<button class="iconbtn" id="soundtest" type="button" data-csrf="${escape(csrf ?? '')}"
+        aria-label="Tes alert pickup" title="Tes alert pickup - lewat server, seperti pesanan sungguhan">${svg('bell')}</button>` : ''}
       <button class="iconbtn" id="theme" type="button" aria-label="Ganti tema terang/gelap">${svg('sun')}</button>
       <a class="iconbtn" href="${escape(self)}" aria-label="Muat ulang data">${svg('refresh')}</a>
       <a class="iconbtn" href="?logout=1" aria-label="Keluar">${svg('logout')}</a>
@@ -2105,24 +2105,49 @@ ${user ? `(function () {
    * So the test is entirely local to this page: it draws a card and rings, touching no
    * server and no store. It proves the one thing that was ever in doubt.
    */
+  /*
+   * The bell tests the pipe, not this page.
+   *
+   * Drawing a card locally would answer "do the speakers work" and nothing else. The
+   * question an operator has is whether an alert *arrives*, and that spans the server,
+   * the store, the event stream and nginx - none of which can be tested from inside the
+   * page. So the press asks the server to raise a real alert, and what comes back comes
+   * back the way a Shopee pickup would: down the same stream, into the same card.
+   *
+   * If nothing arrives, that is the answer. A local card drawn as a consolation would
+   * hide exactly the failure the operator pressed the button to find.
+   */
   var test = document.getElementById('soundtest');
   if (test) test.addEventListener('click', function () {
     unlock();
-    // A tick behind the unlock, so the card is built once the context is running and does
-    // not offer a button for something that already works.
-    setTimeout(function () { testCard(); }, 0);
+    test.disabled = true;
+    var arrived = false;
+    var before = box.children.length;
+
+    var body = new URLSearchParams();
+    body.set('csrf', test.getAttribute('data-csrf') || '');
+
+    fetch('/api/alert-test', { method: 'POST', body: body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+      .catch(function (e) { note('Gagal meminta uji: ' + e.message); })
+      .then(function () {
+        // Five seconds covers the stream's own poll, which is the slow path.
+        setTimeout(function () {
+          test.disabled = false;
+          if (!arrived && box.children.length === before) {
+            note('Uji terkirim tapi tidak ada alert yang kembali - jalur pemberitahuan bermasalah.');
+          }
+        }, 5000);
+      });
+
+    var watch = setInterval(function () {
+      if (box.children.length > before) { arrived = true; clearInterval(watch); }
+    }, 200);
+    setTimeout(function () { clearInterval(watch); }, 6000);
   });
 
-  function testCard() {
-    show({
-      id: 0,
-      tone: 'act',
-      title: 'UJI COBA \u2014 bukan pesanan sungguhan',
-      data: {
-        channelName: 'Uji', id: 'TES', courier: 'GoSend Instant Prioritas',
-        buyer: 'uji bunyi alarm', placedAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-      },
-    });
+  function note(text) {
+    show({ id: 0, tone: 'warn', title: text, data: { channelName: 'Uji', id: '-' } });
   }
 
   var src = new EventSource('/api/events?since=' + seen());
@@ -2146,8 +2171,7 @@ ${script}
  */
 export function renderDashboard({
   orders, summary, errors, range, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
-  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null, flash = null,
-}) {
+  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null, flash = null, csrf = null }) {
   const { all, byChannel } = summary;
   const inTransit = all.stages.shipping;
   const channel = CHANNELS[filter.channel] || filter.channel === MANUAL_CHANNEL.id ? filter.channel : 'all';
@@ -2194,6 +2218,7 @@ export function renderDashboard({
   const noun = q || channel !== 'all' || stage !== 'all' ? 'pesanan cocok' : 'pesanan';
 
   return shell({ user, flash,
+    csrf,
     title: 'Omnichannel Orders',
     range, errors, truncated, maxPerPlatform, shopeeShop, generatedAt,
     view: 'orders',
@@ -2802,6 +2827,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   </div>`;
 
   return shell({ user,
+    csrf,
     title: 'Proses Pesanan',
     range, errors, shopeeShop, generatedAt,
     view: 'process',
@@ -2957,7 +2983,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
 }
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null }) {
+export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null, csrf = null }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
   const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee' })
@@ -2978,6 +3004,7 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
     .join('');
 
   return shell({ user,
+    csrf,
     title: 'Picklist',
     range,
     errors,
@@ -3083,6 +3110,7 @@ export function renderJurnal({
   const canPost = configured && live && overview.queued > 0;
 
   return shell({ user,
+    csrf,
     title: 'Mekari Jurnal',
     range,
     errors,
@@ -3191,6 +3219,7 @@ export function renderManual({
     </div>`;
 
   return shell({ user,
+    csrf,
     title: 'Transaksi manual',
     range,
     errors,
@@ -3564,6 +3593,7 @@ function sparkline(weekly = []) {
 export function renderForecast({ forecast, range, errors, shopeeShop, generatedAt, csrf, flash, user = null }) {
   if (!forecast) {
     return shell({ user,
+      csrf,
       title: 'Prakiraan stok', range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
       hideRangeControls: true,
       body: '<p class="empty">Belum ada prakiraan.</p>',
@@ -3608,6 +3638,7 @@ export function renderForecast({ forecast, range, errors, shopeeShop, generatedA
   }).join('');
 
   return shell({ user,
+    csrf,
     title: 'Prakiraan stok',
     range, errors, shopeeShop, generatedAt, view: 'forecast', flash,
     hideRangeControls: true,
@@ -3784,6 +3815,7 @@ export function renderReviews({
 }) {
   if (!doc?.syncedAt) {
     return shell({ user,
+      csrf,
       title: 'Ulasan', range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
       hideRangeControls: true,
       body: '<p class="empty">Belum ada ulasan tersimpan.</p>',
@@ -3855,6 +3887,7 @@ export function renderReviews({
     : 'Shopee belum disinkronkan.';
 
   return shell({ user,
+    csrf,
     title: 'Ulasan',
     range, errors, shopeeShop, generatedAt, view: 'reviews', flash,
     hideRangeControls: true,
@@ -4081,6 +4114,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     <p class="rpf__hint">Cetakan tercatat ${escape(dayHint)} (jam ${escape(printZone)}). Filter tanggal dan pencetak menumpuk di atas pengelompokan per batch.</p>`;
 
   return shell({ user,
+    csrf,
     title: 'Cetak Label',
     range, errors, shopeeShop, generatedAt,
     view: 'labels',
@@ -4435,6 +4469,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
     <b class="${f.tone ?? ''}">${f.n}</b></button>`).join('');
 
   return shell({ user,
+    csrf,
     title: 'Atur Stok',
     range, errors, shopeeShop, generatedAt,
     view: 'stock',
@@ -4652,6 +4687,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
   const detail = selected ? findProduct(selected) : null;
   if (detail) {
     return shell({ user,
+      csrf,
       title: detail.name,
       range, errors, shopeeShop, generatedAt,
       view: 'products',
@@ -4788,6 +4824,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     : '';
 
   return shell({ user,
+    csrf,
     title: 'Produk',
     range, errors, shopeeShop, generatedAt,
     view: 'products',
@@ -4979,7 +5016,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
  * the buttons are always present and always work, and the page says plainly when the
  * browser stopped it rather than leaving somebody waiting for tabs that are not coming.
  */
-export function renderLabelReport({ pageCount, requested, failures, size, groups = [] }) {
+export function renderLabelReport({ pageCount, requested, failures, size, groups = [], csrf = null }) {
   const rows = failures
     .map((f) => `<tr>
       <td class="mono nowrap">${escape(f.id)}</td>

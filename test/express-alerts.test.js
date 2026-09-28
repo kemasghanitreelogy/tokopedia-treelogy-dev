@@ -247,3 +247,29 @@ test('a burst cannot become a wall, and the newest are the ones that ring', asyn
   assert.equal(rung.length, 5, 'nobody reads the seventh popup');
   assert.deepEqual(rung.map((r) => r.data.id), ['B8', 'B7', 'B6', 'B5', 'B4'], 'terbaru dulu');
 });
+
+test('the doorbell makes a sound, and copes with a browser that will not let it', () => {
+  /*
+   * The failure this exists for: the packer does not notice, and then a Gojek driver is
+   * standing at the bench. A popup only reaches somebody looking at the screen.
+   *
+   * The trap is autoplay policy. A browser will not make a sound on a page nobody has
+   * touched, and a dashboard left open on a bench is exactly such a page - so the context
+   * is resumed on the first click or key anywhere, and until then the card carries a
+   * button that says so. Silence the operator cannot explain is worse than no sound.
+   */
+  const [doorbell] = scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner' }))
+    .filter((s) => s.includes('EventSource'));
+
+  assert.match(doorbell, /AudioContext \|\| window\.webkitAudioContext/);
+  assert.match(doorbell, /addEventListener\('pointerdown', unlock/);
+  assert.match(doorbell, /addEventListener\('keydown', unlock/);
+  assert.match(doorbell, /Aktifkan suara/);
+  // One chime is not enough for somebody in the next room, so it repeats until the card
+  // is dismissed or a minute has gone.
+  assert.match(doorbell, /startAlarm\(el\)/);
+  assert.match(doorbell, /rings > 8/);
+  assert.match(doorbell, /8000\)/);
+  // And the tab title, for the packer who is in Seller Centre rather than here.
+  assert.match(doorbell, /PICKUP - ' \+ plainTitle/);
+});

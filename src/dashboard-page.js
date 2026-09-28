@@ -1586,6 +1586,10 @@ a.rv__product:hover{color:var(--accent)}
   text-decoration:none; color:var(--fg); padding:.3rem .7rem; border-radius:999px;
   background:var(--glass); border:1px solid var(--glass-line)}
 .al__go:hover{border-color:var(--brand)}
+.al__snd{margin:.6rem 0 0 .4rem; font:inherit; font-size:.8rem; font-weight:500; cursor:pointer;
+  padding:.3rem .7rem; border-radius:999px; color:var(--fg);
+  background:color-mix(in srgb,var(--act) 18%,transparent); border:1px solid color-mix(in srgb,var(--act) 45%,transparent)}
+.al__snd:hover{border-color:var(--act)}
 @media (max-width:640px){ .alerts{left:1.25rem; right:1.25rem; width:auto} }
 ${style}
 @media (prefers-reduced-motion:reduce){
@@ -1928,9 +1932,12 @@ ${user ? `(function () {
       '<dl class="al__d">' + rows.map(function (r) {
         return '<dt>' + esc(r[0]) + '</dt><dd>' + r[1] + '</dd>';
       }).join('') + '</dl>' +
-      (samePath(a.href) ? '<a class="al__go" href="' + esc(a.href) + '">Buka daftar label</a>' : '');
+      (samePath(a.href) ? '<a class="al__go" href="' + esc(a.href) + '">Buka daftar label</a>' : '') +
+      (blockedSound() ? '<button type="button" class="al__snd">🔔 Aktifkan suara</button>' : '');
 
     el.querySelector('.al__x').addEventListener('click', function () { close(el); });
+    var snd = el.querySelector('.al__snd');
+    if (snd) snd.addEventListener('click', function () { unlock(); chime(); });
     return el;
   }
 
@@ -1954,8 +1961,106 @@ ${user ? `(function () {
   }
 
   function close(el) {
+    stopAlarm(el);
     el.classList.add('is-out');
-    setTimeout(function () { el.remove(); }, 260);
+    // Counted after the removal, not before it: the card is still in the box while it
+    // animates out, so a title recounted here would keep showing the one just dismissed.
+    setTimeout(function () { el.remove(); retitle(); }, 260);
+  }
+
+  /*
+   * The sound, and the reason it is not one beep.
+   *
+   * The problem this exists for is a packer who does not notice, and then a Gojek driver
+   * is standing at the bench. A popup only works on somebody who happens to be looking at
+   * the screen; a single chime only works on somebody who happens to be in the room at
+   * that second. So an instant order chimes on arrival and keeps chiming every eight
+   * seconds until the card is dismissed or a minute has passed - a minute being about how
+   * long it takes a driver to arrive once the platform has dispatched one.
+   */
+  var ac = null;
+  function audio() {
+    if (ac) return ac;
+    var Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    try { ac = new Ctor(); } catch (e) { ac = null; }
+    return ac;
+  }
+
+  /*
+   * A browser will not make a sound on a page nobody has touched, and a dashboard left
+   * open on a bench is exactly such a page. The context is resumed on the first click or
+   * key anywhere, which costs the operator nothing and usually happens long before the
+   * first parcel. Until it does, the card carries a button that says so, because silence
+   * the operator cannot explain is worse than no sound at all.
+   */
+  function unlock() {
+    var a = audio();
+    if (a && a.state === 'suspended') a.resume();
+    var blocked = document.querySelectorAll('.al__snd');
+    for (var i = 0; i < blocked.length; i++) blocked[i].remove();
+  }
+  document.addEventListener('pointerdown', unlock, { once: false, passive: true });
+  document.addEventListener('keydown', unlock, { once: false, passive: true });
+
+  function blockedSound() {
+    var a = audio();
+    return !a || a.state !== 'running';
+  }
+
+  /** Two notes a fifth apart, twice - deliberately unlike a notification anybody ignores. */
+  function chime() {
+    var a = audio();
+    if (!a || a.state !== 'running') return;
+    var now = a.currentTime;
+    var notes = [880, 1318.5, 880, 1318.5];
+    for (var i = 0; i < notes.length; i++) {
+      var at = now + i * 0.18;
+      var osc = a.createOscillator();
+      var gain = a.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = notes[i];
+      // An envelope rather than a square start: a click at full volume reads as a fault.
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.35, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+      osc.connect(gain);
+      gain.connect(a.destination);
+      osc.start(at);
+      osc.stop(at + 0.18);
+    }
+  }
+
+  var alarms = [];
+  function startAlarm(el) {
+    chime();
+    var rings = 1;
+    var timer = setInterval(function () {
+      rings += 1;
+      if (rings > 8 || !el.isConnected) { stopAlarm(el); return; }
+      chime();
+    }, 8000);
+    alarms.push({ el: el, timer: timer });
+  }
+  function stopAlarm(el) {
+    for (var i = alarms.length - 1; i >= 0; i--) {
+      if (alarms[i].el !== el) continue;
+      clearInterval(alarms[i].timer);
+      alarms.splice(i, 1);
+    }
+  }
+
+  /*
+   * The tab title, for the packer who is on another tab entirely.
+   *
+   * The popup and the chime both assume this window is the one in front. Often it is not -
+   * the bench has a browser open on the label page and somebody is in Seller Centre. A
+   * counted title is the one signal that survives that.
+   */
+  var plainTitle = document.title;
+  function retitle() {
+    var n = box.children.length;
+    document.title = n > 0 ? '(' + n + ') PICKUP - ' + plainTitle : plainTitle;
   }
 
   function show(a) {
@@ -1964,8 +2069,13 @@ ${user ? `(function () {
     var el = card(a);
     box.insertBefore(el, box.firstChild);
     // Trimmed rather than stacked forever. Six is more than anyone reads at once.
-    while (box.children.length > 6) box.lastChild.remove();
+    while (box.children.length > 6) {
+      stopAlarm(box.lastChild);
+      box.lastChild.remove();
+    }
     remember(a.id);
+    startAlarm(el);
+    retitle();
     // Deliberately not auto-dismissed. A parcel does not stop needing packing because
     // nobody was looking at the screen for eight seconds.
   }

@@ -105,12 +105,25 @@ console.log(`\nsmoke: ${HOST}:${PORT}\n`);
 
 /* ---------------------------------------------------------------- the process */
 
-try {
-  const status = await request('/api/status');
-  check('layanan menjawab', status.status === 200, `HTTP ${status.status}`);
-} catch (error) {
-  check('layanan menjawab', false, error.message);
+/**
+ * Wait for it to be listening before asking it anything.
+ *
+ * This runs seconds after a restart, and a restart is a window with nothing on the port.
+ * The first version asked immediately and reported fifteen failures against a service
+ * that was merely still starting - a deploy gate that cries wolf gets removed, and the
+ * one it replaced at least never lied.
+ */
+async function waitForService(ms = 30_000) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const out = await request('/api/status').catch(() => null);
+    if (out?.status === 200) return true;
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
+
+check('layanan menjawab', await waitForService(), `dalam 30 detik`);
 
 // The state this box is supposed to be on. A leftover token once routed a command into a
 // Blob store that has been suspended since September; the service reading the wrong store
@@ -144,15 +157,6 @@ for (const view of Object.keys(VALID_VIEWS)) {
 }
 
 /* ------------------------------------------------------------------ the stream */
-
-// A restart is two seconds of nothing listening, and this runs seconds after one. The
-// pages above already proved the service is up; this makes sure it still is before a
-// check that holds a socket open across two more requests.
-for (let attempt = 0; attempt < 10; attempt += 1) {
-  const alive = await request('/api/status').catch(() => null);
-  if (alive?.status === 200) break;
-  await new Promise((r) => setTimeout(r, 500));
-}
 
 try {
   const stream = await withStream(cookie, async () => {

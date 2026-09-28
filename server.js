@@ -117,8 +117,21 @@ function warmDashboard() {
 }
 
 for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.on(signal, () => {
+  process.on(signal, async () => {
     console.log(`${signal}: berhenti setelah request berjalan selesai`);
+    /*
+     * Let go of the event streams first.
+     *
+     * server.close() waits for every open connection, and those are held open on purpose
+     * and indefinitely - so the first deploy after they existed sat through the whole
+     * fifteen-second fallback, and the new process cannot start until the old one has
+     * stopped. Every deploy had become a fifteen-second outage.
+     *
+     * The browsers are told to come back in three seconds and the new process is
+     * listening by then, so nobody at a bench sees anything.
+     */
+    const streams = await import('./api/events.js').then((m) => m.closeStreams()).catch(() => 0);
+    if (streams > 0) console.log(`  ${streams} event stream ditutup`);
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 15_000).unref();
   });

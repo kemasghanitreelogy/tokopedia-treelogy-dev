@@ -33,6 +33,28 @@ const POLL_MS = Number(process.env.ALERT_POLL_MS) || 5_000;
 /** Long enough to outlive a deploy, short enough that a hung socket is not forever. */
 const MAX_LIFETIME_MS = 30 * 60_000;
 
+/**
+ * The streams currently held open, so a shutdown can let go of them.
+ *
+ * server.close() waits for every open connection, and these are open on purpose and
+ * indefinitely. The first deploy after they existed took fifteen seconds to stop - the
+ * whole of the graceful timeout - and the new process cannot start until the old one
+ * has, so every deploy became a fifteen-second outage.
+ *
+ * Ending them costs a browser nothing: EventSource is told to come back in three
+ * seconds, and by then the new process is listening.
+ */
+const open = new Set();
+
+export function closeStreams() {
+  for (const res of open) {
+    try { res.end(); } catch { /* already gone */ }
+  }
+  const closed = open.size;
+  open.clear();
+  return closed;
+}
+
 const send = (res, event) => {
   res.write(`id: ${event.id}\n`);
   res.write(`event: alert\n`);
@@ -78,6 +100,8 @@ export default async function handler(req, res) {
     if (Number.isFinite(asked) && asked > 0) lastId = asked;
   }
 
+  open.add(res);
+
   let closed = false;
   const push = (event) => {
     if (closed || Number(event.id) <= lastId) return;
@@ -104,6 +128,7 @@ export default async function handler(req, res) {
   const life = setTimeout(() => { if (!closed) res.end(); }, MAX_LIFETIME_MS);
 
   const stop = () => {
+    open.delete(res);
     if (closed) return;
     closed = true;
     alertBus.off('alert', push);

@@ -125,3 +125,29 @@ test('the stream says how soon to come back, so a deploy refills the dashboards'
   const body = await listen({ want: 0, ms: 400 });
   assert.match(body, /^retry: 3000/);
 });
+
+test('a shutdown lets go of the streams it is holding', async () => {
+  /*
+   * server.close() waits for every open connection, and these are open on purpose and
+   * indefinitely. The first deploy after they existed sat through the whole fifteen
+   * second fallback - and the new process cannot start until the old one has stopped, so
+   * every deploy had quietly become a fifteen-second outage.
+   */
+  const { closeStreams } = await import('../api/events.js');
+  await clearAlerts();
+
+  const ended = new Promise((resolve) => {
+    const req = http.request({ port, host: '127.0.0.1', path: '/api/events', headers: { Cookie: cookie } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve('ended'));
+    });
+    req.end();
+  });
+
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(closeStreams(), 1, 'tahu berapa yang sedang dipegang');
+  assert.equal(await ended, 'ended', 'dan benar-benar melepasnya');
+
+  // Nothing is held afterwards, so a second shutdown has nothing to close.
+  assert.equal(closeStreams(), 0);
+});

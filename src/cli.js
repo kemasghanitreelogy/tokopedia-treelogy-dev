@@ -22,6 +22,7 @@ import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
 import { auditRecent } from './mekari/audit.js';
+import { planTopup, describeTopup, FLOOR, ADD } from './stock-topup.js';
 import { raiseAlert } from './alerts.js';
 import { backendName } from './store/index.js';
 import { loadBudget, setBudget, dailyRation, RESERVE } from './mekari/budget.js';
@@ -342,6 +343,72 @@ async function cmdStockApply(config, args = []) {
     console.log(r.status === 'ok' ? ok(line) : fail(`${line}  ${r.error ?? ''}`));
   }
   console.log(`\n  ${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted}\n`);
+  return result.failed > 0 ? 1 : 0;
+}
+
+/**
+ * Put stock back on any listing that has drifted under the floor.
+ *
+ * The figure on a Treelogy listing is a display number rather than a count of jars, which
+ * is the fact that makes this safe to do without a person - and it was confirmed before
+ * this was built, because on the other reading it would be selling goods that do not
+ * exist. See src/stock-topup.js for what it still refuses to touch.
+ *
+ * Dry run unless --yes, like every other write here. The timer passes --yes; a person
+ * running it by hand sees the plan first.
+ */
+async function cmdStockTopup(config, args = []) {
+  const floor = Number(args.find((a) => a.startsWith('--floor='))?.slice('--floor='.length)) || FLOOR;
+  const add = Number(args.find((a) => a.startsWith('--add='))?.slice('--add='.length)) || ADD;
+
+  const catalog = await readCatalog();
+  const channelErrors = Object.entries(catalog.errors ?? {});
+  if (channelErrors.length > 0) {
+    // A channel that would not answer reads as "no listings" and therefore as "nothing is
+    // low", which is the one way this could quietly stop doing its job.
+    for (const [channel, message] of channelErrors) console.log(`  ${warn(`${channel} tidak terbaca: ${message}`)}`);
+    console.log(`  ${fail('katalog tidak lengkap - tidak menulis apa pun')}\n`);
+    return 1;
+  }
+
+  const plan = planTopup(catalog, { floor, add });
+  console.log(`\n  ambang ${floor}, tambah ${add}  ·  ${catalog.skus.length} sku ditelusuri`);
+  for (const s2 of plan.skipped) console.log(`  ${warn(`lewati ${s2.sku} ${s2.channel}: ${s2.reason}`)}`);
+  if (plan.overflow > 0) console.log(`  ${warn(`${plan.overflow} listing lain juga di bawah ambang - dibatasi, sisanya run berikutnya`)}`);
+
+  if (plan.changes.length === 0) {
+    console.log(`  ${ok('tidak ada listing di bawah ambang')}\n`);
+    return 0;
+  }
+
+  console.log('');
+  for (const c of plan.changes) {
+    console.log(`    ${c.sku.padEnd(24)} ${c.channel.padEnd(7)} ${String(c.from).padStart(5)} -> ${c.to}`);
+  }
+
+  if (!args.includes('--yes')) {
+    console.log(`\n  ${warn('belum ditulis. Ulangi dengan --yes untuk menulis ke marketplace')}\n`);
+    return 0;
+  }
+
+  const result = await applySync(plan, { dryRun: false });
+  console.log('');
+  for (const r of result.results) {
+    const line = `${r.sku.padEnd(24)} ${r.channel.padEnd(7)} ${r.from} -> ${r.to}`;
+    console.log(r.status === 'ok' ? ok(line) : fail(`${line}  ${r.error ?? ''}`));
+  }
+  console.log(`\n  ${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted}\n`);
+
+  if (result.failed > 0) {
+    // Only failures. A top-up that worked is the system doing its job, and an alert
+    // channel that carries good news is one people mute.
+    await sendTelegram(
+      `<b>⚠️ Isi ulang stok gagal sebagian</b>\n${result.failed} dari ${result.attempted} listing tidak bisa ditulis.\n` +
+      result.results.filter((r) => r.status === 'failed').slice(0, 6)
+        .map((r) => `• <code>${r.sku}</code> ${r.channel}: ${String(r.error ?? '').slice(0, 120)}`).join('\n'),
+      { key: `topup-failed|${new Date().toISOString().slice(0, 13)}` },
+    ).catch(() => {});
+  }
   return result.failed > 0 ? 1 : 0;
 }
 
@@ -1709,6 +1776,7 @@ const COMMANDS = {
   'stock:seed': cmdStockSeed,
   'stock:plan': cmdStockPlan,
   'stock:apply': cmdStockApply,
+  'stock:topup': cmdStockTopup,
   'mekari:setup': cmdMekariSetup,
   'mekari:plan': cmdMekariPlan,
   'mekari:sync': cmdMekariSync,

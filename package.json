@@ -28,6 +28,7 @@
     "stock:seed": "node bin/tts.mjs stock:seed",
     "stock:plan": "node bin/tts.mjs stock:plan",
     "stock:apply": "node bin/tts.mjs stock:apply",
+    "stock:topup": "node bin/tts.mjs stock:topup",
     "shopify": "node bin/tts.mjs shopify",
     "doctor": "node bin/tts.mjs doctor",
     "api": "node bin/tts.mjs api",

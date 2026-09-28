@@ -1,4 +1,5 @@
 import { readDoc, updateDoc } from '../store/index.js';
+import { numberOrNull } from '../numbers.js';
 
 /**
  * What is left of the month's package, counted here because Jurnal will not say.
@@ -32,18 +33,8 @@ const EMPTY = { version: 1, remaining: null, at: null, renewsOn: null, spent: {}
 
 const day = (now) => new Date(now).toISOString().slice(0, 10);
 
-/**
- * The remainder, or null when nobody has entered one.
- *
- * Written out rather than left to `Number()`, which turns null into 0 - and 0 is exactly
- * the reading that stops the books being written. An unset budget blocked every invoice
- * the first time this shipped, which is the failure the comment above it warned against.
- */
-function known(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
+/** The remainder, or null when nobody has entered one. See numberOrNull for why. */
+const known = numberOrNull;
 
 export async function loadBudget() {
   try {

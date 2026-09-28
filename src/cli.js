@@ -23,6 +23,7 @@ import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
 import { auditRecent } from './mekari/audit.js';
 import { raiseAlert } from './alerts.js';
+import { backendName } from './store/index.js';
 import { loadBudget, setBudget, dailyRation, RESERVE } from './mekari/budget.js';
 import { ordersForPrinting } from './orders-by-id.js';
 import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
@@ -985,9 +986,21 @@ async function cmdAlertTest() {
       total: '', items: 0, placedAt: at,
     },
   });
-  if (!raised) { console.log(`\n  ${warn('tidak terkirim - umpan alert tidak bisa ditulis')}\n`); return 1; }
-  console.log(`\n  ${ok('terkirim - dashboard yang terbuka harus berbunyi dalam beberapa detik')}`);
-  console.log(`  ${info('kalau tidak berbunyi: klik di mana saja pada halaman, lalu jalankan lagi')}\n`);
+  // Named, because where this went is the whole question when it does not arrive. From a
+  // laptop the store is a local sqlite file and no dashboard will ever hear it; the bell
+  // in the dashboard's own top bar is what the packing bench should use.
+  const where = backendName();
+  if (!raised) {
+    console.log(`\n  ${warn(`tidak terkirim - umpan alert di ${where} tidak bisa ditulis`)}\n`);
+    return 1;
+  }
+  console.log(`\n  ${ok(`terkirim ke umpan ${where}`)}`);
+  if (where !== 'redis') {
+    console.log(`  ${warn(`${where} itu penyimpanan lokal - dashboard produksi tidak akan berbunyi dari sini`)}`);
+    console.log(`  ${info('untuk menguji speaker di meja packing: klik ikon lonceng di pojok kanan atas dashboard')}\n`);
+    return 0;
+  }
+  console.log(`  ${info('dashboard yang terbuka harus berbunyi dalam beberapa detik')}\n`);
   return 0;
 }
 

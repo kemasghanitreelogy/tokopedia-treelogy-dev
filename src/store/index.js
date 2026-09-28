@@ -39,8 +39,18 @@ export function backendName() {
   const explicit = env('STATE_BACKEND').toLowerCase();
   if (explicit === 'sqlite' || explicit === 'blob' || explicit === 'redis') return explicit;
   if (env('REDIS_URL')) return 'redis';
-  if (env('STATE_DB_PATH')) return 'sqlite';
-  if (process.env.BLOB_READ_WRITE_TOKEN || loadConfig().blobToken) return 'blob';
+  /*
+   * Blob is never inferred any more; it has to be asked for by name.
+   *
+   * It used to be chosen whenever a token happened to be in the environment, which was
+   * right while Vercel ran this. It has not for some time: the state lives on the VPS in
+   * Redis, and the Blob store itself is suspended account-wide. What was left was a
+   * leftover token in a developer's .env.local quietly routing every local command into
+   * a dead store - "alerts: gagal mencatat - Vercel Blob: This store has been suspended"
+   * from a laptop, for a feature that had nothing to do with Vercel.
+   *
+   * A token is not an intention. STATE_BACKEND=blob is.
+   */
   return 'sqlite';
 }
 

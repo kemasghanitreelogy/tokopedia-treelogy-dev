@@ -1632,6 +1632,8 @@ ${celebration(flash)}
     ${nav.tabs}
     <div class="tools">
       ${who}
+      ${user ? `<button class="iconbtn" id="soundtest" type="button"
+        aria-label="Tes bunyi alarm pickup" title="Tes bunyi alarm pickup">${svg('bell')}</button>` : ''}
       <button class="iconbtn" id="theme" type="button" aria-label="Ganti tema terang/gelap">${svg('sun')}</button>
       <a class="iconbtn" href="${escape(self)}" aria-label="Muat ulang data">${svg('refresh')}</a>
       <a class="iconbtn" href="?logout=1" aria-label="Keluar">${svg('logout')}</a>
@@ -1994,11 +1996,21 @@ ${user ? `(function () {
    * first parcel. Until it does, the card carries a button that says so, because silence
    * the operator cannot explain is worse than no sound at all.
    */
-  function unlock() {
-    var a = audio();
-    if (a && a.state === 'suspended') a.resume();
+  function clearSoundButtons() {
     var blocked = document.querySelectorAll('.al__snd');
     for (var i = 0; i < blocked.length; i++) blocked[i].remove();
+  }
+  function unlock() {
+    var a = audio();
+    if (!a) return;
+    // resume() is a promise, so the context is still 'suspended' for a tick after the
+    // click that unlocked it. Clearing only synchronously left "Aktifkan suara" sitting
+    // on a card whose sound was already working - which reads as a fault that is not one.
+    if (a.state === 'suspended') {
+      var resumed = a.resume();
+      if (resumed && resumed.then) resumed.then(clearSoundButtons, function () {});
+    }
+    clearSoundButtons();
   }
   document.addEventListener('pointerdown', unlock, { once: false, passive: true });
   document.addEventListener('keydown', unlock, { once: false, passive: true });
@@ -2073,11 +2085,44 @@ ${user ? `(function () {
       stopAlarm(box.lastChild);
       box.lastChild.remove();
     }
-    remember(a.id);
+    if (a.id > 0) remember(a.id);
     startAlarm(el);
     retitle();
     // Deliberately not auto-dismissed. A parcel does not stop needing packing because
     // nobody was looking at the screen for eight seconds.
+  }
+
+  /*
+   * The bell in the top bar, and why it is not the CLI command it replaces.
+   *
+   * Whether the popup appears is a question about this codebase. Whether anybody hears it
+   * is a question about the machine on the packing bench - its speakers, its volume, and
+   * whether the browser has been touched since the tab was opened - and only the person
+   * standing at that bench can answer it. Asking them to open a terminal to find out was
+   * never going to happen, and the command itself only works where the production store
+   * is, which is not their laptop.
+   *
+   * So the test is entirely local to this page: it draws a card and rings, touching no
+   * server and no store. It proves the one thing that was ever in doubt.
+   */
+  var test = document.getElementById('soundtest');
+  if (test) test.addEventListener('click', function () {
+    unlock();
+    // A tick behind the unlock, so the card is built once the context is running and does
+    // not offer a button for something that already works.
+    setTimeout(function () { testCard(); }, 0);
+  });
+
+  function testCard() {
+    show({
+      id: 0,
+      tone: 'act',
+      title: 'UJI COBA \u2014 bukan pesanan sungguhan',
+      data: {
+        channelName: 'Uji', id: 'TES', courier: 'GoSend Instant Prioritas',
+        buyer: 'uji bunyi alarm', placedAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      },
+    });
   }
 
   var src = new EventSource('/api/events?since=' + seen());

@@ -32,20 +32,19 @@ export function expressAlert(order) {
   if (service?.tier !== INSTANT) return null;
 
   /*
-   * Only while the parcel is still on the bench.
+   * Paid and waiting to be packed, or no chime.
    *
-   * The guard used to live in the sweep alone, and the webhook path had none - so any
-   * push for an instant order rang, whatever had become of it. Shopee pushed a status
-   * change for 260926279MHKMD at 14.07 on 28 September; the order was created on the
-   * 26th, was COMPLETED, and had been delivered. The bench got a chime and a card saying
-   * "Masuk 07.02 WITA" for a parcel that had left two days earlier, and the operator went
-   * looking for it in Shopee and quite rightly found nothing.
+   * A platform pushes for every state an order passes through, including all the ones
+   * after it stops being anybody's work. The guard used to live in the sweep alone and
+   * the webhook path had none - so Shopee's status change for 260926279MHKMD at 14.07 on
+   * 28 September rang the bench for an order created on the 26th that was COMPLETED and
+   * long delivered. The card read "Masuk 07.02 WITA", the operator went looking for it in
+   * Shopee, and quite rightly found nothing.
    *
-   * A platform pushes for every state an order passes through, including the ones after
-   * it stops being anybody's work. Whether a driver is coming is a property of the order,
-   * not of which code path noticed it, so it is decided here and both paths get it.
+   * Whether the packers should stop what they are doing is a property of the order rather
+   * than of which code path noticed it, so it is decided here and both paths inherit it.
    */
-  if (!UNSHIPPED.has(order?.stage)) return null;
+  if (!AWAITING_PACKING.has(order?.stage)) return null;
 
   const items = (order.lines ?? []).reduce((n, line) => n + (Number(line.qty) || 0), 0);
 
@@ -93,8 +92,19 @@ const MAX_PER_SWEEP = 5;
  * urgency. An alert channel that carries the merely interesting is one people mute.
  */
 
-/** Stages where a driver has not taken the parcel yet, so packing it still matters. */
-export const UNSHIPPED = new Set(['to_ship', 'shipping']);
+/**
+ * Paid, and still waiting to be packed. That is the whole of it.
+ *
+ * The point of the chime, in the operator's words, is so the packing team can get the
+ * product ready - so the moment worth interrupting them for is a paid instant order
+ * newly arrived, and nothing else. Not an unpaid one, where no driver has been asked
+ * for; not one already on its way; and not one that was delivered two days ago.
+ *
+ * `to_ship` is exactly that moment on every channel: Shopee's READY_TO_SHIP, Tokopedia
+ * and TikTok's AWAITING_SHIPMENT. It started as this plus `shipping`, which was too wide
+ * by one stage - `shipping` means the parcel has gone.
+ */
+export const AWAITING_PACKING = new Set(['to_ship']);
 
 /**
  * The safety net behind the webhook.

@@ -100,13 +100,16 @@ test('a parcel that has already left never rings, however the platform pushes it
    * it stops being anybody's work.
    */
   const done = { channel: 'shopee', id: '260926279MHKMD', carrier: 'GrabExpress Instant' };
-  for (const stage of ['completed', 'delivered', 'cancelled', 'returned', 'unpaid']) {
+  /*
+   * The point of the chime is so the packing team can get the product ready, so the only
+   * moment worth interrupting them for is a paid order still waiting to be packed. Not
+   * an unpaid one, where no driver has been asked for; not one already on its way; and
+   * not one delivered two days ago.
+   */
+  for (const stage of ['completed', 'delivered', 'cancelled', 'returned', 'unpaid', 'shipping']) {
     assert.equal(expressAlert({ ...done, stage }), null, stage);
   }
-  // And still rings while the parcel is on the bench.
-  for (const stage of ['to_ship', 'shipping']) {
-    assert.ok(expressAlert({ ...done, stage }), stage);
-  }
+  assert.ok(expressAlert({ ...done, stage: 'to_ship' }), 'dibayar dan menunggu dipacking');
 });
 
 test('the doorbell rings once however many times the platform pushes', async () => {

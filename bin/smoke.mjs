@@ -123,8 +123,10 @@ check('state pakai backend yang benar', backendName() === (process.env.SMOKE_BAC
 // auth regression is invisible to anybody already holding a cookie.
 try {
   const out = await request('/api/dashboard?view=orders');
-  const isLogin = out.status === 200 && /name="password"/.test(out.text);
-  check('tanpa sesi hanya halaman masuk', isLogin, `HTTP ${out.status}`);
+  // 401 carrying the login form, which is what it actually does - the first version of
+  // this check asserted 200 and failed the service for being right.
+  const refused = out.status === 401 && /name="password"/.test(out.text);
+  check('tanpa sesi hanya halaman masuk', refused, `HTTP ${out.status}`);
 } catch (error) {
   check('tanpa sesi hanya halaman masuk', false, error.message);
 }
@@ -142,6 +144,15 @@ for (const view of Object.keys(VALID_VIEWS)) {
 }
 
 /* ------------------------------------------------------------------ the stream */
+
+// A restart is two seconds of nothing listening, and this runs seconds after one. The
+// pages above already proved the service is up; this makes sure it still is before a
+// check that holds a socket open across two more requests.
+for (let attempt = 0; attempt < 10; attempt += 1) {
+  const alive = await request('/api/status').catch(() => null);
+  if (alive?.status === 200) break;
+  await new Promise((r) => setTimeout(r, 500));
+}
 
 try {
   const stream = await withStream(cookie, async () => {

@@ -40,12 +40,30 @@ fi
 
 sudo -n /bin/systemctl restart treelogy.service
 sleep 2
+
+# Dua gerbang, bukan satu.
+#
+# `npm test` membuktikan kodenya konsisten dengan dirinya sendiri, dan /api/status
+# membuktikan prosesnya menjawab. Di antara keduanya ada celah yang cukup lebar untuk
+# meloloskan dua kerusakan nyata dalam satu sore: router yang menutup event stream begitu
+# dibuka, dan token sisa yang mengarahkan perintah ke penyimpanan Vercel yang sudah mati.
+# Keduanya bukan bug di sebuah fungsi - keduanya bug di rakitannya, dan hanya layanan
+# yang sedang berjalan yang bisa ditanyai soal itu.
 if ! curl -fsS --max-time 20 http://127.0.0.1:3000/api/status >/dev/null; then
   log "LAYANAN TIDAK SEHAT setelah restart - dikembalikan ke ${BEFORE:0:8}"
   git reset --hard --quiet "$BEFORE"
   npm ci --omit=dev --no-audit --no-fund --silent
   sudo -n /bin/systemctl restart treelogy.service
   node bin/notify.mjs "<b>🛑 Deploy dikembalikan</b>%0A<code>${AFTER:0:8}</code> lolos test tapi layanan tidak sehat setelah restart. Kembali ke <code>${BEFORE:0:8}</code>." 2>/dev/null || true
+  exit 1
+fi
+
+if ! node bin/smoke.mjs >>"$LOG" 2>&1; then
+  log "SMOKE TEST GAGAL pada ${AFTER:0:8} - dikembalikan ke ${BEFORE:0:8}"
+  git reset --hard --quiet "$BEFORE"
+  npm ci --omit=dev --no-audit --no-fund --silent
+  sudo -n /bin/systemctl restart treelogy.service
+  node bin/notify.mjs "<b>🛑 Deploy dikembalikan</b>%0A<code>${AFTER:0:8}</code> lolos test tapi gagal smoke test pada layanan yang berjalan. Kembali ke <code>${BEFORE:0:8}</code>.%0ALihat /opt/treelogy/state/deploy.log" 2>/dev/null || true
   exit 1
 fi
 

@@ -57,7 +57,7 @@ test('a whole word, so a future Grabmart is not swept in silently', () => {
 
 test('the alert says which sale, whose, how much and when it landed', () => {
   const alert = expressAlert({
-    channel: 'shopee', id: '2609250PBNRM4E', carrier: 'GoSend Instant Prioritas',
+    channel: 'shopee', id: '2609250PBNRM4E', carrier: 'GoSend Instant Prioritas', stage: 'to_ship',
     buyer: 'Dewi', total: 395000, createdAt: Date.parse('2026-09-25T08:26:00Z') / 1000,
     lines: [{ qty: 2 }, { qty: 1 }],
   });
@@ -80,10 +80,32 @@ test('an ordinary order produces no alert at all', () => {
 
 test('every alert that is raised is an instant one', () => {
   for (const carrier of ['GrabExpress Instant', 'GoSend Instant Prioritas', 'Grab', 'Gojek']) {
-    assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier })?.data.tier, INSTANT, carrier);
+    assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier, stage: 'to_ship' })?.data.tier, INSTANT, carrier);
   }
   for (const carrier of ['Paxel', 'JNE Reguler', 'DHL Express', 'J&T Express']) {
-    assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier }), null, carrier);
+    assert.equal(expressAlert({ channel: 'shopee', id: 'A', carrier, stage: 'to_ship' }), null, carrier);
+  }
+});
+
+test('a parcel that has already left never rings, however the platform pushes it', () => {
+  /*
+   * The bug the operator caught. The guard lived in the sweep alone and the webhook path
+   * had none, so any push for an instant order rang whatever had become of it. Shopee
+   * pushed a status change for 260926279MHKMD at 14.07 on 28 September; the order was
+   * created on the 26th, was COMPLETED and had been delivered. The bench got a chime and
+   * a card reading "Masuk 07.02 WITA" for a parcel two days gone, and the operator went
+   * looking for it in Shopee and quite rightly found nothing.
+   *
+   * A platform pushes for every state an order passes through, including the ones after
+   * it stops being anybody's work.
+   */
+  const done = { channel: 'shopee', id: '260926279MHKMD', carrier: 'GrabExpress Instant' };
+  for (const stage of ['completed', 'delivered', 'cancelled', 'returned', 'unpaid']) {
+    assert.equal(expressAlert({ ...done, stage }), null, stage);
+  }
+  // And still rings while the parcel is on the bench.
+  for (const stage of ['to_ship', 'shipping']) {
+    assert.ok(expressAlert({ ...done, stage }), stage);
   }
 });
 

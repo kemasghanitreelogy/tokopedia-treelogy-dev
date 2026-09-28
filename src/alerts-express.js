@@ -30,6 +30,23 @@ const benchTime = (epochSeconds) => new Date(Number(epochSeconds) * 1000).toLoca
 export function expressAlert(order) {
   const service = expressService(order);
   if (service?.tier !== INSTANT) return null;
+
+  /*
+   * Only while the parcel is still on the bench.
+   *
+   * The guard used to live in the sweep alone, and the webhook path had none - so any
+   * push for an instant order rang, whatever had become of it. Shopee pushed a status
+   * change for 260926279MHKMD at 14.07 on 28 September; the order was created on the
+   * 26th, was COMPLETED, and had been delivered. The bench got a chime and a card saying
+   * "Masuk 07.02 WITA" for a parcel that had left two days earlier, and the operator went
+   * looking for it in Shopee and quite rightly found nothing.
+   *
+   * A platform pushes for every state an order passes through, including the ones after
+   * it stops being anybody's work. Whether a driver is coming is a property of the order,
+   * not of which code path noticed it, so it is decided here and both paths get it.
+   */
+  if (!UNSHIPPED.has(order?.stage)) return null;
+
   const items = (order.lines ?? []).reduce((n, line) => n + (Number(line.qty) || 0), 0);
 
   return {
@@ -77,7 +94,7 @@ const MAX_PER_SWEEP = 5;
  */
 
 /** Stages where a driver has not taken the parcel yet, so packing it still matters. */
-const UNSHIPPED = new Set(['to_ship', 'shipping']);
+export const UNSHIPPED = new Set(['to_ship', 'shipping']);
 
 /**
  * The safety net behind the webhook.
@@ -91,7 +108,8 @@ const UNSHIPPED = new Set(['to_ship', 'shipping']);
  */
 export async function ringExpressBacklog(orders = [], { now = Date.now() } = {}) {
   const wanted = orders
-    .filter((o) => UNSHIPPED.has(o.stage))
+    // The stage is checked by expressAlert now, for both paths at once; this keeps only
+    // what the sweep adds on top of it.
     .filter((o) => isInstant(o))
     .filter((o) => Number(o.createdAt) * 1000 > now - FRESH_MS)
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))

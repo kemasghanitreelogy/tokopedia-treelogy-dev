@@ -44,7 +44,15 @@ ExecStart=-/usr/bin/node bin/shopee.mjs reviews --notify
 # ledger does not already know: on an ordinary day, not at all. Two days rather than one
 # so a late-evening sale is never audited before the sweep has had its turn.
 ExecStart=-/usr/bin/node bin/tts.mjs mekari:audit --days=2 --notify
-# Snapshot Redis to disk and keep a dated copy; 30 days retained. BGSAVE is asynchronous,
-# so wait for it to finish before copying.
-ExecStart=/bin/sh -c 'mkdir -p /opt/treelogy/backup && redis-cli BGSAVE >/dev/null && while [ "$(redis-cli INFO persistence | tr -d "\r" | grep rdb_bgsave_in_progress | cut -d: -f2)" = "1" ]; do sleep 1; done && cp /var/lib/redis/dump.rdb /opt/treelogy/backup/treelogy-$(date +%%F).rdb && find /opt/treelogy/backup -name "*.rdb" -mtime +30 -delete'
+# A dated copy of the state, kept 30 days.
+#
+# This used to `cp /var/lib/redis/dump.rdb`. That directory is redis:redis 0750 and this
+# unit runs as treelogy, so every run since 14 September failed with "Permission denied"
+# and the backup folder was found empty a fortnight later - while systemd marked the unit
+# failed each night and nobody noticed. `redis-cli --rdb` asks the server over the
+# connection it already has and needs no access to redis's files at all.
+#
+# Deliberately not prefixed with '-': a failed backup must fail the unit, and the script
+# says so on Telegram as well, because two weeks proved a red unit is not enough.
+ExecStart=/usr/bin/node bin/backup.mjs
 TimeoutStartSec=2h

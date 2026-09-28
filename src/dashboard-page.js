@@ -2108,6 +2108,9 @@ ${user ? `(function () {
   }
 
   function show(a) {
+    // A deploy's own check travels this stream so that the stream is what gets checked.
+    // It is proved on the wire, not on a screen, so it never becomes a popup.
+    if (a.kind === 'smoke') { if (a.id > 0) remember(a.id); return; }
     // Oldest at the bottom: a burst reads top-down in the order it arrived, and the one
     // that just landed is where the eye already is.
     var el = card(a);

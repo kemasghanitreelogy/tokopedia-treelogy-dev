@@ -48,10 +48,18 @@ export default async function handler(req, res) {
     hour: '2-digit', minute: '2-digit', timeZone: zoneForChannel(BENCH_CHANNEL).name,
   });
 
+  /*
+   * A deploy presses this too, and nobody wants a popup and a chime on every deploy.
+   * A silent press travels the identical path - same feed, same stream, same socket -
+   * and is only skipped when the page goes to draw it. What the smoke test is proving
+   * is that the alert arrives, and it reads that off the wire rather than off a screen.
+   */
+  const silent = form.get('silent') === '1';
+
   const raised = await raiseAlert({
     // Unique per press, so a second test is not swallowed as a repeat of the first.
     key: `test:${user.id}:${Date.now()}`,
-    kind: 'express',
+    kind: silent ? 'smoke' : 'express',
     tone: 'act',
     title: 'UJI COBA — bukan pesanan sungguhan',
     href: '/api/dashboard?view=labels',

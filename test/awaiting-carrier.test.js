@@ -129,3 +129,21 @@ test('a failed re-read outranks any age, because the screen is knowingly behind'
   assert.equal(out.tone, 'bad');
   assert.match(out.text, /tidak bisa dibaca ulang/);
 });
+
+test('the age reported is of the rows the page acts on, not everything it loaded', async () => {
+  const { settleable } = await import('../src/fulfillment.js');
+  const now = Date.now();
+  const rows = [
+    at(5 * 3600_000, { id: 'MOVING', status: 'SHIPPED', stage: 'shipping', carrier: 'JNE Reguler' }),
+    at(120_000, { id: 'TODO', carrier: 'JNE Reguler' }),
+  ];
+  /*
+   * The first cut took the oldest of all 216 outstanding orders and announced "baris
+   * tertua dibaca 5 jam lalu" on a page whose every actionable row was minutes old. A
+   * parcel already in transit is as stale as it likes; warning about it trains people to
+   * ignore the banner, which is the failure this whole change exists to avoid.
+   */
+  assert.deepEqual(settleable(rows).map((o) => o.id), ['TODO']);
+  assert.equal(ageOfData(oldestRead(settleable(rows)), now), null, 'diam, karena yang dikerjakan masih segar');
+  assert.match(ageOfData(oldestRead(rows), now).text, /5 jam/, 'sedangkan seluruh muatan memang tua');
+});

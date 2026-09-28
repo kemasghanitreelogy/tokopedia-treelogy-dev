@@ -16,7 +16,7 @@ import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
-import { runAction, massArrange, planArrangement, needsSettling, oldestRead } from '../src/fulfillment.js';
+import { runAction, massArrange, planArrangement, needsSettling, settleable, oldestRead } from '../src/fulfillment.js';
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -53,24 +53,36 @@ let settledAt = 0;
  * budget, never Jurnal's.
  */
 async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
+  /*
+   * The age reported is the age of the rows this page acts on, not of everything it
+   * loaded. The first cut took the oldest of all 216 outstanding orders and announced
+   * "baris tertua dibaca 5 jam lalu" on a page whose every actionable row was minutes
+   * old - a warning about parcels already in transit, which are as stale as they like.
+   * A banner that cries wolf is a banner that gets ignored, which is the failure mode
+   * this whole change exists to avoid.
+   */
+  const done = (orders) => oldestRead(settleable(orders, arranged));
+
   const due = now - settledAt > SETTLE_COOLDOWN_MS;
   const wanted = due ? needsSettling(data.orders, arranged, { now, max: SETTLE_MAX }) : [];
-  if (wanted.length === 0) return { data, settled: 0, failed: false };
+  if (wanted.length === 0) return { data, settled: 0, failed: false, readAt: done(data.orders) };
 
   settledAt = now;
   const result = await refreshOrders(wanted.map((o) => ({ channel: o.channel, id: o.id })));
   if (result.orders.length === 0) {
     // Nothing came back. The page is still drawn from what we have; it simply stays as
     // stale as it was, and says so rather than looking freshly read.
-    return { data, settled: 0, failed: Boolean(result.error) };
+    return { data, settled: 0, failed: Boolean(result.error), readAt: done(data.orders) };
   }
 
   const byKey = new Map(result.orders.map((o) => [`${o.channel}:${o.id}`, o]));
+  const orders = data.orders.map((o) => byKey.get(`${o.channel}:${o.id}`) ?? o);
   console.log(`dashboard: ${result.orders.length} dari ${wanted.length} baris kerja dibaca ulang dari platform`);
   return {
-    data: { ...data, orders: data.orders.map((o) => byKey.get(`${o.channel}:${o.id}`) ?? o) },
+    data: { ...data, orders },
     settled: result.orders.length,
     failed: result.orders.length < wanted.length,
+    readAt: done(orders),
   };
 }
 import { priceBySku } from '../src/shopify/prices.js';
@@ -1189,7 +1201,7 @@ export default async function handler(req, res) {
       send(200, renderLabels({ user,
         ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, people,
         showReprints, reprintFilter, now: Math.floor(Date.now() / 1000),
-        readAt: oldestRead(data.orders), settleFailed: labelling.failed,
+        readAt: labelling.readAt, settleFailed: labelling.failed,
       }));
       return;
     }
@@ -1204,7 +1216,7 @@ export default async function handler(req, res) {
       console.log(`dashboard/process: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderProcess({ user,
         ...data, range, csrf, flash, arranged,
-        readAt: oldestRead(data.orders), settleFailed: settling.failed,
+        readAt: settling.readAt, settleFailed: settling.failed,
       }));
       return;
     }
@@ -1236,7 +1248,7 @@ export default async function handler(req, res) {
       console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);
       send(200, renderPicklist({ user,
         ...data, range, picklist,
-        readAt: oldestRead(data.orders), settleFailed: picking.failed,
+        readAt: picking.readAt, settleFailed: picking.failed,
       }));
       return;
     }

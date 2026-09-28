@@ -107,7 +107,7 @@ export const STALE_MS = 10 * 60_000;
  * @param {{now?: number, staleMs?: number, max?: number}} options
  */
 export function needsSettling(orders, arranged = {}, { now = Date.now(), staleMs = STALE_MS, max = 20 } = {}) {
-  const actionable = (orders ?? []).filter((o) => o.channel !== 'manual' && nextAction(o, arranged));
+  const actionable = settleable(orders, arranged);
   const age = (o) => now - Number(o.fetchedAt ?? 0) * 1000;
 
   const incomplete = actionable.filter(awaitingCarrier);
@@ -118,6 +118,13 @@ export function needsSettling(orders, arranged = {}, { now = Date.now(), staleMs
 
   return [...incomplete, ...stale].slice(0, max);
 }
+
+/**
+ * The rows whose staleness can cost something: ones a platform could answer for, that
+ * somebody is about to act on. A parcel already moving is as stale as it likes.
+ */
+export const settleable = (orders, arranged = {}) =>
+  (orders ?? []).filter((o) => o.channel !== 'manual' && nextAction(o, arranged));
 
 /** The oldest read behind a set of rows, as an epoch in seconds; null when nothing says. */
 export function oldestRead(orders) {

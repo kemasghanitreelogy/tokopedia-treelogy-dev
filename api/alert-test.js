@@ -1,4 +1,5 @@
 import { authenticate, parseCookies, COOKIE_NAME, csrfValid, readFormBody } from '../src/dashboard-auth.js';
+import { randomUUID } from 'node:crypto';
 import { raiseAlert } from '../src/alerts.js';
 import { zoneForChannel, BENCH_CHANNEL } from '../src/clock.js';
 
@@ -58,7 +59,9 @@ export default async function handler(req, res) {
 
   const raised = await raiseAlert({
     // Unique per press, so a second test is not swallowed as a repeat of the first.
-    key: `test:${user.id}:${Date.now()}`,
+    // A millisecond is not unique enough: two presses in the same one produced the same
+    // key, and the feed refused the second exactly as it refuses a repeated push.
+    key: `test:${user.id}:${Date.now()}:${randomUUID().slice(0, 8)}`,
     kind: silent ? 'smoke' : 'test',
     tone: 'act',
     title: 'UJI COBA — bukan pesanan sungguhan',

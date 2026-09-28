@@ -9,6 +9,7 @@ import { invalidate } from '../cache.js';
 import { beatWebhook } from '../mekari/heartbeat.js';
 import { notifySyncFailures } from '../notify/telegram.js';
 import { announceExpress } from '../alerts-express.js';
+import { topUpAfterOrder } from '../stock-watch.js';
 import { rememberOrder } from '../orders-source.js';
 
 /**
@@ -94,6 +95,16 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   // invoice posts has nothing to do with whether the parcel needs packing. It rings once
   // per order however many times the platform pushes it.
   await announceExpress(order);
+
+  /*
+   * What just left the shelf may have taken a listing under a hundred.
+   *
+   * Deliberately not awaited. The order is already stored, the platform wants its 200
+   * quickly, and a catalogue read plus a few stock writes is seconds - seconds of a
+   * marketplace waiting to be told we heard it. It answers to nobody here and swallows
+   * its own failures; the half-hourly timer is the backstop either way.
+   */
+  void topUpAfterOrder(order);
 
   // The order has just changed in the database, so every cached list of orders is now a
   // description of the past. Without this the push was only half a push: the row was

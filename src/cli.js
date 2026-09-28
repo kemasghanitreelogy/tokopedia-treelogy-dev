@@ -22,6 +22,7 @@ import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
 import { auditRecent } from './mekari/audit.js';
+import { raiseAlert } from './alerts.js';
 import { loadBudget, setBudget, dailyRation, RESERVE } from './mekari/budget.js';
 import { ordersForPrinting } from './orders-by-id.js';
 import { ensureCustomers, ensureProducts, ensureReady } from './mekari/setup.js';
@@ -80,6 +81,7 @@ Usage:
   npm run mekari:dedupe       Cari & hapus faktur kembar di Jurnal (butuh --yes)
   npm run mekari:audit        Cek pesanan BARU sudah masuk Jurnal (--days=N, --notify) - hemat kuota
   npm run mekari:budget       Sisa kuota bulanan Jurnal (--set=N --renews=YYYY-MM-DD)
+  npm run alert:test          Bunyikan alarm uji ke semua dashboard yang terbuka
   npm run mekari:retry        Pesanan yang gagal masuk Jurnal & jadwal percobaannya (--now untuk paksa)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
@@ -957,6 +959,38 @@ async function cmdMekariAudit(config, args = []) {
  * is worth more than a number nobody has, which is the state that let the account reach
  * 10,886 of 12,000 with a fortnight to go.
  */
+/**
+ * Ring the bench, on purpose.
+ *
+ * Whether the popup appears is a question about this codebase; whether anybody hears it
+ * is a question about the machine on the packing bench - its speakers, its volume, and
+ * whether the browser has been touched since the tab was opened. Only the people standing
+ * there can answer that, and waiting for a real instant order to find out is a poor way
+ * to learn that the volume was down.
+ *
+ * Marked as a test in the text, because an alert that cannot be told from a real parcel
+ * is a worse thing to have than no test at all.
+ */
+async function cmdAlertTest() {
+  const at = new Date().toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Makassar' });
+  const raised = await raiseAlert({
+    key: `test:${Date.now()}`,
+    kind: 'express',
+    tone: 'act',
+    title: 'UJI COBA — bukan pesanan sungguhan',
+    href: '/api/dashboard?view=labels',
+    data: {
+      channelName: 'Uji', id: 'TES-' + at.replace(/\D/g, ''), tier: 'instant',
+      courier: 'GoSend Instant Prioritas', buyer: 'uji bunyi alarm',
+      total: '', items: 0, placedAt: at,
+    },
+  });
+  if (!raised) { console.log(`\n  ${warn('tidak terkirim - umpan alert tidak bisa ditulis')}\n`); return 1; }
+  console.log(`\n  ${ok('terkirim - dashboard yang terbuka harus berbunyi dalam beberapa detik')}`);
+  console.log(`  ${info('kalau tidak berbunyi: klik di mana saja pada halaman, lalu jalankan lagi')}\n`);
+  return 0;
+}
+
 async function cmdMekariBudget(config, args = []) {
   const set = args.find((a) => a.startsWith('--set='))?.slice('--set='.length);
   const renews = args.find((a) => a.startsWith('--renews='))?.slice('--renews='.length);
@@ -1679,6 +1713,7 @@ const COMMANDS = {
   'mekari:retry': (config, args) => cmdMekariRetry(args),
   'mekari:audit': cmdMekariAudit,
   'mekari:budget': cmdMekariBudget,
+  'alert:test': cmdAlertTest,
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
   'mekari:recap': cmdMekariRecap,

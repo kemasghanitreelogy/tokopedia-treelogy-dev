@@ -62,6 +62,9 @@ export default async function handler(req, res) {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  // The router ends any response whose handler has returned. This one returns with the
+  // socket open on purpose, and says so.
+  res.streaming = true;
   res.write('retry: 3000\n\n');
   // Node buffers small writes by default; a doorbell cannot wait for a full packet.
   res.socket?.setNoDelay?.(true);

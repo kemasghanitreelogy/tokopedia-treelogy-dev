@@ -23,9 +23,21 @@ const { ownerUser } = await import('../src/users.js');
 const { clearAlerts } = await import('../src/alerts.js');
 const { closeStore } = await import('../src/store/index.js');
 
-const server = http.createServer((req, res) => {
+/*
+ * The router's own behaviour, not just the handlers'.
+ *
+ * The first cut of this called the handlers directly, and that is precisely how a real
+ * bug survived it: server.js ends any response whose handler has returned, and the event
+ * stream returns with its socket deliberately open. Live delivery was dead in production
+ * while every test passed, because the tests never went through the line that killed it.
+ *
+ * So this mirrors server.js, including the end-if-not-ended.
+ */
+const server = http.createServer(async (req, res) => {
   req.setTimeout(0);
-  (req.url.startsWith('/api/alert-test') ? alertTest : events)(req, res);
+  const handler = req.url.startsWith('/api/alert-test') ? alertTest : events;
+  await handler(req, res);
+  if (!res.writableEnded && !res.streaming) res.end();
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
@@ -65,6 +77,18 @@ function listen({ ms = 2500 } = {}) {
     req.end();
   });
 }
+
+test('the stream survives its handler returning', async () => {
+  // server.js ends a response whose handler has returned. This one returns with the socket
+  // open on purpose; without the flag it went silent immediately after its backlog, which
+  // is exactly how it behaved in production while the tests were green.
+  await clearAlerts();
+  const stream = listen({ ms: 1200 });
+  await new Promise((r) => setTimeout(r, 400));
+  // Raised well after the handler returned: if the socket had been closed, nothing lands.
+  await press();
+  assert.match(await stream, /event: alert/);
+});
 
 test('pressing the bell puts a real alert down the real stream', async () => {
   await clearAlerts();

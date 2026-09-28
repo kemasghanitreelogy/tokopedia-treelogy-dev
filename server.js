@@ -70,7 +70,17 @@ const server = http.createServer(async (req, res) => {
     const handler = await handlerFor(url.pathname);
     if (handler) {
       await handler(req, res);
-      if (!res.writableEnded) res.end();
+      /*
+       * A handler that returns has usually finished; one that streams has not.
+       *
+       * This used to end every response the moment its handler returned, which is right
+       * for all of them but one. The event stream sets itself up - headers, backlog,
+       * subscription, timers - and then returns with the socket deliberately open. The
+       * line below closed it immediately, so a dashboard connected, received whatever was
+       * already waiting, and went silent for ever. It looked like it worked, which is why
+       * it survived a production test: the backlog arriving was mistaken for delivery.
+       */
+      if (!res.writableEnded && !res.streaming) res.end();
       return;
     }
     if (req.method === 'GET' && serveStatic(url.pathname, res)) return;

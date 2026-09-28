@@ -1,0 +1,16 @@
+# /etc/systemd/system/treelogy-topup.timer
+[Unit]
+Description=Treelogy: isi ulang stok listing tiap 30 menit
+
+[Timer]
+# Setengah jam. Sebuah listing turun dari 100 ke 0 jauh lebih lambat dari itu, dan
+# membaca katalog dua kanal setiap lima menit akan memboroskan kuota marketplace untuk
+# jawaban yang hampir selalu "tidak ada yang rendah".
+OnBootSec=10min
+OnUnitActiveSec=30min
+# Supaya tidak selalu jatuh bersamaan dengan sapuan Jurnal di menit yang sama.
+RandomizedDelaySec=90
+Persistent=true
+
+[Install]
+WantedBy=timers.target

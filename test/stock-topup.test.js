@@ -122,3 +122,23 @@ test('the summary names the listings rather than only counting them', () => {
   assert.match(describeTopup(plan), /OMC-90-001 tiktok 12→112/);
   assert.match(describeTopup(plan), new RegExp(`ditambah ${ADD}`));
 });
+
+test('the audit description survives a plan that is not planSync’s', async () => {
+  /*
+   * writeAudit calls describePlan for anything carrying `changes`, and describePlan used
+   * to name all five of planSync's buckets unconditionally. The top-up plan has none of
+   * them, so it threw on the first live run - nine writes to real listings went through
+   * with no audit record behind them. The failure is caught and logged rather than
+   * raised, which is right, and is also why it could have gone unnoticed.
+   */
+  const { describePlan } = await import('../src/stock-sync.js');
+  const plan = planTopup(catalog([{ sku: 'A', tiktok: tiktok(5) }]));
+
+  assert.doesNotThrow(() => describePlan(plan));
+  assert.match(describePlan(plan), /1 perubahan siap/);
+  assert.doesNotMatch(describePlan(plan), /ditinjau/, 'tidak menyebut keranjang yang tidak ada');
+
+  // And planSync's own plan still reads exactly as it did.
+  const full = { changes: [1], review: [], blocked: [], unchanged: [1, 2], unmanaged: [] };
+  assert.equal(describePlan(full), '1 perubahan siap, 0 perlu ditinjau, 0 diblokir, 2 sudah sesuai, 0 di luar ledger');
+});

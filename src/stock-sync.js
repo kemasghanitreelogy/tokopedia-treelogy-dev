@@ -124,13 +124,26 @@ export function planSync({ ledger, catalog, guards = DEFAULT_GUARDS }) {
 
 /** A one-line human summary; the same string is written into the audit record. */
 export function describePlan(plan) {
-  return [
-    `${plan.changes.length} perubahan siap`,
-    `${plan.review.length} perlu ditinjau`,
-    `${plan.blocked.length} diblokir`,
-    `${plan.unchanged.length} sudah sesuai`,
-    `${plan.unmanaged.length} di luar ledger`,
-  ].join(', ');
+  /*
+   * Counts only the buckets a plan actually has.
+   *
+   * It used to name all five unconditionally, which was fine while planSync was the only
+   * planner. The top-up planner produces the same `changes` rows for the same writer but
+   * has no ledger and therefore no "review" or "unmanaged" - and this threw on the first
+   * live run, so nine writes to real listings went through with no audit record. The
+   * failure was caught and logged rather than raised, exactly as it should be, which is
+   * also why it could have gone unnoticed.
+   */
+  const parts = [`${(plan.changes ?? []).length} perubahan siap`];
+  const also = (key, label) => {
+    if (Array.isArray(plan[key])) parts.push(`${plan[key].length} ${label}`);
+  };
+  also('review', 'perlu ditinjau');
+  also('blocked', 'diblokir');
+  also('unchanged', 'sudah sesuai');
+  also('unmanaged', 'di luar ledger');
+  also('skipped', 'dilewati');
+  return parts.join(', ');
 }
 
 /* ------------------------------------------------------------------ applying a plan */

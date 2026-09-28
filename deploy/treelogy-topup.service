@@ -1,0 +1,20 @@
+# /etc/systemd/system/treelogy-topup.service  (dijalankan oleh treelogy-topup.timer)
+[Unit]
+Description=Treelogy: isi ulang listing yang stoknya di bawah ambang
+After=treelogy.service
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+# Angka di listing Treelogy adalah angka pajangan, bukan hitungan stoples - itu yang
+# membuat ini aman dijalankan tanpa orang. Yang di bawah 100 ditambah 100.
+#
+# Membaca katalog memakai kuota Shopee dan TikTok, bukan kuota Jurnal. Katalog yang tidak
+# lengkap membuat perintah ini menolak menulis apa pun, karena kanal yang tidak menjawab
+# terbaca sebagai "tidak ada yang rendah".
+ExecStart=/usr/bin/node bin/tts.mjs stock:topup --yes
+TimeoutStartSec=15min

@@ -403,11 +403,42 @@ function orderDetail(order, index) {
   </div>`;
 }
 
+/**
+ * The age of the oldest row behind a page, in words.
+ *
+ * Silent when everything is recent, because a line that always says "fine" is a line
+ * nobody reads. It speaks when the data is older than the rhythm that maintains it - a
+ * push, or the fifteen-minute sweep - and louder when a re-read was attempted and failed,
+ * since that is the case where the screen is knowingly behind.
+ */
+export function ageOfData(readAt, generatedAt, settleFailed = false) {
+  if (settleFailed) {
+    return { tone: 'bad', text: 'platform tidak bisa dibaca ulang - data mungkin tertinggal' };
+  }
+  if (!readAt) return null;
+  const minutes = Math.floor((generatedAt - readAt * 1000) / 60_000);
+  if (minutes < 15) return null;
+  if (minutes < 120) return { tone: 'flag', text: `baris tertua dibaca ${minutes} menit lalu` };
+  const hours = Math.round(minutes / 60);
+  return { tone: 'bad', text: `baris tertua dibaca ${hours} jam lalu` };
+}
+
 export function shell({
   title, range, errors = {}, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
   view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null, scope = null,
   stale = false, staleSince = null, user = null, style = '', log = false, csrf = null,
+  readAt = null, settleFailed = false,
 }) {
+  /*
+   * How old the rows are, said out loud.
+   *
+   * "diperbarui 08.39" is the clock this page was drawn on, and it was being read as the
+   * age of the data. It is not: a worklist is drawn from our table, and a row in it can
+   * be hours older than the render. Saying both, separately, is the only honest version -
+   * and when a row turns out to be from another era, that is exactly what somebody needs
+   * to see before they act on it.
+   */
+  const dataAge = ageOfData(readAt, generatedAt, settleFailed);
   const who = user
     ? `<a class="who" href="?view=activity&amp;actor=${escape(user.id)}" title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
         <span class="who__av" aria-hidden="true">${escape(initials(user.name || user.email))}</span>
@@ -1643,7 +1674,8 @@ ${celebration(flash)}
   <section class="pagehead">
     <div class="pagehead__t">
       <h1>${escape(title)}</h1>
-      <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(scope ?? range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: zoneName() }))} ${zoneLabel()}</p>
+      <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(scope ?? range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: zoneName() }))} ${zoneLabel()}${
+      dataAge ? ` &middot; <span class="${dataAge.tone}">${escape(dataAge.text)}</span>` : ''}</p>
     </div>
     ${rangeControls || nav.actions ? `<div class="pagehead__acts">${rangeControls}${nav.actions}</div>` : ''}
   </section>
@@ -2728,7 +2760,7 @@ function pickupDialog(pickup, csrf) {
 </dialog>`;
 }
 
-export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, arranged = {}, user = null, pickup = null }) {
+export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, arranged = {}, user = null, pickup = null, readAt = null, settleFailed = false }) {
   const rows = pending(orders, arranged);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
 
@@ -2834,6 +2866,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     // A worklist, not a report: it shows everything still waiting, so a date filter here
     // would only hide work. See loadOutstanding.
     hideRangeControls: true, scope: 'semua yang belum diatur',
+    readAt, settleFailed,
     flash,
     kpis: `<div class="strip">
       ${stat('Perlu diatur', String(rows.length), rows.length > 0 ? 'flag' : 'ok')}
@@ -2983,7 +3016,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
 }
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null, csrf = null }) {
+export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null, csrf = null, readAt = null, settleFailed = false }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
   const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee' })
@@ -3012,6 +3045,7 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
     generatedAt,
     view: 'picklist',
     hideRangeControls: true, scope: 'semua yang perlu dipetik',
+    readAt, settleFailed,
     kpis: `
       <div class="strip">
         ${stat('Unit dipetik', String(picklist.unitCount))}
@@ -3953,7 +3987,7 @@ const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURICompon
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
@@ -4119,6 +4153,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     range, errors, shopeeShop, generatedAt,
     view: 'labels',
     hideRangeControls: true, scope: 'semua yang perlu dicetak',
+    readAt, settleFailed,
     flash,
     kpis: `
       <div class="strip">

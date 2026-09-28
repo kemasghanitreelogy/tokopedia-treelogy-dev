@@ -16,7 +16,7 @@ import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
-import { runAction, massArrange, planArrangement, awaitingCarrier } from '../src/fulfillment.js';
+import { runAction, massArrange, planArrangement, needsSettling, oldestRead } from '../src/fulfillment.js';
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
@@ -24,8 +24,55 @@ import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label
 import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders } from '../src/orders-refresh.js';
 
-/** One Shopee detail call takes fifty ids; this never needs more than a handful. */
-const CARRIER_REFRESH_MAX = 20;
+/** One Shopee detail call takes fifty ids; a worklist never needs more than a handful. */
+const SETTLE_MAX = 20;
+/**
+ * A floor between settlings, so reloading a page twice does not read twice.
+ *
+ * Shared by every worklist because they are drawn from one set of rows: settling for the
+ * process view settles the picklist and the labels with it.
+ */
+const SETTLE_COOLDOWN_MS = 45_000;
+let settledAt = 0;
+
+/**
+ * Bring the rows somebody is about to act on back in line with their platforms.
+ *
+ * Every screen here is drawn from our own table, which is what makes it fast and what
+ * lets it survive a marketplace being down. The price is that a row describes the moment
+ * it was read - and Shopee's pushes, which cannot be verified and are rate limited per
+ * shop, are missed often enough for that moment to be hours ago.
+ *
+ * 2609287GUBMJ7N is what that costs. Stored as arrangeable with no courier; Shopee had
+ * it CANCELLED with GrabExpress Instant and a dead package. It sat at the top of the
+ * worklist, pre-ticked, counted in "Atur pengiriman 54 pesanan" - one click from being
+ * arranged, and it no longer existed.
+ *
+ * Bounded three ways: only rows that are actionable, only the oldest of those, and at
+ * most once every forty-five seconds however many times the page is opened. Marketplace
+ * budget, never Jurnal's.
+ */
+async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
+  const due = now - settledAt > SETTLE_COOLDOWN_MS;
+  const wanted = due ? needsSettling(data.orders, arranged, { now, max: SETTLE_MAX }) : [];
+  if (wanted.length === 0) return { data, settled: 0, failed: false };
+
+  settledAt = now;
+  const result = await refreshOrders(wanted.map((o) => ({ channel: o.channel, id: o.id })));
+  if (result.orders.length === 0) {
+    // Nothing came back. The page is still drawn from what we have; it simply stays as
+    // stale as it was, and says so rather than looking freshly read.
+    return { data, settled: 0, failed: Boolean(result.error) };
+  }
+
+  const byKey = new Map(result.orders.map((o) => [`${o.channel}:${o.id}`, o]));
+  console.log(`dashboard: ${result.orders.length} dari ${wanted.length} baris kerja dibaca ulang dari platform`);
+  return {
+    data: { ...data, orders: data.orders.map((o) => byKey.get(`${o.channel}:${o.id}`) ?? o) },
+    settled: result.orders.length,
+    failed: result.orders.length < wanted.length,
+  };
+}
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
@@ -1119,6 +1166,10 @@ export default async function handler(req, res) {
       // Shopify prints are remembered here, not there; the page cannot tell what still
       // needs a label without it.
       const printed = await printedLabels().catch(() => ({}));
+      // A waybill printed for an order the platform has cancelled is a parcel that goes
+      // out and comes back. Same settling, same shared cooldown.
+      const labelling = await settleWorklist(data, await arrangedOrders().catch(() => ({})));
+      data = labelling.data;
       const showReprints = url.searchParams.get('reprint') === '1';
       // Only the reprint list names who printed, so the roster is only read for it. An
       // email is a fine identifier and a poor label; the batch header says "Vanya".
@@ -1138,6 +1189,7 @@ export default async function handler(req, res) {
       send(200, renderLabels({ user,
         ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, people,
         showReprints, reprintFilter, now: Math.floor(Date.now() / 1000),
+        readAt: oldestRead(data.orders), settleFailed: labelling.failed,
       }));
       return;
     }
@@ -1146,32 +1198,14 @@ export default async function handler(req, res) {
       // Arranging a Shopify order calls nothing, so only this says it has been done.
       const arranged = await arrangedOrders().catch(() => ({}));
 
-      /*
-       * Settle the rows we can prove are unsettled, before drawing them.
-       *
-       * A Shopee order that is arrangeable with no courier on it was read in the seconds
-       * after payment, while Shopee was still booking one - for an instant courier that
-       * is a live call to Grab or Gojek. Nothing fills it in afterwards, so the row keeps
-       * describing that moment until another push happens to arrive.
-       *
-       * 2609287GUBMJ7N is what that costs: stored as arrangeable with no courier, while
-       * Shopee had it CANCELLED with GrabExpress Instant and a dead package. It sat at
-       * the top of this worklist, ticked, waiting to be arranged. One read per page load,
-       * capped, and only for rows already known to be incomplete - a handful at most, and
-       * Shopee's budget rather than Jurnal's.
-       */
-      const unsettled = data.orders.filter(awaitingCarrier).slice(0, CARRIER_REFRESH_MAX);
-      if (unsettled.length > 0) {
-        const { orders: fresh } = await refreshOrders(unsettled.map((o) => ({ channel: o.channel, id: o.id })));
-        if (fresh.length > 0) {
-          const byId = new Map(fresh.map((o) => [`${o.channel}:${o.id}`, o]));
-          data = { ...data, orders: data.orders.map((o) => byId.get(`${o.channel}:${o.id}`) ?? o) };
-          console.log(`dashboard/process: ${fresh.length} pesanan tanpa kurir dibaca ulang dari platform`);
-        }
-      }
+      const settling = await settleWorklist(data, arranged);
+      data = settling.data;
 
       console.log(`dashboard/process: ${data.orders.length} orders outstanding (${took()})`);
-      send(200, renderProcess({ user, ...data, range, csrf, flash, arranged }));
+      send(200, renderProcess({ user,
+        ...data, range, csrf, flash, arranged,
+        readAt: oldestRead(data.orders), settleFailed: settling.failed,
+      }));
       return;
     }
 
@@ -1192,9 +1226,18 @@ export default async function handler(req, res) {
     }
 
     if (view === 'picklist') {
+      // The same settling as the process view, sharing its cooldown: these three pages
+      // are drawn from one set of rows, so whichever is opened first pays for all of
+      // them. A picker sent after a parcel that was cancelled an hour ago has walked the
+      // shelves for nothing.
+      const picking = await settleWorklist(data, await arrangedOrders().catch(() => ({})));
+      data = picking.data;
       const picklist = buildPicklist(data.orders);
       console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);
-      send(200, renderPicklist({ user, ...data, range, picklist }));
+      send(200, renderPicklist({ user,
+        ...data, range, picklist,
+        readAt: oldestRead(data.orders), settleFailed: picking.failed,
+      }));
       return;
     }
 

@@ -82,6 +82,49 @@ export const awaitingCarrier = (order) =>
   && (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP')
   && !order.carrier;
 
+/**
+ * How old a snapshot may be before acting on it is a guess.
+ *
+ * The sweep re-reads every fifteen minutes and a push usually arrives sooner, so ten
+ * minutes is already outside the normal rhythm: a row that has not been touched in that
+ * long is one the usual messengers missed.
+ */
+export const STALE_MS = 10 * 60_000;
+
+/**
+ * The rows worth settling with the platform before anybody acts on them.
+ *
+ * Every screen here is drawn from our own table, which is what makes it fast and what
+ * lets it survive a marketplace being down. The price is that a row describes the moment
+ * it was read, and Shopee's pushes - unverifiable and rate limited - are missed often
+ * enough that "the moment it was read" can be hours ago.
+ *
+ * Only actionable rows, because those are the ones somebody is about to do something to,
+ * and a cancelled order that nobody can arrange costs nothing while it sits unread. Known
+ * -incomplete rows come first and regardless of age; after them the oldest, because if
+ * the cap bites it should bite the freshest.
+ *
+ * @param {{now?: number, staleMs?: number, max?: number}} options
+ */
+export function needsSettling(orders, arranged = {}, { now = Date.now(), staleMs = STALE_MS, max = 20 } = {}) {
+  const actionable = (orders ?? []).filter((o) => o.channel !== 'manual' && nextAction(o, arranged));
+  const age = (o) => now - Number(o.fetchedAt ?? 0) * 1000;
+
+  const incomplete = actionable.filter(awaitingCarrier);
+  const stale = actionable
+    .filter((o) => !awaitingCarrier(o))
+    .filter((o) => age(o) > staleMs)
+    .sort((a, b) => age(b) - age(a));
+
+  return [...incomplete, ...stale].slice(0, max);
+}
+
+/** The oldest read behind a set of rows, as an epoch in seconds; null when nothing says. */
+export function oldestRead(orders) {
+  const stamps = (orders ?? []).map((o) => Number(o.fetchedAt)).filter((n) => Number.isFinite(n) && n > 0);
+  return stamps.length > 0 ? Math.min(...stamps) : null;
+}
+
 /** Orders still waiting on the seller, newest first, with the action each one needs. */
 export function pending(orders, arranged = {}) {
   return orders

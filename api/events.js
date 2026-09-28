@@ -109,14 +109,30 @@ export default async function handler(req, res) {
     send(res, event);
   };
 
-  const backlog = await alertsSince(lastId).catch(() => []);
+  /*
+   * A test is meaningful at the moment it is pressed and never afterwards.
+   *
+   * The backlog exists so a parcel raised while a browser was away still gets packed.
+   * A doorbell test has no parcel behind it, so replaying one only puts "UJI COBA" back
+   * on the screen every time somebody reloads - which is what happened, twice over, on a
+   * bench that had nothing to test.
+   *
+   * Live delivery still carries them: press the bell and the card appears. Reload and it
+   * is gone, because it was never work.
+   */
+  const REPLAYED = (event) => event.kind !== 'test' && event.kind !== 'smoke';
+
+  const backlog = (await alertsSince(lastId).catch(() => [])).filter(REPLAYED);
   for (const event of backlog) push(event);
 
   alertBus.on('alert', push);
 
   const poll = setInterval(async () => {
     if (closed) return;
-    for (const event of await alertsSince(lastId).catch(() => [])) push(event);
+    // The poll is a second reader of the same feed, so it is a replay too: an alert it
+    // finds was raised by another process, and a test raised elsewhere is not this
+    // browser's business either.
+    for (const event of (await alertsSince(lastId).catch(() => [])).filter(REPLAYED)) push(event);
   }, POLL_MS);
 
   const beat = setInterval(() => {

@@ -59,7 +59,7 @@ export default async function handler(req, res) {
   const raised = await raiseAlert({
     // Unique per press, so a second test is not swallowed as a repeat of the first.
     key: `test:${user.id}:${Date.now()}`,
-    kind: silent ? 'smoke' : 'express',
+    kind: silent ? 'smoke' : 'test',
     tone: 'act',
     title: 'UJI COBA — bukan pesanan sungguhan',
     href: '/api/dashboard?view=labels',

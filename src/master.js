@@ -60,7 +60,7 @@ export const PRODUCTS = [
 
   // --- Set & aksesori
   { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS', 'Ritual-Set'] },
-  { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop'] },
+  { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop', '47115609438'] },
   { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set', aliases: ['Bamboo Whisk - 120 prongs'] },
   { sku: 'The-Inside-&-Out30', name: 'Inside Out Moringa Protocol', variant: '30 hari', category: 'set' },
   { sku: 'The-Inside-&-Out60', name: 'Inside Out Moringa Protocol', variant: '60 hari', category: 'set' },
@@ -72,8 +72,8 @@ export const PRODUCTS = [
   { sku: 'The-Discovery-Pack', name: 'The Discovery Pack', variant: 'listing Shopee', category: 'set', aliases: ['The Discovery Pack'] },
 
   // --- Free gift
-  { sku: 'Travel-Pouch', name: 'Travel Pouch', category: 'gift', gift: true, aliases: ['GFT-POUCH-001'] },
-  { sku: 'Mystery-Gift', name: 'Mystery Gift', category: 'gift', gift: true, aliases: ['GFT-MYST-001'] },
+  { sku: 'Travel-Pouch', name: 'Travel Pouch', category: 'gift', gift: true, aliases: ['GFT-POUCH-001', 'Travel Pouch'] },
+  { sku: 'Mystery-Gift', name: 'Mystery Gift', category: 'gift', gift: true, aliases: ['GFT-MYST-001', 'Mystery Gift'] },
   { sku: '1736924837905663963', name: 'Bamboo Scoop (free gift)', category: 'gift', gift: true },
   // Listed on Shopee as "(FREE GIFT - DO NOT ORDER) Treelogy Gift with Purchase / Seed
   // Oil 3ml", priced at Rp1.000.000 and discounted by exactly the same amount, so it
@@ -92,17 +92,17 @@ export const PRODUCTS = [
   },
   {
     sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram &middot; Starter', category: 'bundle',
-    aliases: ['MRS45'],
+    aliases: ['MRS45', 'MRS-002+45'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-45-001', qty: 1 }],
   },
   {
     sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram &middot; Daily Wellness', category: 'bundle',
-    aliases: ['MRS90'],
+    aliases: ['MRS90', 'MRS-003+90'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-90-001', qty: 1 }],
   },
   {
     sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram &middot; Complete', category: 'bundle',
-    aliases: ['MRS180'],
+    aliases: ['MRS180', 'MRS-004+180'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },
   {

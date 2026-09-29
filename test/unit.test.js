@@ -120,3 +120,44 @@ test('access token is treated as expired inside the skew window', () => {
   assert.equal(accessTokenExpired({ accessTokenExpireAt: now - 10 }), true);
   assert.equal(accessTokenExpired({ accessTokenExpireAt: 0 }), false, 'unknown expiry is not expired');
 });
+
+test('the SKU spellings that actually reached the books are all mapped', async () => {
+  const { findProduct } = await import('../src/master.js');
+  /*
+   * Each of these blocked something real. MRS-002+45 held an invoice for Rp1.822.324
+   * out of Jurnal and alerted three times in twenty-one minutes; the others turned up
+   * in the same sweep of 4,065 orders over sixty days.
+   *
+   * Every one was confirmed rather than guessed: the three ritual-set bundles by price
+   * against the Shopee model of the same bundle (1.21M, 1.48M, 2.04M for 45, 90 and
+   * 180 gram), the numeric Shopee id by the order line's own title - "(FREE GIFT - DO
+   * NOT ORDER) TREELOGY Bamboo Scoop" - and the two Shopify gifts by being the same
+   * words with a space where the SKU has a hyphen.
+   */
+  const mapped = {
+    'MRS-002+45': 'MRS-002',
+    'MRS-003+90': 'MRS-003',
+    'MRS-004+180': 'MRS-004',
+    'Travel Pouch': 'Travel-Pouch',
+    'Mystery Gift': 'Mystery-Gift',
+    47115609438: 'Bamboo-Scoop',
+  };
+  for (const [spelling, master] of Object.entries(mapped)) {
+    assert.equal(findProduct(spelling)?.sku, master, spelling);
+  }
+});
+
+test('what cannot be identified stays unmapped rather than guessed', async () => {
+  const { findProduct } = await import('../src/master.js');
+  /*
+   * These three sit in the catalogue with no live listing on any channel and no order in
+   * sixty days, so nothing in the data says what they contain. GIFT-OMC180 is either the
+   * 90 or the 180 capsule; the other two are bundles nobody can name from a dead listing.
+   *
+   * An unmapped SKU stops one invoice and says why. A wrongly mapped one puts the wrong
+   * goods in the books and says nothing at all.
+   */
+  for (const sku of ['Consistency-Pack', 'The-Ritual-of-Radiance', 'GIFT-OMC180']) {
+    assert.equal(findProduct(sku) ?? null, null, sku);
+  }
+});

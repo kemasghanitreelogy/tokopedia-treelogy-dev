@@ -2953,7 +2953,16 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     toggle.textContent = allOn ? 'Kosongkan semua' : 'Pilih semua';
     toggle.setAttribute('aria-pressed', allOn ? 'true' : 'false');
   }
-  function setAll(v) { picks.forEach(function (p) { p.checked = v; }); sync(); }
+  function setAll(v) {
+    // Only what the filter left. Ticking the dimmed rows too would send the whole day out
+    // when the operator meant one counter's worth - and picking several couriers at once
+    // makes that mistake easier to make, not harder.
+    picks.forEach(function (p) {
+      if (v && !wanted(p.closest('.wo'))) return;
+      p.checked = v;
+    });
+    sync();
+  }
 
   picks.forEach(function (p) { p.addEventListener('change', sync); });
 
@@ -2973,26 +2982,69 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
     setAll(toggle.getAttribute('aria-pressed') !== 'true');
   });
 
-  // Selecting rather than hiding: a dropoff run covers one courier, or everything that
-  // made today's cut-off, but the rest of the day's orders stay visible so nothing is
-  // forgotten. One selector is active at a time, whichever axis it selects by.
-  var selectors = Array.prototype.slice.call(form.querySelectorAll('.wl__bar button[data-carrier], .wl__bar button[data-early]'));
-  selectors.forEach(function (chip) {
+  /*
+   * Selecting rather than hiding: a dropoff run covers some couriers but not others, and
+   * the rest of the day's orders stay visible so nothing is forgotten.
+   *
+   * Several couriers at once, because a run is rarely one of them - JNE and J&T go to the
+   * same counter. Each chip toggles its own courier in or out of the set, "Semua kurir"
+   * empties the set, and an empty set means no courier filter at all rather than none
+   * selected.
+   *
+   * The cut-off chip is a different axis and narrows whatever the couriers left: "JNE and
+   * J&T that made today's cut-off" is a real errand, and it is the only reading of two
+   * filters at once that is of any use.
+   */
+  var courierChips = Array.prototype.slice.call(form.querySelectorAll('.wl__bar button[data-carrier]'));
+  var earlyChip = form.querySelector('.wl__bar button[data-early]');
+  var chosen = [];
+  var onlyEarly = false;
+
+  function wanted(card) {
+    if (onlyEarly && card.dataset.early !== '1') return false;
+    if (chosen.length === 0) return true;
+    return chosen.indexOf(card.dataset.carrier) !== -1;
+  }
+
+  function paint() {
+    var filtering = chosen.length > 0 || onlyEarly;
+    picks.forEach(function (p) {
+      var card = p.closest('.wo');
+      var hit = wanted(card);
+      p.checked = hit;
+      card.classList.toggle('wo--dim', filtering && !hit);
+    });
+
+    courierChips.forEach(function (c) {
+      var name = c.dataset.carrier;
+      // The "all" chip reads as on precisely when nothing narrows the couriers, which is
+      // what it means rather than what it does.
+      var on = name === '' ? chosen.length === 0 : chosen.indexOf(name) !== -1;
+      c.classList.toggle('is-on', on);
+      c.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (earlyChip) {
+      earlyChip.classList.toggle('is-on', onlyEarly);
+      earlyChip.setAttribute('aria-pressed', onlyEarly ? 'true' : 'false');
+    }
+    sync();
+  }
+
+  courierChips.forEach(function (chip) {
     chip.addEventListener('click', function () {
-      selectors.forEach(function (c) { c.classList.toggle('is-on', c === chip); });
-      var wantEarly = chip.hasAttribute('data-early');
-      var want = chip.dataset.carrier;
-      picks.forEach(function (p) {
-        var card = p.closest('.wo');
-        var hit = wantEarly ? card.dataset.early === '1' : (want === '' || card.dataset.carrier === want);
-        p.checked = hit;
-        card.classList.toggle('wo--dim', !hit && (wantEarly || want !== ''));
-      });
-      sync();
+      var name = chip.dataset.carrier;
+      if (name === '') {
+        chosen = [];
+      } else {
+        var at = chosen.indexOf(name);
+        if (at === -1) chosen.push(name); else chosen.splice(at, 1);
+      }
+      paint();
     });
   });
+  if (earlyChip) earlyChip.addEventListener('click', function () { onlyEarly = !onlyEarly; paint(); });
 
-  sync();
+  paint();
 })();\n`,
     body: pickupDialog(pickup, csrf) + (rows.length === 0
       ? `<p class="empty">Semua pesanan sudah diatur pengirimannya.${

@@ -4126,11 +4126,11 @@ const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURICompon
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
-  const assessed = orders.map((o) => ({ order: o, readiness: labelReadiness(o, printed) }));
+  const assessed = orders.map((o) => ({ order: o, readiness: labelReadiness(o, printed, arranged) }));
 
   const counts = { needsPrint: 0, waiting: 0, arrange: 0, reprint: 0 };
   for (const { readiness } of assessed) {

@@ -68,8 +68,12 @@ test('a Shopify order needs a label until one has been printed for it', () => {
   // delivering in ID, and this store rates shipping manually - so the label is the
   // packing sheet drawn here, and Shopify cannot tell us whether it was printed.
   const order = { channel: 'shopify', id: '#10926', status: 'PAID/UNFULFILLED', stage: 'to_ship' };
-  assert.equal(labelReadiness(order).state, 'needsPrint');
-  assert.equal(labelReadiness(order, { '#10926': { at: 1 } }).state, 'reprint');
+  // And it waits to be arranged first, the way every marketplace order waits for the
+  // status that says the same thing.
+  const arranged = { '#10926': { at: 1 } };
+  assert.equal(labelReadiness(order).state, 'arrange');
+  assert.equal(labelReadiness(order, {}, arranged).state, 'needsPrint');
+  assert.equal(labelReadiness(order, { '#10926': { at: 1 } }, arranged).state, 'reprint');
   assert.equal(labelReadiness({ ...order, stage: 'completed' }).state, 'none');
 });
 

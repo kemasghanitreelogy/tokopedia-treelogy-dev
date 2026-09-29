@@ -575,14 +575,29 @@ export function printDaysIn(batches) {
  *   arrange      shipping has not been arranged, so no document can exist at all.
  *   none         nothing to print, now or later.
  */
-export function labelReadiness(order, printed = {}) {
-  // Shopify issues no waybill - Shopify Shipping does not serve this shop, and the
-  // courier is booked outside it - so the label is the packing sheet we draw ourselves.
-  // Nothing on Shopify's side records that it was printed, so `printed` does.
+export function labelReadiness(order, printed = {}, arranged = {}) {
+  /*
+   * Shopify issues no waybill - Shopify Shipping does not serve this shop, and the
+   * courier is booked outside it - so the label is the packing sheet we draw ourselves.
+   * Nothing on Shopify's side records that it was printed, so `printed` does.
+   *
+   * And nothing on Shopify's side records that it was arranged either, which is what put
+   * #11087 in the print queue while it was still sitting in "perlu diatur". Every other
+   * channel is gated on arrangement by the platform's own status: Shopee waits for
+   * PROCESSED, Tokopedia for AWAITING_COLLECTION, and READY_TO_SHIP or AWAITING_SHIPMENT
+   * says so instead of offering a label. Shopify had no such status to wait on, so it
+   * offered one immediately - not a different rule on purpose, just a rule with nothing
+   * to hang on.
+   *
+   * The `arranged` ledger is that thing. nextAction already treats it as the moment a
+   * Shopify order stops needing the operator, so the label waits for it too, and the
+   * bench works one order the same way whichever channel it came from.
+   */
   if (order.channel === 'shopify') {
     if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
-    if (order.stage === 'to_ship') return { state: 'needsPrint', note: 'siap dicetak' };
-    return { state: 'none', note: 'sudah selesai, tidak perlu label' };
+    if (order.stage !== 'to_ship') return { state: 'none', note: 'sudah selesai, tidak perlu label' };
+    if (!arranged[order.id]) return { state: 'arrange', note: 'atur pengiriman dulu' };
+    return { state: 'needsPrint', note: 'siap dicetak' };
   }
 
   // A sale typed in by hand has no marketplace and no waybill either; its label is the

@@ -151,8 +151,9 @@ test('without a way to read the order, a Shopify label is refused rather than dr
 
 test('a printed Shopify order leaves the daily list and joins the reprints', () => {
   const o = order();
-  assert.equal(labelReadiness(o, {}).state, 'needsPrint');
-  assert.equal(labelReadiness(o, { '#10926': { at: 1, times: 1 } }).state, 'reprint');
+  const arranged = { '#10926': { at: 1 } };
+  assert.equal(labelReadiness(o, {}, arranged).state, 'needsPrint');
+  assert.equal(labelReadiness(o, { '#10926': { at: 1, times: 1 } }, arranged).state, 'reprint');
 });
 
 test('a whole run is one document, with the mark embedded once rather than once a parcel', async () => {

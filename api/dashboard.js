@@ -1178,9 +1178,13 @@ export default async function handler(req, res) {
       // Shopify prints are remembered here, not there; the page cannot tell what still
       // needs a label without it.
       const printed = await printedLabels().catch(() => ({}));
+      // Shopify has no platform status that says "arranged", so this ledger is what the
+      // label waits on - the same thing the process page marks when the operator books
+      // the courier outside Shopify.
+      const arrangedNow = await arrangedOrders().catch(() => ({}));
       // A waybill printed for an order the platform has cancelled is a parcel that goes
       // out and comes back. Same settling, same shared cooldown.
-      const labelling = await settleWorklist(data, await arrangedOrders().catch(() => ({})));
+      const labelling = await settleWorklist(data, arrangedNow);
       data = labelling.data;
       const showReprints = url.searchParams.get('reprint') === '1';
       // Only the reprint list names who printed, so the roster is only read for it. An
@@ -1199,7 +1203,7 @@ export default async function handler(req, res) {
       };
       console.log(`dashboard/labels: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderLabels({ user,
-        ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, people,
+        ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, arranged: arrangedNow, people,
         showReprints, reprintFilter, now: Math.floor(Date.now() / 1000),
         readAt: labelling.readAt, settleFailed: labelling.failed,
       }));

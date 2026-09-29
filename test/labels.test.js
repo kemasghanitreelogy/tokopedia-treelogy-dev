@@ -251,7 +251,33 @@ test('a marketplace label that has been printed leaves the queue, the way a Shop
   assert.equal(labelReadiness(tiktok, ledger).state, 'reprint');
 
   // A different channel's order of the same number is a different parcel.
-  assert.equal(labelReadiness({ channel: 'shopify', id: '260922NYRBTMG5', stage: 'to_ship' }, ledger).state, 'needsPrint');
+  const shopify = { channel: 'shopify', id: '260922NYRBTMG5', stage: 'to_ship' };
+  assert.equal(labelReadiness(shopify, ledger, { '260922NYRBTMG5': { at: 1 } }).state, 'needsPrint');
+});
+
+test('a Shopify order waits to be arranged before it offers a label', async () => {
+  const { labelReadiness } = await import('../src/labels.js');
+  /*
+   * #11087 sat in "perlu diatur" on the process page and in the print queue at the same
+   * time. Every other channel is gated on arrangement by the platform's own status -
+   * Shopee waits for PROCESSED, Tokopedia for AWAITING_COLLECTION - and Shopify has no
+   * such status, so it offered a label the moment the order was paid. Not a different
+   * rule on purpose; a rule with nothing to hang on.
+   *
+   * The arranged ledger is that thing, and nextAction already treats it as the moment a
+   * Shopify order stops needing the operator.
+   */
+  const order = { channel: 'shopify', id: '#11087', stage: 'to_ship' };
+
+  const before = labelReadiness(order, {}, {});
+  assert.equal(before.state, 'arrange');
+  assert.equal(before.note, 'atur pengiriman dulu');
+
+  assert.equal(labelReadiness(order, {}, { '#11087': { at: 1, by: 'kemas' } }).state, 'needsPrint');
+  // Somebody else's order being arranged is not this one being arranged.
+  assert.equal(labelReadiness(order, {}, { '#11086': { at: 1 } }).state, 'arrange');
+  // A printed label still reads as printed, whatever the ledger says now.
+  assert.equal(labelReadiness(order, { 'shopify:#11087': { at: 1 } }, {}).state, 'reprint');
 });
 
 test('the ledger still recognises a Shopify order written before it had channels', () => {

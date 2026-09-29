@@ -61,6 +61,12 @@ export const DATASETS = {
     hint: 'Satu baris per produk di tiap pesanan. Paling rinci, untuk rekonsiliasi.',
     sheet: 'Item',
   },
+  jubelio: {
+    id: 'jubelio',
+    label: 'Format Jubelio',
+    hint: 'Meniru "Daftar Penjualan" Jubelio: 22 kolom, satu baris per pesanan. Potongan biaya marketplace tetap 0 - angkanya ada di laporan settlement, bukan di pesanan.',
+    sheet: 'Daftar Penjualan',
+  },
 };
 export const DEFAULT_DATASET = 'product';
 export const FORMATS = { xlsx: 'xlsx', csv: 'csv' };
@@ -225,6 +231,124 @@ function orderSheet(orders) {
   return { columns, rows };
 }
 
+/*
+ * Jubelio's "Daftar Penjualan", as closely as our own data allows.
+ *
+ * Read off a real export - Daftar Penjualan (4).xlsx, 332 rows - rather than described
+ * from memory: the twenty-two columns in their order, the channel names Jubelio uses,
+ * the store name it gives each one, the "Gudang Pusat" it writes into every row, and
+ * the arithmetic, which holds on all of them:
+ *
+ *   Grand Total = Total - Diskon - Diskon Lainnya - Potongan Biaya - Biaya Lainnya
+ *                       + Pajak + Ongkir + Asuransi - Biaya Proses Pesanan
+ *
+ * Two places where honesty beats mimicry.
+ *
+ * The fee columns stay at zero. Jubelio fills Potongan Biaya and Biaya Proses Pesanan
+ * because it pulls each marketplace's settlement report; we read orders, and an order
+ * does not carry what the platform will deduct from it. Writing a plausible number there
+ * would make this file reconcile against nothing while looking like it should.
+ *
+ * And Jubelio's order numbers carry its own running id - TP-586207367899284488-128884.
+ * That number belongs to Jubelio's database and cannot be reproduced from outside it, so
+ * the prefix and the platform id are written and the sequence is left off.
+ */
+const JUBELIO_CHANNEL = {
+  shopee: { channel: 'SHOPEE', store: 'Treelogy Moringa', prefix: 'SP-' },
+  tokopedia: { channel: 'TOKOPEDIA', store: 'Treelogy Moringa (TTS)', prefix: 'TP-' },
+  tiktok_shop: { channel: 'Shop | Tokopedia', store: 'Treelogy Moringa (TTS)', prefix: 'TT-' },
+  shopify: { channel: 'SHOPIFY', store: 'treelogy.com', prefix: 'SHF-' },
+  manual: { channel: 'MANUAL', store: 'Treelogy Moringa', prefix: 'MN-' },
+};
+
+/**
+ * Our stage in Jubelio's vocabulary.
+ *
+ * Their export carried four - SHIPPED, COMPLETED, PROCESSING, PAID - across 332 rows,
+ * which is what a list of live and recent orders would hold. The three below that are
+ * not in that sample are written in the same style, because a cancelled order has to say
+ * cancelled however Jubelio would have spelled it.
+ */
+const JUBELIO_STATUS = {
+  unpaid: 'PENDING',
+  to_ship: 'PAID',
+  shipping: 'SHIPPED',
+  delivered: 'COMPLETED',
+  completed: 'COMPLETED',
+  cancelled: 'CANCELLED',
+  returned: 'RETURNED',
+};
+
+/** Shopify's REF is the numeric order id, which lives in the gid rather than the name. */
+const shopifyRef = (order) => String(order.gid ?? '').split('/').pop() || String(order.id ?? '').replace('#', '');
+
+function jubelioSheet(orders) {
+  const rows = orders
+    .slice()
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .map((order) => {
+      const map = JUBELIO_CHANNEL[order.channel] ?? { channel: String(order.channel ?? '').toUpperCase(), store: 'Treelogy Moringa', prefix: '' };
+      const ref = order.channel === 'shopify' ? shopifyRef(order) : String(order.id ?? '');
+      const number = String(order.id ?? '').replace('#', '');
+      const goods = Math.round(linesOf(order).reduce((n, line) => n + lineRevenue(line), 0));
+      const shipping = Math.round(Number(order.finance?.shipping) || 0);
+
+      return {
+        at: stamp(order),
+        number: `${map.prefix}${number}`,
+        ref,
+        invoice: '',
+        channel: map.channel,
+        store: map.store,
+        location: 'Gudang Pusat',
+        customer: String(order.buyer ?? ''),
+        phone: String(order.buyerPhone ?? ''),
+        carrier: String(order.carrier ?? ''),
+        status: JUBELIO_STATUS[order.stage] ?? String(order.status ?? '').toUpperCase(),
+        discount: 0,
+        otherDiscount: 0,
+        feeDeduction: 0,
+        otherFee: 0,
+        tax: 0,
+        shipping,
+        insurance: 0,
+        tip: '',
+        processFee: 0,
+        total: goods,
+        // Their own arithmetic, not a second opinion: with every fee at zero it comes to
+        // goods plus postage, and if the fee columns are ever filled it still holds.
+        grandTotal: goods + shipping,
+      };
+    });
+
+  const columns = [
+    { key: 'at', label: 'Tanggal', type: 'date', width: 18 },
+    { key: 'number', label: 'No Pesanan', width: 26 },
+    { key: 'ref', label: 'REF', width: 22 },
+    { key: 'invoice', label: 'No Invoice', width: 16 },
+    { key: 'channel', label: 'Channel', width: 16 },
+    { key: 'store', label: 'Nama Toko', width: 22 },
+    { key: 'location', label: 'Lokasi', width: 14 },
+    { key: 'customer', label: 'Pelanggan', width: 24 },
+    { key: 'phone', label: 'No Telp', width: 16 },
+    { key: 'carrier', label: 'Kurir', width: 20 },
+    { key: 'status', label: 'Status', width: 14 },
+    { key: 'discount', label: 'Diskon', type: 'money', width: 13 },
+    { key: 'otherDiscount', label: 'Diskon Lainnya', type: 'money', width: 15 },
+    { key: 'feeDeduction', label: 'Potongan Biaya', type: 'money', width: 15 },
+    { key: 'otherFee', label: 'Biaya Lainnya', type: 'money', width: 14 },
+    { key: 'tax', label: 'Pajak', type: 'money', width: 12 },
+    { key: 'shipping', label: 'Ongkir', type: 'money', width: 13 },
+    { key: 'insurance', label: 'Asuransi', type: 'money', width: 12 },
+    { key: 'tip', label: 'Tip Shopify', width: 13 },
+    { key: 'processFee', label: 'Biaya Proses Pesanan', type: 'money', width: 20 },
+    { key: 'total', label: 'Total', type: 'money', width: 16 },
+    { key: 'grandTotal', label: 'Grand Total', type: 'money', width: 16 },
+  ];
+
+  return { columns, rows };
+}
+
 function itemSheet(orders, wanted = null) {
   const rows = [];
   for (const order of orders.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))) {
@@ -321,7 +445,8 @@ export function buildExport({ orders, dataset = DEFAULT_DATASET, channels, produ
 
   const built = spec.id === 'order' ? orderSheet(rows)
     : spec.id === 'item' ? itemSheet(rows, wanted)
-      : productSheet(rows, chosen, wanted);
+      : spec.id === 'jubelio' ? jubelioSheet(rows)
+        : productSheet(rows, chosen, wanted);
 
   return {
     name: spec.sheet,
@@ -339,7 +464,11 @@ export function exportFilename(sheet, format, range) {
   const span = range?.from && range?.to
     ? (range.from === range.to ? range.from : `${range.from}_${range.to}`)
     : new Date().toISOString().slice(0, 10);
-  return `treelogy-${sheet.dataset}-${span}.${format === 'csv' ? 'csv' : 'xlsx'}`;
+  const ext = format === 'csv' ? 'csv' : 'xlsx';
+  // The Jubelio sheet is named the way Jubelio names it, because the point of that
+  // format is that somebody downstream recognises the file without opening it.
+  if (sheet.dataset === 'jubelio') return `Daftar Penjualan ${span}.${ext}`;
+  return `treelogy-${sheet.dataset}-${span}.${ext}`;
 }
 
 export function renderExport(sheet, format) {

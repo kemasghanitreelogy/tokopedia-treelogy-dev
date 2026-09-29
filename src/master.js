@@ -91,17 +91,17 @@ export const PRODUCTS = [
     ],
   },
   {
-    sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram &middot; Starter', category: 'bundle',
+    sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram · Starter', category: 'bundle',
     aliases: ['MRS45', 'MRS-002+45'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-45-001', qty: 1 }],
   },
   {
-    sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram &middot; Daily Wellness', category: 'bundle',
+    sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram · Daily Wellness', category: 'bundle',
     aliases: ['MRS90', 'MRS-003+90'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-90-001', qty: 1 }],
   },
   {
-    sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram &middot; Complete', category: 'bundle',
+    sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram · Complete', category: 'bundle',
     aliases: ['MRS180', 'MRS-004+180'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },

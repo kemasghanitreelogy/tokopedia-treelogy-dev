@@ -36,6 +36,41 @@ export const SELLABLE = PRODUCTS.map((p) => ({
 }));
 
 /**
+ * What a SKU costs on the storefront, under whichever spelling Shopify listed it with.
+ *
+ * Two products are spelled differently there than here - the master catalogue carries
+ * the channel SKUs, and Shopify's own is sometimes one of the aliases. Looking a price up
+ * by the master spelling alone finds nothing for those, which reads as "no price" and is
+ * indistinguishable from "not sold here". So the aliases are tried too.
+ */
+export function shopifyPriceOf(prices, sku) {
+  const product = findProduct(sku);
+  for (const key of [sku, product?.sku, ...(product?.aliases ?? [])]) {
+    const n = Number(prices?.[key]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
+
+/**
+ * The part of the catalogue the storefront actually sells, each with its price.
+ *
+ * A typed-in sale is written up at the storefront's price, so a product Shopify does not
+ * carry is one nobody entering a slip has a price for. The full list offered nine of
+ * them: the superseded `The-Inside-&-Out` naming, a listing that exists only on Shopee,
+ * and the four free gifts, which are never sold for money at all.
+ *
+ * An empty result means nothing has been synced yet, never that the shop sells nothing -
+ * the caller has to tell those apart, because a form with no products in it is a form
+ * nobody can use.
+ */
+export function sellableInShopify(prices = {}) {
+  return SELLABLE
+    .map((item) => ({ ...item, price: shopifyPriceOf(prices, item.sku) }))
+    .filter((item) => item.price > 0);
+}
+
+/**
  * A code that reads like the ones already in the books and cannot collide with them.
  *
  * Dated rather than a running counter: a counter would need a lock and a single source of

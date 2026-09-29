@@ -10,7 +10,7 @@ import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFr
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
 import { defaultSlot } from './shopee/pickup.js';
-import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS } from './mekari/manual.js';
+import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS, sellableInShopify } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
 import { paginate, pageHref, pageWindow, PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from './paging.js';
@@ -3352,9 +3352,26 @@ export function renderManual({
       </span>
     </label>`).join('');
 
+  /*
+   * Only what the storefront sells.
+   *
+   * The list used to be the whole master catalogue, which meant somebody entering a
+   * consignment slip was offered a Shopee-only listing, two superseded spellings of the
+   * protocol, and four free gifts - nine products with no price to write them up at.
+   *
+   * The fallback is deliberate rather than defensive: if the price sync has never run,
+   * an empty dropdown would be a form nobody can use, so the full catalogue comes back
+   * and the banner says why the prices are missing.
+   */
+  const offered = sellableInShopify(prices);
+  const fromShopify = offered.length > 0;
+  const catalogue = fromShopify
+    ? offered
+    : SELLABLE.map((p) => ({ ...p, price: 0 }));
+
   // Grouped so a long flat list does not have to be read top to bottom every time.
   const byCategory = new Map();
-  for (const product of SELLABLE) {
+  for (const product of catalogue) {
     if (!byCategory.has(product.category)) byCategory.set(product.category, []);
     byCategory.get(product.category).push(product);
   }
@@ -3363,7 +3380,7 @@ export function renderManual({
   // nobody has to go and look the number up.
   const productOptions = [...byCategory.entries()]
     .map(([category, items]) => `<optgroup label="${escape(CATEGORIES[category] ?? category)}">${
-      items.map((p) => `<option value="${escape(p.sku)}" data-price="${Number(prices[p.sku]) || 0}">${escape(p.name)}</option>`).join('')
+      items.map((p) => `<option value="${escape(p.sku)}" data-price="${p.price}">${escape(p.name)}</option>`).join('')
     }</optgroup>`)
     .join('');
 
@@ -3404,6 +3421,7 @@ export function renderManual({
     kpis: '<div class="backbar"><a class="chip" href="?view=orders">&larr; Kembali</a></div>',
     body: `
       ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif.</span></div>`}
+      ${fromShopify ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Harga Shopify belum tersinkron, jadi daftar produk masih menampilkan seluruh katalog dan harga harus diisi manual.</span></div>`}
       <form method="post" id="mxform" data-confirm="Simpan transaksi ini dan kirim ke Mekari Jurnal?">
         <input type="hidden" name="csrf" value="${escape(csrf)}">
         <input type="hidden" name="view" value="jurnal">
@@ -3701,21 +3719,26 @@ export function renderManual({
     total();
   });
   /**
-   * Picking a product fills its price, once.
+   * Changing the product changes the price with it.
    *
-   * Only into an empty field: the operator who typed a consignment discount and then
-   * corrected the product should not watch their number vanish.
+   * It used to fill an empty field only, and leave anything already typed alone. That
+   * read as careful and was wrong: switch a row from the 60-day protocol to a 30 ml oil
+   * and the line still said Rp1.265.000, because the price belonged to the product that
+   * had just been replaced. A price is a fact about one product, so it follows the
+   * product; a consignment discount is typed after the choice, not before it.
+   *
+   * Clearing the product clears the price too, for the same reason.
    */
-  function fillPrice(select) {
+  function syncPrice(select) {
     var row = select.closest('[data-row]');
     var field = row.querySelector('[name="unitPrice"]');
     var option = select.options[select.selectedIndex];
     var price = option ? Number(option.dataset.price) : 0;
-    if (price > 0 && !field.value) field.value = price;
+    field.value = select.value && price > 0 ? String(price) : '';
   }
 
   form.addEventListener('change', function (e) {
-    if (e.target.name === 'sku') { showPicture(e.target.closest('[data-row]')); fillPrice(e.target); }
+    if (e.target.name === 'sku') { showPicture(e.target.closest('[data-row]')); syncPrice(e.target); }
     if (e.target.name === 'source') {
       // An empty name bills the source itself, and the hint says which.
       if (customerHint) customerHint.textContent = 'Kosong: ditagih atas nama ' + e.target.dataset.label;

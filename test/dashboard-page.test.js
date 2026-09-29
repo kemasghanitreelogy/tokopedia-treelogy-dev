@@ -769,6 +769,45 @@ test('a product with a picture shows it on its card and its detail page; one wit
   assert.ok(!/class="pd__img"/.test(bare));
 });
 
+const SHOPIFY_PRICES = {
+  'OMP-45-001': 370000, 'OMO-30-001': 470000, 'MRS-002': 1015000,
+  // Spelled the way one channel spells it, to prove the alias path: Shopify has listed
+  // a SKU under an alias before, and a price found under the wrong spelling is no price.
+  'MRS-003+90': 1175000,
+};
+
+test('the manual form offers only what Shopify sells, at the price Shopify sells it', () => {
+  const markup = manualPage({ prices: SHOPIFY_PRICES }).split('<script>')[0];
+  assert.match(markup, /value="OMP-45-001" data-price="370000"/);
+  assert.match(markup, /value="MRS-002" data-price="1015000"/);
+  assert.match(markup, /value="MRS-003" data-price="1175000"/, 'harga di bawah alias tetap ketemu');
+  // Superseded naming, never listed on the storefront.
+  assert.ok(!/value="The-Inside-&amp;-Out30"/.test(markup), 'penamaan lama tidak ditawarkan');
+  // A listing that exists only on Shopee, and a free gift, are not things to invoice.
+  assert.ok(!/value="The-Discovery-Pack"/.test(markup), 'listing Shopee tidak ditawarkan');
+  assert.ok(!/value="Travel-Pouch"/.test(markup), 'hadiah tidak ditawarkan');
+});
+
+test('an unsynced price list leaves the whole catalogue offered, and says why', () => {
+  // An empty dropdown is a form nobody can use; the banner is what stops it being a
+  // silent one.
+  const markup = manualPage({ prices: {} }).split('<script>')[0];
+  assert.match(markup, /value="OMP-45-001"/);
+  assert.match(markup, /value="Travel-Pouch"/);
+  assert.match(markup, /Harga Shopify belum tersinkron/);
+  assert.ok(!/Harga Shopify belum tersinkron/.test(manualPage({ prices: SHOPIFY_PRICES }).split('<script>')[0]));
+});
+
+test('changing the product replaces the price rather than keeping the last one', () => {
+  // The bug this pins: a row switched from the 60-day protocol to a 30 ml oil kept
+  // Rp1.265.000, because the old fill only ever wrote into an empty field.
+  const script = manualPage({ prices: SHOPIFY_PRICES }).split('<script>').pop();
+  assert.match(script, /function syncPrice\(select\)/);
+  assert.match(script, /field\.value = select\.value && price > 0 \? String\(price\) : '';/);
+  assert.match(script, /if \(e\.target\.name === 'sku'\).*syncPrice\(e\.target\)/);
+  assert.ok(!/if \(price > 0 && !field\.value\)/.test(script), 'tidak lagi mengisi sekali saja');
+});
+
 test('the manual form carries thumbnails for the product picker', () => {
   const html = renderManual({
     source: 'CS', code: 'CS-260911-001', today: '2026-09-11', contacts: [], existingCodes: [], live: true, depositTo: null,
@@ -856,11 +895,11 @@ test('the manual form asks who the parcel goes to, and fills a price when one is
     assert.ok(html.includes(`<option value="${courier}">${courier}</option>`), `kurir ${courier} tidak ada`);
   }
 
-  // The price rides on the option, so choosing a product needs no request.
+  // The price rides on the option, so choosing a product needs no request - and only
+  // products Shopify prices are offered, so every option carries a real one.
   assert.match(html, /<option value="OMP-45-001" data-price="199000">/);
-  assert.match(html, /data-price="0"/, 'produk tanpa harga tersimpan tetap bisa dipilih');
-  assert.match(html, /function fillPrice/);
-  assert.match(html, /if \(price > 0 && !field\.value\)/, 'harga yang sudah diketik tidak ditimpa');
+  assert.ok(!/data-price="0"/.test(html), 'tidak ada produk tanpa harga di daftar');
+  assert.match(html, /function syncPrice/);
 });
 
 test('each discount cell can be switched between rupiah and percent', () => {

@@ -1,9 +1,11 @@
-import { businessToday, zoneLabel, zoneName, zoneForChannel, BENCH_CHANNEL, ZONES } from './clock.js';
+import { businessToday, zoneLabel, zoneName, zoneForChannel, channelDate, BENCH_CHANNEL, ZONES } from './clock.js';
 import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omni.js';
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
+import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
+import { AWAITING_PACKING } from './alerts-express.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
@@ -104,7 +106,7 @@ export const VIEWS = {
  * stopped earning a place in the menu. The one thing an operator does reach for - typing
  * in a sale that never went through a marketplace - is a button on the orders page.
  */
-export const HIDDEN_VIEWS = { jurnal: 'Jurnal', activity: 'Aktivitas' };
+export const HIDDEN_VIEWS = { jurnal: 'Jurnal', activity: 'Aktivitas', express: 'Pickup Instant' };
 export const VALID_VIEWS = { ...VIEWS, ...HIDDEN_VIEWS };
 
 /** Tabs that need a permission the person may not have are not shown, not merely refused. */
@@ -603,6 +605,7 @@ body{
   color:var(--muted); display:grid; place-items:center; cursor:pointer;
   transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out)}
 .iconbtn:hover{color:var(--fg); background:var(--glass-2)}
+.iconbtn.is-on{color:var(--bg); background:var(--fg)}
 :where(a,button,input,select,textarea):focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 
 /* The pages sit inside the pill. Under 1280px the row drops beneath the brand and scrolls
@@ -866,6 +869,9 @@ tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:poin
 .rpf__to{color:var(--dim); padding:0 .1rem}
 .rpf__n{font-size:.8rem; color:var(--muted); white-space:nowrap}
 .rpf__hint{margin:0 .15rem 1rem; font-size:.78rem; color:var(--dim)}
+.xp__c{display:inline-block; padding:.12rem .5rem; border-radius:999px; font-size:.78rem;
+  color:var(--act); background:color-mix(in srgb,var(--act) 14%,transparent);
+  border:1px solid color-mix(in srgb,var(--act) 32%,transparent)}
 @media (max-width:900px){ .stt__note{display:none} .stt thead th:last-child{display:none} }
 
 .st{transition:background var(--t-fast)}
@@ -1663,8 +1669,8 @@ ${celebration(flash)}
     ${nav.tabs}
     <div class="tools">
       ${who}
-      ${user ? `<button class="iconbtn" id="soundtest" type="button" data-csrf="${escape(csrf ?? '')}"
-        aria-label="Tes alert pickup" title="Tes alert pickup - lewat server, seperti pesanan sungguhan">${svg('bell')}</button>` : ''}
+      ${user ? `<a class="iconbtn${view === 'express' ? ' is-on' : ''}" href="?view=express"
+        aria-label="Riwayat pickup instant" title="Riwayat pesanan instant &amp; instant prioritas">${svg('bell')}</a>` : ''}
       <button class="iconbtn" id="theme" type="button" aria-label="Ganti tema terang/gelap">${svg('sun')}</button>
       <a class="iconbtn" href="${escape(self)}" aria-label="Muat ulang data">${svg('refresh')}</a>
       <a class="iconbtn" href="?logout=1" aria-label="Keluar">${svg('logout')}</a>
@@ -2152,7 +2158,7 @@ ${user ? `(function () {
    * If nothing arrives, that is the answer. A local card drawn as a consolation would
    * hide exactly the failure the operator pressed the button to find.
    */
-  var test = document.getElementById('soundtest');
+  var test = document.getElementById('alerttest');
   if (test) test.addEventListener('click', function () {
     unlock();
     test.disabled = true;
@@ -3069,6 +3075,81 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
         </form>`),
   });
 }
+
+/**
+ * Every instant pickup that has come in, newest first.
+ *
+ * The bell used to ring one on purpose to prove the chime worked. That answered a
+ * question nobody had twice a day, and left the one they did have unanswered: which
+ * instant orders came in, and when. An instant courier means a driver was dispatched, so
+ * this is also the list of every time somebody had to drop what they were doing.
+ *
+ * Read from the orders themselves rather than from the alert feed. The feed is a
+ * doorbell - capped, and expiring after two hours - and a doorbell is not a record.
+ *
+ * The test button lives here now. A button about alerts belongs on the page about
+ * alerts, not in the chrome of every other page.
+ */
+export function renderExpressLog({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, user = null }) {
+  const rows = orders
+    .map((o) => ({ order: o, service: expressService(o) }))
+    .filter((r) => r.service?.tier === EXPRESS_INSTANT)
+    .sort((a, b) => b.order.createdAt - a.order.createdAt);
+
+  const waiting = rows.filter((r) => AWAITING_PACKING.has(r.order.stage)).length;
+  const today = businessToday();
+  const todays = rows.filter((r) => channelDate(r.order.createdAt, r.order.channel) === today).length;
+
+  const byCourier = new Map();
+  for (const { service } of rows) byCourier.set(service.courier, (byCourier.get(service.courier) ?? 0) + 1);
+
+  const body = rows.map(({ order: o, service }) => {
+    const stage = STAGE_META[o.stage] ?? { label: o.stage ?? '-', tone: 'dim' };
+    return `<tr>
+      <td class="nowrap">${escape(dateTime(o.createdAt, o.channel))}</td>
+      <td>${channelTag(o)}</td>
+      <td><span class="mono nowrap">${escape(o.id)}</span></td>
+      <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
+      <td class="nowrap"><span class="xp__c">${escape(service.courier)}</span></td>
+      <td class="num nowrap">${escape(rupiah(o.total))}</td>
+      <td class="nowrap"><span class="${stage.tone}">${escape(stage.label)}</span></td>
+    </tr>`;
+  }).join('');
+
+  return shell({ user,
+    title: 'Pickup Instant',
+    range, errors, shopeeShop, generatedAt,
+    view: 'express',
+    scope: 'pesanan instant & instant prioritas',
+    flash, csrf,
+    kpis: `
+      <div class="strip">
+        ${stat('Instant hari ini', String(todays))}
+        ${stat('Belum dipacking', String(waiting), waiting > 0 ? 'flag' : 'ok')}
+        ${stat('Dalam rentang ini', String(rows.length))}
+      </div>`,
+    body: rows.length === 0
+      ? `<p class="empty">Belum ada pesanan instant dalam rentang ini.</p>
+         <div class="apply">${testButton(csrf)}</div>`
+      : `<div class="filters">
+          ${[...byCourier.entries()].sort((a, b) => b[1] - a[1])
+            .map(([name, n]) => `<span class="chip">${escape(name)} <b>${n}</b></span>`).join('')}
+          <span class="grow"></span>
+          ${testButton(csrf)}
+        </div>
+        <div class="scroll"><table class="dense">
+          <thead><tr>
+            <th>Masuk</th><th>Kanal</th><th>Pesanan</th><th>Pembeli</th><th>Kurir</th>
+            <th class="num">Total</th><th>Status</th>
+          </tr></thead>
+          <tbody>${body}</tbody>
+        </table></div>
+        <div class="foot"><span>Bel berbunyi hanya untuk yang sudah dibayar dan belum dipacking; yang di sini adalah seluruh riwayatnya.</span></div>`,
+  });
+}
+
+const testButton = (csrf) => `<button class="chip" type="button" id="alerttest" data-csrf="${escape(csrf ?? '')}"
+  title="Bunyikan alert uji lewat server, seperti pesanan sungguhan">&#128276; Tes bunyi alert</button>`;
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
 export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null, csrf = null, readAt = null, settleFailed = false }) {

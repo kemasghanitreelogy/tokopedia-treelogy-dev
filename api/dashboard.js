@@ -2,7 +2,7 @@ import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, loadOutstanding, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
 import { saveOrders } from '../src/db/orders.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderExpressLog, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
 import { can, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
@@ -1234,6 +1234,14 @@ export default async function handler(req, res) {
         live: process.env.MEKARI_SYNC_LIVE === '1',
         configured: isMekariConfigured(),
       }));
+      return;
+    }
+
+    if (view === 'express') {
+      // From the orders, not from the alert feed: the feed is a doorbell, capped and
+      // expiring after two hours, and a doorbell is not a record.
+      console.log(`dashboard/express: ${data.orders.length} orders in range (${took()})`);
+      send(200, renderExpressLog({ user, ...data, range, csrf, flash }));
       return;
     }
 

@@ -45,6 +45,9 @@ export function expressAlert(order) {
    * than of which code path noticed it, so it is decided here and both paths inherit it.
    */
   if (!AWAITING_PACKING.has(order?.stage)) return null;
+  // Still `to_ship`, but somebody has already arranged it - the label exists, so the bench
+  // already knows. Only a newly arrived order rings.
+  if (ALREADY_ARRANGED.has(order?.status)) return null;
 
   const items = (order.lines ?? []).reduce((n, line) => n + (Number(line.qty) || 0), 0);
 
@@ -107,6 +110,16 @@ const MAX_PER_SWEEP = 5;
 export const AWAITING_PACKING = new Set(['to_ship']);
 
 /**
+ * Platform statuses inside `to_ship` that mean the order is no longer new.
+ *
+ * Shopee's PROCESSED is shipment arranged, TikTok's AWAITING_COLLECTION is label printed.
+ * Both still wait for the driver, so the dashboard lists them as to-ship - but the
+ * operator's rule is that the chime announces a new instant order, not a status change,
+ * and by these statuses the order has been seen and acted on.
+ */
+export const ALREADY_ARRANGED = new Set(['PROCESSED', 'AWAITING_COLLECTION']);
+
+/**
  * The safety net behind the webhook.
  *
  * Shopee's pushes cannot be verified by signature and are rate limited per shop, so a
@@ -121,7 +134,7 @@ export async function ringExpressBacklog(orders = [], { now = Date.now() } = {})
     // The stage is checked by expressAlert now, for both paths at once; this keeps only
     // what the sweep adds on top of it.
     .filter((o) => isInstant(o))
-    .filter((o) => Number(o.createdAt) * 1000 > now - FRESH_MS)
+    .filter((o) => isFresh(o, now))
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
     .slice(0, MAX_PER_SWEEP);
 
@@ -133,8 +146,16 @@ export async function ringExpressBacklog(orders = [], { now = Date.now() } = {})
   return rung;
 }
 
-/** Ring the doorbell for this order, if it is one worth ringing for. */
-export async function announceExpress(order) {
+const isFresh = (order, now) => Number(order?.createdAt) * 1000 > now - FRESH_MS;
+
+/**
+ * Ring the doorbell for this order, if it is one worth ringing for.
+ *
+ * Freshness is checked here too, not only in the sweep: a platform push for an old order
+ * is a status change, and a status change is never news.
+ */
+export async function announceExpress(order, { now = Date.now() } = {}) {
+  if (!isFresh(order, now)) return null;
   const alert = expressAlert(order);
   if (!alert) return null;
   const raised = await raiseAlert(alert);

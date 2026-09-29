@@ -24,10 +24,21 @@ export const ALERTS_DOC = 'alerts/feed.json';
 /** Long enough to cover a lunch break, short enough that nothing stale ever pops up. */
 export const ALERT_TTL_MS = 2 * 60 * 60_000;
 
+/**
+ * How long a key is remembered after it rang, which is not how long it is shown.
+ *
+ * These were one number, and that was the bug. The card left the feed after two hours,
+ * the key left with it, and the sweep - which still counts an order as new for six -
+ * rang 2609299S09M339 again at 09.09 and 11.10 WITA for an order that came in at 07.08.
+ * The operator's rule is one chime per new order, full stop, so what has rung is kept
+ * for two days: well past anything the sweep would still call new.
+ */
+export const RUNG_TTL_MS = 48 * 60 * 60_000;
+
 /** Enough for the busiest hour anyone has had, so a burst cannot push out its own start. */
 const MAX_ALERTS = 100;
 
-const EMPTY = { version: 1, seq: 0, alerts: [] };
+const EMPTY = { version: 1, seq: 0, alerts: [], rung: {} };
 
 /** In-process delivery, for the common case where the webhook and the browser share a process. */
 export const alertBus = new EventEmitter();
@@ -38,6 +49,10 @@ alertBus.setMaxListeners(0);
 const prune = (alerts, now) => alerts
   .filter((a) => now - Number(a.at ?? 0) < ALERT_TTL_MS)
   .slice(-MAX_ALERTS);
+
+const pruneRung = (rung, now) => Object.fromEntries(
+  Object.entries(rung ?? {}).filter(([, at]) => now - Number(at) < RUNG_TTL_MS),
+);
 
 /**
  * Raise one, unless the same thing was already raised.
@@ -56,13 +71,17 @@ export async function raiseAlert(alert, { now = Date.now() } = {}) {
     await updateDoc(ALERTS_DOC, (current) => {
       const doc = { ...EMPTY, ...(current ?? {}) };
       const alerts = prune(doc.alerts ?? [], now);
-      if (alerts.some((a) => a.key === alert.key)) {
+      const rung = pruneRung(doc.rung, now);
+      // A feed written before `rung` existed still knows what it is showing.
+      for (const a of alerts) rung[a.key] ??= Number(a.at);
+      if (rung[alert.key] !== undefined) {
         raised = null;
-        return { ...doc, alerts };
+        return { ...doc, alerts, rung };
       }
       const seq = Number(doc.seq ?? 0) + 1;
       raised = { ...alert, id: seq, at: now };
-      return { ...doc, seq, alerts: [...alerts, raised] };
+      rung[alert.key] = now;
+      return { ...doc, seq, alerts: [...alerts, raised], rung };
     }, structuredClone(EMPTY));
   } catch (error) {
     // A doorbell that cannot ring must never stop the door opening. The order is already

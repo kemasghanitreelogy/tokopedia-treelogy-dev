@@ -252,6 +252,36 @@ test('a parcel the courier already took is not news', async () => {
   assert.deepEqual(rung.map((r) => r.data.id), ['HERE']);
 });
 
+test('one chime per new order, even after its card has left the feed', async () => {
+  /*
+   * 2609299S09M339 came in at 07.08 WITA on 29 September and rang then - and again at
+   * 09.09 and 11.10, because the feed forgot the key when the card aged out at two hours
+   * while the sweep still counted the order as new for six. The operator's rule: the
+   * chime is for a new instant order, not for every time something changes.
+   */
+  await clearAlerts();
+  const start = Date.now();
+  const key = { key: 'express:shopee:2609299S09M339', kind: 'express', title: 'Instant' };
+  assert.ok(await raiseAlert(key, { now: start }));
+  assert.equal(await raiseAlert(key, { now: start + ALERT_TTL_MS + 60_000 }), null, 'dua jam kemudian');
+  assert.equal(await raiseAlert(key, { now: start + FRESH_MS - 60_000 }), null, 'hampir enam jam kemudian');
+});
+
+test('an instant order already arranged is not new, even while it still waits for a driver', () => {
+  const base = { channel: 'shopee', id: 'A', carrier: 'Gosend Instant', stage: 'to_ship' };
+  assert.ok(expressAlert({ ...base, status: 'READY_TO_SHIP' }));
+  assert.equal(expressAlert({ ...base, status: 'PROCESSED' }), null, 'Shopee: pengiriman sudah diatur');
+  assert.equal(expressAlert({ ...base, channel: 'tokopedia', status: 'AWAITING_COLLECTION' }), null, 'label sudah dicetak');
+});
+
+test('a push for an old order is a status change, and never rings', async () => {
+  await clearAlerts();
+  const { announceExpress } = await import('../src/alerts-express.js');
+  const now = Date.now();
+  assert.equal(await announceExpress(parcel('STALE', { createdAt: Math.floor((now - FRESH_MS - 60_000) / 1000) }), { now }), null);
+  assert.ok(await announceExpress(parcel('NEW'), { now }));
+});
+
 test('the sweep catches up, it does not re-announce history', async () => {
   await clearAlerts();
   const now = Date.now();
@@ -290,10 +320,11 @@ test('the doorbell makes a sound, and copes with a browser that will not let it'
   assert.match(doorbell, /addEventListener\('pointerdown', unlock/);
   assert.match(doorbell, /addEventListener\('keydown', unlock/);
   assert.match(doorbell, /Aktifkan suara/);
-  // One chime is not enough for somebody in the next room, so it repeats until the card
-  // is dismissed or a minute has gone.
+  // It repeats for somebody in the next room, but three times and no more - the operator
+  // asked for it to stop after that.
   assert.match(doorbell, /startAlarm\(el\)/);
-  assert.match(doorbell, /rings > 8/);
+  assert.match(doorbell, /var MAX_RINGS = 3;/);
+  assert.match(doorbell, /rings > MAX_RINGS/);
   assert.match(doorbell, /8000\)/);
   // And the tab title, for the packer who is in Seller Centre rather than here.
   assert.match(doorbell, /PICKUP - ' \+ plainTitle/);

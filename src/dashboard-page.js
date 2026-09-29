@@ -2082,12 +2082,15 @@ ${user ? `(function () {
   }
 
   var alarms = [];
+  // Three chimes and then quiet, at the operator's request: the card stays on screen, the
+  // sound does not go on for a minute.
+  var MAX_RINGS = 3;
   function startAlarm(el) {
     chime();
     var rings = 1;
     var timer = setInterval(function () {
       rings += 1;
-      if (rings > 8 || !el.isConnected) { stopAlarm(el); return; }
+      if (rings > MAX_RINGS || !el.isConnected) { stopAlarm(el); return; }
       chime();
     }, 8000);
     alarms.push({ el: el, timer: timer });

@@ -23,6 +23,7 @@ import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
 import { auditRecent } from './mekari/audit.js';
 import { planTopup, describeTopup, FLOOR, ADD } from './stock-topup.js';
+import { recordSample, loadHistory, drops } from './stock-history.js';
 import { raiseAlert } from './alerts.js';
 import { backendName } from './store/index.js';
 import { loadBudget, setBudget, dailyRation, RESERVE } from './mekari/budget.js';
@@ -371,6 +372,11 @@ async function cmdStockTopup(config, args = []) {
     return 1;
   }
 
+  // Written down before anything is decided, so a fall found later can be pinned to a
+  // half hour rather than to a day. It costs no marketplace call: this is the reading
+  // the plan is about to be built from.
+  await recordSample(catalog, { note: 'sebelum tulis' });
+
   const plan = planTopup(catalog, { floor, add });
   console.log(`\n  ambang ${floor}, tambah ${add}  ·  ${catalog.skus.length} sku ditelusuri`);
   for (const s2 of plan.skipped) console.log(`  ${warn(`lewati ${s2.sku} ${s2.channel}: ${s2.reason}`)}`);
@@ -399,6 +405,10 @@ async function cmdStockTopup(config, args = []) {
   }
   console.log(`\n  ${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted}\n`);
 
+  // And again from what we believe we just wrote. Without a reading either side, our own
+  // top-up looks exactly like the thing being hunted.
+  await recordSample({ skus: catalog.skus.map((e) => applied(e, result.results)) }, { note: 'sesudah tulis' });
+
   if (result.failed > 0) {
     // Only failures. A top-up that worked is the system doing its job, and an alert
     // channel that carries good news is one people mute.
@@ -410,6 +420,53 @@ async function cmdStockTopup(config, args = []) {
     ).catch(() => {});
   }
   return result.failed > 0 ? 1 : 0;
+}
+
+/** The catalogue entry as it stands after a write, without re-reading the channel. */
+function applied(entry, results) {
+  const next = { ...entry };
+  for (const r of results) {
+    if (r.status !== 'ok' || r.sku !== entry.sku || !next[r.channel]) continue;
+    next[r.channel] = { ...next[r.channel], qty: r.to };
+  }
+  return next;
+}
+
+/**
+ * When every listing fell, and by how much.
+ *
+ * Built for one question: eight listings went from 172 to 71 between one day's top-up
+ * and the next while a single unit sold, and nothing we kept could say when. Rises are
+ * not listed - a rise is our own top-up or somebody restocking, and neither is what
+ * anybody is hunting.
+ */
+async function cmdStockHistory(config, args = []) {
+  const history = await loadHistory();
+  const samples = history.samples ?? [];
+  if (samples.length === 0) {
+    console.log(`\n  ${info('belum ada sampel - terisi tiap kali stock:topup jalan')}\n`);
+    return 0;
+  }
+
+  const want = args.find((a) => a.startsWith('--sku='))?.slice('--sku='.length);
+  const min = Number(args.find((a) => a.startsWith('--min='))?.slice('--min='.length)) || 1;
+  const when = (at) => new Date(at).toLocaleString('id-ID', { timeZone: 'Asia/Makassar' });
+
+  console.log(`\n  ${samples.length} sampel, ${when(samples[0].at)} s/d ${when(samples[samples.length - 1].at)} WITA`);
+
+  const fell = drops(history, { minDrop: min }).filter((d) => !want || d.sku === want);
+  if (fell.length === 0) {
+    console.log(`  ${ok('tidak ada penurunan tercatat')}\n`);
+    return 0;
+  }
+
+  console.log(`  ${fell.length} penurunan tercatat:\n`);
+  for (const d of fell.slice(0, 40)) {
+    console.log(`    ${when(d.at).padEnd(22)} ${d.sku.padEnd(22)} ${d.channel.padEnd(8)} ${String(d.from).padStart(5)} -> ${String(d.to).padStart(5)}  (-${d.fell})${d.note ? '  [' + d.note + ']' : ''}`);
+  }
+  if (fell.length > 40) console.log(`    ...dan ${fell.length - 40} lagi`);
+  console.log(`\n  ${info('bandingkan dengan penjualan: penurunan yang lebih besar dari unit terjual berarti ada yang menulis stok selain kita')}\n`);
+  return 0;
 }
 
 async function cmdAuthorize(config, args = []) {
@@ -1777,6 +1834,7 @@ const COMMANDS = {
   'stock:plan': cmdStockPlan,
   'stock:apply': cmdStockApply,
   'stock:topup': cmdStockTopup,
+  'stock:history': cmdStockHistory,
   'mekari:setup': cmdMekariSetup,
   'mekari:plan': cmdMekariPlan,
   'mekari:sync': cmdMekariSync,

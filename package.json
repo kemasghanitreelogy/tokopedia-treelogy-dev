@@ -29,6 +29,7 @@
     "stock:plan": "node bin/tts.mjs stock:plan",
     "stock:apply": "node bin/tts.mjs stock:apply",
     "stock:topup": "node bin/tts.mjs stock:topup",
+    "stock:history": "node bin/tts.mjs stock:history",
     "shopify": "node bin/tts.mjs shopify",
     "doctor": "node bin/tts.mjs doctor",
     "api": "node bin/tts.mjs api",

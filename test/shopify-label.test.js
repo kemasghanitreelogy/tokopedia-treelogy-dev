@@ -212,5 +212,6 @@ test('a typed-in sale prints on the same sheet, under its source and the house m
   });
   assert.equal(sheet.pageCount, 1);
   assert.deepEqual(sheet.printed, ['manual:DP-260921-00001AD']);
-  assert.deepEqual(sheet.failures, [{ id: 'DP-missing', channel: 'manual', reason: 'transaksi manual tidak ditemukan' }]);
+  // `kind` is what the report sorts by: an order nobody can find is not one to retry.
+  assert.deepEqual(sheet.failures, [{ id: 'DP-missing', channel: 'manual', kind: 'check', reason: 'transaksi manual tidak ditemukan' }]);
 });

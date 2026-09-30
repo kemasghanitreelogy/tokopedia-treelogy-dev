@@ -41,10 +41,10 @@ test('a batch refused with no detail is halved, and only the bad order is blamed
   };
 
   const failures = [];
-  await createShopeeDocuments({}, {}, list('A', 'B', 'BAD', 'D'), (id, reason) => failures.push({ id, reason }),
+  await createShopeeDocuments({}, {}, list('A', 'B', 'BAD', 'D'), (id, reason, kind) => failures.push({ id, reason, kind }),
     { left: CREATE_SPLIT_BUDGET }, { call });
 
-  assert.deepEqual(failures.map((f) => f.id), ['BAD'], 'hanya pesanan bermasalah yang gagal');
+  assert.deepEqual(failures.map((f) => [f.id, f.kind]), [['BAD', 'retry']], 'hanya pesanan bermasalah yang gagal');
   assert.ok(calls.length <= 7, `pembagian tetap murah, ${calls.length} panggilan`);
 });
 
@@ -62,11 +62,11 @@ test('per-order answers are passed through untouched, and the batch is not split
   };
 
   const failures = [];
-  await createShopeeDocuments({}, {}, list('A', 'B', 'C'), (id, reason) => failures.push({ id, reason }),
+  await createShopeeDocuments({}, {}, list('A', 'B', 'C'), (id, reason, kind) => failures.push({ id, reason, kind }),
     { left: CREATE_SPLIT_BUDGET }, { call });
 
   assert.deepEqual(calls, [3], 'satu panggilan saja');
-  assert.deepEqual(failures, [{ id: 'B', reason: 'The tracking number is invalid.' }]);
+  assert.deepEqual(failures, [{ id: 'B', reason: 'The tracking number is invalid.', kind: 'check' }]);
 });
 
 test('when Shopee is simply down the split stops, and says so in words the bench can act on', async () => {
@@ -75,13 +75,15 @@ test('when Shopee is simply down the split stops, and says so in words the bench
 
   const failures = [];
   await createShopeeDocuments({}, {}, list('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'),
-    (id, reason) => failures.push({ id, reason }), { left: CREATE_SPLIT_BUDGET }, { call });
+    (id, reason, kind) => failures.push({ id, reason, kind }), { left: CREATE_SPLIT_BUDGET }, { call });
 
   assert.equal(failures.length, 8, 'setiap pesanan tetap dilaporkan');
+  // Marked as Shopee's fault, so the report offers one button instead of a shrug.
+  for (const failure of failures) assert.equal(failure.kind, 'retry');
   // Bounded: an outage must not cost a call per order, nor a minute of the bench's time.
   assert.ok(calls <= CREATE_SPLIT_BUDGET + 2, `panggilan dibatasi, terpakai ${calls}`);
   for (const failure of failures) {
-    assert.match(failure.reason, /coba cetak lagi sebentar lagi/);
+    assert.match(failure.reason, /tetap menolak setelah dicoba ulang/);
     assert.match(failure.reason, /common\.error_server/);
   }
 });
@@ -140,4 +142,28 @@ test('a passing fault at the document host is waited out, not turned into failed
   assert.deepEqual(out.failures, [], 'tidak ada label yang dikorbankan');
   assert.equal(out.pages.length, 1);
   assert.equal(out.pages[0].count, 3);
+});
+
+test('every failure a print run can raise says what the bench should do about it', async () => {
+  // A failure with no kind falls to "look at it", which is safe but useless, so the point
+  // is that no raise site relies on that fallback.
+  const { createShopeeDocuments, CREATE_SPLIT_BUDGET, RETRYABLE_KINDS, shopeeFailureKind } = await import('../src/labels.js');
+
+  assert.equal(shopeeFailureKind('common.error_server'), 'retry');
+  assert.equal(shopeeFailureKind('logistics.error_param'), 'check');
+  assert.deepEqual([...RETRYABLE_KINDS].sort(), ['retry', 'wait']);
+
+  const failures = [];
+  const note = (id, reason, kind) => failures.push({ id, reason, kind });
+
+  // A per-item refusal that no amount of asking fixes.
+  await createShopeeDocuments({}, {}, list('A'), note, { left: CREATE_SPLIT_BUDGET }, {
+    call: async () => ({ response: { result_list: [{ order_sn: 'A', fail_error: 'logistics.error_param', fail_message: 'invalid' }] } }),
+  });
+  // A whole-batch refusal that asking again does fix.
+  await createShopeeDocuments({}, {}, list('B'), note, { left: CREATE_SPLIT_BUDGET }, {
+    call: async () => { throw refusal('common.error_server'); },
+  });
+
+  assert.deepEqual(failures.map((f) => [f.id, f.kind]), [['A', 'check'], ['B', 'retry']]);
 });

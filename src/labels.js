@@ -101,6 +101,27 @@ async function fetchBytes(url, init = {}) {
   }
 }
 
+/* ------------------------------------------------------------------ failures */
+
+/**
+ * What the bench should do about a failure, which is the only thing it needs to know.
+ *
+ * Three quite different things used to share one table and one tone of voice: a platform
+ * having a bad second, a document that simply does not exist yet, and an order that is
+ * never going to print. The operator could not tell them apart, so every one of them cost
+ * the same thing - going back, finding the orders again, ticking them again.
+ *
+ *   retry  a passing fault at the platform. Asking again, now, works.
+ *   wait   nothing is wrong; the courier has not issued the document yet. Asking again in
+ *          a few minutes works.
+ *   check  the order itself is the problem. Asking again never works.
+ */
+export const RETRYABLE_KINDS = new Set(['retry', 'wait']);
+
+/** A Shopee fault code, read the way the bench needs it rather than the way it is spelled. */
+export const shopeeFailureKind = (code) =>
+  (isTransientShopeeError({ code }) ? 'retry' : 'check');
+
 /* ------------------------------------------------------------------- TikTok */
 
 /**
@@ -130,7 +151,9 @@ async function fetchTikTokLabels(orders, resolvePackages) {
     try {
       resolved = await resolvePackages(orders);
     } catch (error) {
-      return { pages: [], failures: orders.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })) };
+      // Resolving packages is one call for the whole channel: when it fails, nothing is
+      // known about any individual order, so it is TikTok's problem until proved otherwise.
+      return { pages: [], failures: orders.map((o) => ({ id: o.id, channel: o.channel, reason: error.message, kind: 'retry' })) };
     }
   }
 
@@ -150,7 +173,16 @@ async function fetchTikTokLabels(orders, resolvePackages) {
   const failures = [];
   for (const outcome of outcomes) {
     if (outcome.ok) pages.push(outcome.value);
-    else failures.push({ id: outcome.item.id, channel: outcome.item.channel, reason: outcome.error.message });
+    else {
+      failures.push({
+        id: outcome.item.id,
+        channel: outcome.item.channel,
+        reason: outcome.error.message,
+        // A 5xx or a dropped connection is TikTok having a moment; anything else is this
+        // package's own problem and printing it again will fail the same way.
+        kind: outcome.error.httpStatus >= 500 || outcome.error.name === 'AbortError' ? 'retry' : 'check',
+      });
+    }
   }
   return { pages, failures };
 }
@@ -225,23 +257,24 @@ export async function createShopeeDocuments(config, auth, orderList, note, budge
   try {
     const created = await call(config, '/api/v2/logistics/create_shipping_document', auth, {}, { order_list: orderList });
     for (const row of created.response?.result_list ?? []) {
-      if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
+      if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error, shopeeFailureKind(row.fail_error));
     }
     return;
   } catch (error) {
     const rows = error.response?.result_list ?? [];
     if (rows.length > 0) {
       for (const row of rows) {
-        if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
+        if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error, shopeeFailureKind(row.fail_error));
       }
       return;
     }
 
     if (orderList.length === 1 || budget.left <= 0) {
-      const reason = isTransientShopeeError(error)
-        ? `Shopee menolak dan tetap menolak setelah dicoba ulang - coba cetak lagi sebentar lagi (${error.code ?? 'tanpa kode'})`
+      const transient = isTransientShopeeError(error);
+      const reason = transient
+        ? `Shopee menolak dan tetap menolak setelah dicoba ulang (${error.code ?? 'tanpa kode'})`
         : error.message;
-      for (const item of orderList) note(item.order_sn, reason);
+      for (const item of orderList) note(item.order_sn, reason, transient ? 'retry' : 'check');
       return;
     }
 
@@ -265,7 +298,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
 
   const { config, auth } = await resolveShopeeSession();
   const failures = [];
-  const note = (sn, reason) => failures.push({ id: sn, channel: 'shopee', reason });
+  const note = (sn, reason, kind = 'check') => failures.push({ id: sn, channel: 'shopee', reason, kind });
 
   const wanted = orders.map((o) => o.id);
 
@@ -296,7 +329,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
   if (unknown.length > 0 && process.env.TREELOGY_READONLY === '1') {
     // Creating a document commits a waybill at the courier, so read-only mode prints
     // only what already exists rather than bringing new documents into being.
-    for (const sn of unknown) note(sn, 'READ-ONLY: dokumen belum dibuat, tidak dibuatkan');
+    for (const sn of unknown) note(sn, 'READ-ONLY: dokumen belum dibuat, tidak dibuatkan', 'check');
   } else if (unknown.length > 0) {
     const byId = new Map(orders.map((order) => [order.id, order]));
     const tracking = await shopeeTracking(config, auth, unknown.map((sn) => byId.get(sn) ?? { id: sn }));
@@ -304,7 +337,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
     // An order the courier has not numbered yet cannot have a document, and saying so is
     // more use to the bench than repeating Shopee's line about an invalid number.
     const missing = unknown.filter((sn) => !tracking.get(sn));
-    for (const sn of missing) note(sn, 'nomor resi belum terbit di kurir, coba lagi sebentar lagi');
+    for (const sn of missing) note(sn, 'nomor resi belum terbit di kurir', 'wait');
 
     const askable = unknown.filter((sn) => tracking.get(sn));
     const orderList = askable.map((order_sn) => {
@@ -330,7 +363,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
         ready.add(row.order_sn);
         pending.delete(row.order_sn);
       } else if (row.fail_error) {
-        note(row.order_sn, row.fail_message || row.fail_error);
+        note(row.order_sn, row.fail_message || row.fail_error, shopeeFailureKind(row.fail_error));
         pending.delete(row.order_sn);
       }
     }
@@ -339,7 +372,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
     }
   }
 
-  for (const sn of pending) note(sn, 'dokumen belum siap di kurir setelah menunggu');
+  for (const sn of pending) note(sn, 'dokumen belum siap di kurir setelah menunggu', 'wait');
   if (ready.size === 0) return { pages: [], failures };
 
   const readyList = [...ready];
@@ -409,7 +442,8 @@ export async function downloadShopeeBatch(config, auth, orderSns, documentType, 
     const combinable = !error.message.includes(CANNOT_COMBINE);
     // Any other error on a single order is that order's own problem, not a grouping one.
     if (orderSns.length === 1 || (combinable && depth > 0)) {
-      return { pages: [], failures: orderSns.map((id) => ({ id, channel: 'shopee', reason: error.message })) };
+      const kind = isTransientShopeeError(error) ? 'retry' : 'check';
+      return { pages: [], failures: orderSns.map((id) => ({ id, channel: 'shopee', reason: error.message, kind })) };
     }
 
     const middle = Math.ceil(orderSns.length / 2);
@@ -470,7 +504,7 @@ export async function mergeLabels(documents, sizeKey = DEFAULT_SIZE) {
         pageCount += 1;
       }
     } catch (error) {
-      failures.push({ id: doc.order.id, channel: doc.order.channel, reason: `PDF tidak terbaca: ${error.message}` });
+      failures.push({ id: doc.order.id, channel: doc.order.channel, reason: `PDF tidak terbaca: ${error.message}`, kind: 'retry' });
     }
   }
 
@@ -750,7 +784,7 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
   const printable = orders.filter((o) => !o.stage || PRINTABLE_STAGES.has(o.stage));
   const skipped = orders
     .filter((o) => o.stage && !PRINTABLE_STAGES.has(o.stage))
-    .map((o) => ({ id: o.id, channel: o.channel, reason: `status ${o.status} tidak bisa dicetak` }));
+    .map((o) => ({ id: o.id, channel: o.channel, reason: `status ${o.status} tidak bisa dicetak`, kind: 'check' }));
 
   const drawn = (o) => o.channel === 'shopify' || o.channel === 'manual';
   const tiktok = printable.filter((o) => o.channel !== 'shopee' && !drawn(o));
@@ -759,14 +793,20 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
   const shopify = printable.filter(drawn);
 
   const [tiktokResult, shopeeResult, shopifyResult] = await Promise.all([
+    // A whole channel throwing is almost always the platform rather than the orders, and
+    // the one thing it must not do is look like twenty separate order problems.
     fetchTikTokLabels(tiktok, resolvePackages).catch((error) => ({
-      pages: [], failures: tiktok.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
+      pages: [], failures: tiktok.map((o) => ({ id: o.id, channel: o.channel, reason: error.message, kind: 'retry' })),
     })),
     fetchShopeeLabels(shopee).catch((error) => ({
-      pages: [], failures: shopee.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
+      pages: [],
+      failures: shopee.map((o) => ({
+        id: o.id, channel: o.channel, reason: error.message,
+        kind: isTransientShopeeError(error) ? 'retry' : 'check',
+      })),
     })),
     drawShopifyLabels(shopify, resolveShopify, LABEL_SIZES[size] ?? LABEL_SIZES[DEFAULT_SIZE]).catch((error) => ({
-      pages: [], printed: [], failures: shopify.map((o) => ({ id: o.id, channel: o.channel, reason: error.message })),
+      pages: [], printed: [], failures: shopify.map((o) => ({ id: o.id, channel: o.channel, reason: error.message, kind: 'retry' })),
     })),
   ]);
 
@@ -839,7 +879,7 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
 async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[DEFAULT_SIZE]) {
   if (selection.length === 0) return { pages: [], printed: [], failures: [] };
   if (!resolveShopify) {
-    return { pages: [], printed: [], failures: selection.map((o) => ({ id: o.id, channel: o.channel, reason: 'data pesanan tidak tersedia' })) };
+    return { pages: [], printed: [], failures: selection.map((o) => ({ id: o.id, channel: o.channel, reason: 'data pesanan tidak tersedia', kind: 'check' })) };
   }
 
   const full = await resolveShopify(selection);
@@ -848,7 +888,7 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
   const found = selection.filter((o) => byId.has(keyOf(o)));
   const failures = selection
     .filter((o) => !byId.has(keyOf(o)))
-    .map((o) => ({ id: o.id, channel: o.channel, reason: o.channel === 'manual' ? 'transaksi manual tidak ditemukan' : 'pesanan tidak ditemukan di Shopify' }));
+    .map((o) => ({ id: o.id, channel: o.channel, kind: 'check', reason: o.channel === 'manual' ? 'transaksi manual tidak ditemukan' : 'pesanan tidak ditemukan di Shopify' }));
 
   // Reserved together so a batch of ten gets ten consecutive numbers, and an abandoned
   // print leaves a gap rather than handing the next print the same number.
@@ -883,7 +923,7 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
     return {
       pages: [],
       printed: [],
-      failures: [...failures, ...found.map((row) => ({ id: row.id, channel: row.channel, reason: error.message }))],
+      failures: [...failures, ...found.map((row) => ({ id: row.id, channel: row.channel, reason: error.message, kind: 'retry' }))],
     };
   }
 }

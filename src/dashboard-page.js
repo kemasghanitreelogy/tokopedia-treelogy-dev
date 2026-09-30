@@ -5213,14 +5213,100 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
  * the buttons are always present and always work, and the page says plainly when the
  * browser stopped it rather than leaving somebody waiting for tabs that are not coming.
  */
-export function renderLabelReport({ pageCount, requested, failures, size, groups = [], csrf = null }) {
-  const rows = failures
+export function renderLabelReport({
+  pageCount, requested, failures, size, groups = [], csrf = null, retried = false,
+}) {
+  /*
+   * A failure is sorted by what the bench should do about it, not by what went wrong.
+   *
+   * These three used to share one table and one tone: a platform having a bad second, a
+   * document the courier has not issued yet, and an order that is never going to print.
+   * They read identically, so all three cost the operator the same thing - going back to
+   * the list, finding the orders again, ticking them again, for seventeen orders that had
+   * nothing wrong with them.
+   */
+  const ACTIONS = {
+    retry: {
+      title: 'Gangguan sesaat di platform',
+      hint: 'Sudah ditunggu dan dicoba ulang otomatis, tapi masih menolak. Hampir selalu berhasil kalau dicoba sekali lagi.',
+    },
+    wait: {
+      title: 'Dokumen belum terbit di kurir',
+      hint: 'Tidak ada yang salah - kurir belum menerbitkan resinya. Coba lagi beberapa menit lagi.',
+    },
+    check: {
+      title: 'Perlu diperiksa dulu',
+      hint: 'Mencetak ulang tidak akan menolong; pesanannya sendiri yang harus dilihat.',
+    },
+  };
+  const kindOf = (f) => (ACTIONS[f.kind] ? f.kind : 'check');
+
+  const byKind = new Map();
+  for (const failure of failures) {
+    const kind = kindOf(failure);
+    if (!byKind.has(kind)) byKind.set(kind, []);
+    byKind.get(kind).push(failure);
+  }
+
+  // Asking again is free for these two and pointless for the third, so only they are put
+  // on the button. A retry that is certain to fail wastes the one thing the bench has
+  // least of, which is the minutes before the courier arrives.
+  const retryable = failures.filter((f) => kindOf(f) !== 'check');
+
+  const rowsFor = (list) => list
     .map((f) => `<tr>
       <td class="mono nowrap">${escape(f.id)}</td>
       <td class="dim">${escape(f.channel)}</td>
       <td>${escape(f.reason)}</td>
+      <td class="nowrap">${kindOf(f) === 'check'
+        ? `<a class="tiny" href="/api/dashboard?view=orders&amp;q=${encodeURIComponent(f.id)}" target="_blank" rel="noopener">Lihat pesanan</a>`
+        : ''}</td>
     </tr>`)
     .join('');
+
+  const sections = ['retry', 'wait', 'check']
+    .filter((kind) => byKind.has(kind))
+    .map((kind) => `<div class="fgroup">
+      <p class="fgroup__h">${escape(ACTIONS[kind].title)} <span class="dim">&middot; ${byKind.get(kind).length}</span></p>
+      <p class="fgroup__n">${escape(ACTIONS[kind].hint)}</p>
+      <table>
+        <colgroup><col class="c1"><col class="c2"><col><col class="c4"></colgroup>
+        <thead><tr><th>Order ID</th><th>Kanal</th><th>Keterangan</th><th></th></tr></thead>
+        <tbody>${rowsFor(byKind.get(kind))}</tbody>
+      </table>
+    </div>`)
+    .join('');
+
+  /*
+   * The whole point of the panel: one button that reprints exactly what did not print.
+   *
+   * Without it the only route back is the label list, where seventeen orders have to be
+   * found and ticked again by hand - and a parcel missed in that count is a parcel that
+   * does not ship. The selection is already known here, so it travels as hidden fields
+   * and the operator presses one thing.
+   */
+  const retryForm = csrf && retryable.length > 0
+    ? `<form class="bar bar--in" method="post" action="/api/labels" id="retryform">
+        <input type="hidden" name="csrf" value="${escape(csrf)}">
+        <input type="hidden" name="size" value="${escape(size)}">
+        <input type="hidden" name="retried" value="1">
+        ${retryable.map((f) => `<input type="hidden" name="order" value="${escape(`${f.channel}:${f.id}`)}">`).join('')}
+        <button class="btn" type="submit" id="retrygo">Coba cetak lagi ${retryable.length} pesanan</button>
+        <span class="dim" id="countdown" aria-live="polite" hidden></span>
+      </form>`
+    : '';
+
+  /*
+   * Retried by itself only when there is nothing on this page to lose.
+   *
+   * Navigating away takes the printed stacks with it - they live in this page's memory
+   * and nowhere else - so a run that produced labels waits for a person. A run that
+   * produced none has nothing to protect and every reason to try again by itself, which
+   * is exactly the case the operator hit: seventeen selected, seventeen failed, nothing
+   * to print. Once only, and visibly, with a way to stop it.
+   */
+  const autoRetry = Boolean(retryForm) && !retried && groups.length === 0
+    && retryable.length === failures.length && retryable.every((f) => kindOf(f) === 'retry');
 
   return `<!doctype html><html lang="id"><head>
 <meta charset="utf-8">
@@ -5266,32 +5352,40 @@ iframe{width:100%;height:38vh;min-height:19rem;border:0;background:#fff;display:
 .bar--in{margin:0;padding:.85rem 1rem;border-bottom:1px solid var(--line)}
 .note{margin:0 0 1.25rem;padding:.8rem 1rem;border-radius:10px;font-size:.86rem;
   color:var(--warn);background:var(--panel);border:1px solid var(--line)}
+/* One column layout across all three, or the same order id sits in a different place in
+   each section and the eye has to re-find it every time. */
+.fgroup table{table-layout:fixed}
+.fgroup col.c1{width:13rem}.fgroup col.c2{width:7.5rem}.fgroup col.c4{width:8.5rem}
+.fgroup{border-top:1px solid var(--line)}
+.fgroup:first-of-type{border-top:0}
+.fgroup__h{margin:0;padding:.9rem 1rem .1rem;font-size:.92rem;font-weight:600}
+.fgroup__n{margin:0;padding:0 1rem .55rem;font-size:.82rem;color:var(--muted);max-width:52rem}
+.tiny{font-size:.8rem;color:var(--brand);text-decoration:none;white-space:nowrap}
+.tiny:hover{text-decoration:underline}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style></head><body>
 <div class="wrap">
   <h1>Hasil cetak label</h1>
   <p class="lead">
-    <span class="count ok">${pageCount}</span> dari <span class="count">${requested}</span> label berhasil dibuat
+    <span class="count ${pageCount > 0 ? 'ok' : 'warn'}">${pageCount}</span> dari <span class="count">${requested}</span> label berhasil dibuat
     &middot; ukuran ${escape(size)}
   </p>
 
   <div class="bar">
-    <button class="btn" id="openall" type="button">Buka ${groups.length} tab cetak</button>
+    ${groups.length > 0 ? `<button class="btn" id="openall" type="button">Buka ${groups.length} tab cetak</button>` : ''}
     <a class="btn btn--ghost" href="/api/dashboard?view=labels">Kembali</a>
   </div>
 
-  <p class="note" id="blocked" hidden>
+  ${groups.length > 0 ? `<p class="note" id="blocked" hidden>
     Tekan <b>Buka ${groups.length} tab cetak</b> di atas untuk mencetak semuanya sekaligus, atau cetak
     tumpukan satu per satu di bawah. Browser hanya mengizinkan tab dibuka otomatis kalau pop-up
     untuk situs ini diizinkan.
-  </p>
+  </p>` : ''}
 
   ${failures.length > 0 ? `<div class="card">
-    <p class="head"><span class="warn">${failures.length} pesanan tidak tercetak</span></p>
-    <table>
-      <thead><tr><th>Order ID</th><th>Kanal</th><th>Alasan</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <p class="head"><span class="warn">${failures.length} pesanan belum tercetak</span></p>
+    ${retryForm}
+    ${sections}
   </div>` : ''}
 
   ${groups.map((group) => `<div class="card" data-group="${escape(group.key)}">
@@ -5348,16 +5442,63 @@ iframe{width:100%;height:38vh;min-height:19rem;border:0;background:#fff;display:
     document.getElementById('blocked').hidden = blocked === 0;
   }
 
-  document.getElementById('openall').addEventListener('click', openAll);
+  var openAllButton = document.getElementById('openall');
+  if (openAllButton) openAllButton.addEventListener('click', openAll);
   document.querySelectorAll('[data-print]').forEach(function (button) {
     button.addEventListener('click', function () { openStack(button.getAttribute('data-print'), true); });
   });
+
+  /*
+   * One automatic retry, counted down in the open.
+   *
+   * The server has already waited the fault out and split the batch; if it still says
+   * "ask again", asking again is what the operator would do anyway - and every second
+   * they spend doing it by hand is a second closer to the courier standing at the door.
+   * Visible and cancellable, because a page that navigates itself without warning is a
+   * page nobody trusts. Only ever once: the form it submits says so, and the server
+   * hands that back, so a broken platform cannot put this into a loop.
+   */
+  var retryForm = document.getElementById('retryform');
+  if (retryForm) {
+    // Two taps at a bench is one intention. The second would ask the couriers for the
+    // same documents again while the first is still in flight.
+    retryForm.addEventListener('submit', function () {
+      var go = document.getElementById('retrygo');
+      window.setTimeout(function () { go.disabled = true; go.textContent = 'Mencoba lagi\u2026'; }, 0);
+    });
+  }
+  if (retryForm && ${autoRetry ? 'true' : 'false'}) {
+    var left = 5;
+    var label = document.getElementById('countdown');
+    var button = document.getElementById('retrygo');
+    var timer = null;
+    var stop = function () {
+      if (timer) window.clearInterval(timer);
+      timer = null;
+      label.hidden = true;
+    };
+    label.hidden = false;
+    var tick = function () {
+      label.textContent = 'mencoba lagi otomatis dalam ' + left + ' detik \u00b7 klik di mana saja untuk membatalkan';
+      if (left <= 0) { stop(); button.disabled = true; retryForm.submit(); return; }
+      left -= 1;
+    };
+    tick();
+    timer = window.setInterval(tick, 1000);
+    // Any deliberate act cancels it: the operator has decided to do something else.
+    ['click', 'keydown', 'touchstart'].forEach(function (name) {
+      document.addEventListener(name, function (event) {
+        if (event.target === button) return;
+        stop();
+      }, { once: true, capture: true });
+    });
+  }
 
   // Tried once on arrival, because what was asked for is the labels and not a page about
   // the labels. This page is itself a new tab, and a tab cannot open tabs without a click
   // behind it, so unless pop-ups are allowed for this site the attempt is refused - in
   // which case the line above says which button does it instead of nothing happening.
-  openAll();
+  if (groups.length > 0) openAll();
 })();
 </script>
 </body></html>`;

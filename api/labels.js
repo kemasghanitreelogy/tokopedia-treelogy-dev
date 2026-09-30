@@ -4,7 +4,7 @@ import { markPrinted } from '../src/shopify/label.js';
 import { buildLabelSheet, LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { dashboardError, renderLabelReport } from '../src/dashboard-page.js';
 import {
-  COOKIE_NAME, isConfigured, parseCookies, authenticate, csrfValid, readFormBody, callerIp,
+  COOKIE_NAME, isConfigured, parseCookies, authenticate, csrfValid, csrfToken, readFormBody, callerIp,
 } from '../src/dashboard-auth.js';
 import { recordActivity } from '../src/audit.js';
 
@@ -104,15 +104,6 @@ export default async function handler(req, res) {
       },
     });
 
-    if (sheet.groups.length === 0) {
-      const lines = sheet.failures
-        .slice(0, 12)
-        .map((f) => `${f.channel} ${f.id}: ${f.reason}`)
-        .join(' | ');
-      fail(409, 'Tidak ada label yang bisa dicetak', lines || 'Semua pesanan yang dipilih belum siap.');
-      return;
-    }
-
     // Shopify has no idea a label exists, so the fact that one came out is recorded here
     // or the order would ask to be printed again tomorrow.
     if (sheet.printed?.length) {
@@ -150,6 +141,11 @@ export default async function handler(req, res) {
       requested: chosen.length,
       failures: sheet.failures,
       size,
+      // The report is where a failed run is recovered from, so it carries the token that
+      // lets it repost the selection. Without it the only way back is the label list and
+      // seventeen checkboxes.
+      csrf: csrfToken(session),
+      retried: form.get('retried') === '1',
       groups: sheet.groups.map((group) => ({
         key: group.key,
         label: group.label,

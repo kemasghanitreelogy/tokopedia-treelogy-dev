@@ -340,13 +340,39 @@ function row(order, index) {
 }
 
 /**
+ * Read this one order again, from the platform, now.
+ *
+ * Shopify only, because Shopify is the only channel whose orders this shop's own staff
+ * edit after the fact - a product swapped, an address corrected, a line added. Every
+ * screen here is drawn from our stored copy, and a marketplace announces its own changes;
+ * an edit made in the Shopify admin announces nothing, so the bench keeps looking at the
+ * moment before with no way to tell.
+ *
+ * `back` is the query string the operator is standing on, so pressing this does not throw
+ * away the filter or the page they had open.
+ */
+function refreshButton(order, { csrf, back }) {
+  if (order.channel !== 'shopify' || !csrf) return '';
+  return `<form class="od__sync" method="post">
+    <input type="hidden" name="csrf" value="${escape(csrf)}">
+    <input type="hidden" name="action" value="refresh_order">
+    <input type="hidden" name="channel" value="shopify">
+    <input type="hidden" name="order" value="${escape(order.id)}">
+    <input type="hidden" name="view" value="orders">
+    <input type="hidden" name="back" value="${escape(back)}">
+    <button class="od__sync__b" type="submit">${svg('refresh')}<span>Ambil data terbaru</span></button>
+    <span class="od__sync__n">Baca ulang pesanan ini dari Shopify, lalu samakan label, picklist dan semua daftar lain.</span>
+  </form>`;
+}
+
+/**
  * Everything known about one order, as the popup shows it.
  *
  * Rendered with the list rather than fetched on click: the page already holds the whole
  * order, so opening it costs nothing and works with the network off. Escaping happens
  * here, once, which is why the dialog copies markup instead of parsing a data attribute.
  */
-function orderDetail(order, index) {
+function orderDetail(order, index, { csrf = null, back = '' } = {}) {
   const stage = STAGE_META[order.stage];
   const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
   const units = lines.reduce((n, l) => n + (Number(l.qty) || 0), 0);
@@ -397,6 +423,8 @@ function orderDetail(order, index) {
       ${order.finance?.shipping ? `<div><dt>Ongkir</dt><dd class="mono">${escape(rupiah(order.finance.shipping))}</dd></div>` : ''}
       <div class="od__total"><dt>Total</dt><dd class="mono">${escape(rupiah(order.total))}</dd></div>
     </dl>
+
+    ${refreshButton(order, { csrf, back })}
 
     <a class="od__print" target="_blank" rel="noopener"
        href="/api/invoice?channel=${escape(order.channel)}&amp;id=${escape(encodeURIComponent(order.id))}">
@@ -2300,7 +2328,7 @@ export function renderDashboard({
         <tbody id="rows">${paged.items.map((o, i) => row(o, i)).join('')}</tbody>
       </table>` : '<p class="empty">Tidak ada pesanan yang cocok dengan filter.</p>'}
     </div>
-    <div id="od-store" hidden>${paged.items.map((o, i) => orderDetail(o, i)).join('')}</div>
+    <div id="od-store" hidden>${paged.items.map((o, i) => orderDetail(o, i, { csrf, back: baseQuery })).join('')}</div>
     <dialog class="od" id="od">
       <button class="od__x" type="button" id="od-close" aria-label="Tutup">${svg('x')}</button>
       <div id="od-body"></div>
@@ -2660,6 +2688,15 @@ tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2p
 .od__print:hover{filter:brightness(1.08)}
 .od__print:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .od__print .ico{width:18px; height:18px}
+.od__sync{margin:1.1rem 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:.5rem .75rem}
+.od__sync__b{font:inherit; font-size:.85rem; font-weight:500; display:inline-flex; align-items:center; gap:.45rem;
+  padding:.5rem .9rem; min-height:38px; border-radius:9px; cursor:pointer;
+  color:var(--fg); background:var(--panel-2); border:1px solid var(--line);
+  transition:border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out)}
+.od__sync__b:hover{border-color:var(--brand); color:var(--brand)}
+.od__sync__b[disabled]{opacity:.6; cursor:default}
+.od__sync__b .ico{width:16px; height:16px}
+.od__sync__n{font-size:.78rem; color:var(--dim); flex:1 1 14rem; min-width:0}
 .od__total{margin-left:auto; text-align:right}
 .od__total dd{font-size:1.15rem}
 @media (max-width:640px){ .od{width:calc(100vw - 1rem)} .od>div{padding:1.1rem} }
@@ -2687,6 +2724,17 @@ const ORDER_DETAIL_SCRIPT = `
       e.preventDefault();
       open(row);
     });
+  });
+
+  // One press is one intention. The read takes a second or two and the dialog stays open
+  // over it, which without this reads as nothing having happened.
+  body.addEventListener('submit', function (e) {
+    var button = e.target.querySelector('.od__sync__b');
+    if (!button) return;
+    window.setTimeout(function () {
+      button.disabled = true;
+      button.querySelector('span').textContent = 'Mengambil\u2026';
+    }, 0);
   });
 
   document.getElementById('od-close').addEventListener('click', function () { dialog.close(); });

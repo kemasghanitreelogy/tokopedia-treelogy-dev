@@ -1,5 +1,6 @@
 import { fetchOrdersByIds } from './omni.js';
-import { saveOrders } from './db/orders.js';
+import { saveOrders, ordersByIds } from './db/orders.js';
+import { fetchOrderByGid } from './shopify/shop.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { invalidate } from './cache.js';
 
@@ -50,4 +51,106 @@ export async function refreshOrders(selection, { read = fetchOrdersByIds, save =
   } finally {
     invalidate('orders');
   }
+}
+
+/* --------------------------------------------------- one order, on request */
+
+/**
+ * The fields a person would notice had changed, in the words they would use.
+ *
+ * Not every field: `fetchedAt` moves on every read and a diff that mentions it is a diff
+ * nobody finishes reading. These are the ones a packer or an accountant would act on.
+ */
+const WATCHED = [
+  ['status', 'status platform'],
+  ['stage', 'tahap'],
+  ['total', 'total'],
+  ['buyer', 'pembeli'],
+  ['buyerPhone', 'telepon'],
+  ['buyerEmail', 'email'],
+  ['shipTo', 'alamat'],
+  ['carrier', 'kurir'],
+  ['tracking', 'resi'],
+  ['note', 'catatan'],
+];
+
+/** Lines as one comparable sentence: what, how many, order-independent. */
+const lineSummary = (lines) => (lines ?? [])
+  .map((line) => `${line.sku || line.name || '?'}×${Number(line.qty) || 0}`)
+  .sort()
+  .join(', ');
+
+/**
+ * What changed between the copy we held and the copy the platform just gave us.
+ *
+ * The point of the button is the answer to "did somebody change this order?", so the
+ * answer is what comes back - not a silent success that leaves the operator comparing two
+ * screens by eye.
+ */
+export function diffOrder(before, after) {
+  const changes = [];
+  if (!before) return changes;
+
+  for (const [key, label] of WATCHED) {
+    const from = String(before[key] ?? '');
+    const to = String(after?.[key] ?? '');
+    if (from !== to) changes.push({ field: label, from, to });
+  }
+
+  const was = lineSummary(before.lines);
+  const now = lineSummary(after?.lines);
+  if (was !== now) changes.push({ field: 'produk', from: was, to: now });
+
+  return changes;
+}
+
+/** Changes that make a label already on paper wrong, rather than merely out of date. */
+export const RESHIPS = new Set(['produk', 'alamat', 'pembeli']);
+
+/**
+ * Re-read one order from its platform, right now, because somebody asked.
+ *
+ * The sweep and the webhooks keep the table in line on their own, and they are enough
+ * until a person edits an order in the Shopify admin - swapping a product, fixing an
+ * address - because that is a change our copy has no reason to expect. The bench is then
+ * looking at the moment before, with no way to tell.
+ *
+ * For Shopify it costs one request. The stored row carries the order's GID, so the order
+ * is read by id rather than by scanning sixty days of history looking for it - which is
+ * what the by-id path does when it has nothing better, and what a button pressed a dozen
+ * times a day must not do. Any other channel falls back to that path, which for those is
+ * a keyed read anyway.
+ *
+ * @returns {{before: object|null, after: object, changes: {field: string, from: string, to: string}[]}}
+ */
+export async function refreshOneOrder({ channel, id }, {
+  readStored = ordersByIds,
+  readShopify = fetchOrderByGid,
+  readAny = fetchOrdersByIds,
+  save = saveOrders,
+} = {}) {
+  const want = { channel: String(channel ?? ''), id: String(id ?? '') };
+  if (!want.channel || !want.id) throw new Error('pesanan tidak lengkap');
+  if (want.channel === 'manual') throw new Error('transaksi manual tidak punya platform untuk dibaca ulang');
+
+  const before = (await readStored([want]).catch(() => []))[0] ?? null;
+
+  let after = null;
+  if (want.channel === 'shopify' && before?.gid) {
+    after = await readShopify(before.gid);
+  } else {
+    const { orders } = await readAny([want]);
+    after = orders.find((o) => o.id === want.id && o.channel === want.channel) ?? null;
+  }
+  if (!after) throw new Error(`${want.id} tidak ditemukan di platform`);
+
+  try {
+    await save([after], { source: 'refresh' });
+  } finally {
+    // Every screen is drawn from the table through this cache, so the write is only half
+    // the job: without this the operator presses the button and sees the same figures.
+    invalidate('orders');
+  }
+
+  return { before, after, changes: diffOrder(before, after) };
 }

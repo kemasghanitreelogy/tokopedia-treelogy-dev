@@ -19,10 +19,10 @@ import { filterOrders } from '../src/omni.js';
 import { runAction, massArrange, planArrangement, needsSettling, settleable, oldestRead } from '../src/fulfillment.js';
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
-import { LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
+import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
 import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
-import { refreshOrders } from '../src/orders-refresh.js';
+import { refreshOrders, refreshOneOrder, RESHIPS } from '../src/orders-refresh.js';
 
 /** One Shopee detail call takes fifty ids; a worklist never needs more than a handful. */
 const SETTLE_MAX = 20;
@@ -222,10 +222,31 @@ const readCatalogSafely = () =>
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
-  label_printed: 'labels', reviews_sync: 'reviews',
+  label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders',
   user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
 };
 const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_status', 'user_delete']);
+
+/**
+ * Where a write sends the operator back to.
+ *
+ * A form may carry `back`, the query string the page was showing when it was submitted,
+ * and then the answer lands on that same filter, range and search rather than on a bare
+ * view. Parsed rather than concatenated: `view` and `done` have to win over whatever the
+ * old string said, and a duplicated `view=` is read as the first one, which would be the
+ * stale one. Anything the form sends is only ever read as query parameters, so it cannot
+ * redirect anybody off this host.
+ */
+export function afterWrite(outcome, form) {
+  const params = new URLSearchParams(String(form?.get('back') ?? '').replace(/^\?/, '').slice(0, 400));
+  params.delete('done');
+  params.delete('error');
+  params.delete('yay');
+  params.set('view', outcome.view);
+  params.set(outcome.kind === 'error' ? 'error' : 'done', outcome.message);
+  if (outcome.celebrate) params.set('yay', outcome.celebrate);
+  return `${PATH}?${params.toString()}`;
+}
 
 /** The activation link that goes in the email. */
 const activationLink = (token) => `${publicBaseUrl()}/api/activate?token=${encodeURIComponent(token)}`;
@@ -490,6 +511,42 @@ async function handleWrite(form, ip, user, csrf) {
           ...(tracking ? [{ field: 'resi', from: order.tracking || null, to: tracking }] : []),
           ...(form.get('company') ? [{ field: 'kurir', from: order.carrier || null, to: String(form.get('company')).trim() }] : []),
         ],
+      },
+    };
+  }
+
+  if (action === 'refresh_order') {
+    const channel = String(form.get('channel') ?? '').trim();
+    const id = String(form.get('order') ?? '').trim();
+    if (!channel || !id) throw new Error('pesanan tidak lengkap');
+
+    const { changes } = await refreshOneOrder({ channel, id });
+
+    /*
+     * A label already on paper is not brought back into line by a re-read.
+     *
+     * The picklist, the order list and the invoice are all drawn from the stored row, so
+     * they are correct the moment it is saved. A sheet that came out of the printer
+     * before the edit is the one thing that cannot be, and the operator is the only one
+     * who can fix it - so they are told, rather than left to find out at the bench.
+     */
+    const stale = changes.some((c) => RESHIPS.has(c.field))
+      && Boolean(printedEntry(await printedLabels().catch(() => ({})), { channel, id }));
+
+    const what = changes.map((c) => c.field).join(', ');
+    const message = changes.length === 0
+      ? `${id} sudah yang terbaru, tidak ada perubahan`
+      : `${id}: ${changes.length} perubahan (${what})${stale ? ' - label sudah dicetak sebelum ini, perlu cetak ulang' : ''}`;
+
+    console.log(`dashboard: refresh_order ${channel}/${id} - ${changes.length} changed`);
+    return {
+      view: 'orders', message,
+      audit: {
+        menu: 'orders', verb: 'edit', target: `${channel} ${id}`,
+        summary: changes.length === 0
+          ? `Membaca ulang ${id} dari platform, tidak ada perubahan`
+          : `Membaca ulang ${id} dari platform: ${what}`,
+        changes,
       },
     };
   }
@@ -905,8 +962,7 @@ export default async function handler(req, res) {
       // `status: 'ok'` is the default, not the verdict: an outcome that knows it went
       // badly says so, and the trail agrees with the message the operator was shown.
       if (outcome.audit) await recordActivity({ actor: user, ip, action, status: 'ok', ...outcome.audit });
-      redirect(`${PATH}?view=${outcome.view}&${outcome.kind === 'error' ? 'error' : 'done'}=${encodeURIComponent(outcome.message)}${
-        outcome.celebrate ? `&yay=${encodeURIComponent(outcome.celebrate)}` : ''}`);
+      redirect(afterWrite(outcome, form));
     } catch (error) {
       console.error(`dashboard: write failed - ${error.message}`);
       await recordActivity({
@@ -914,7 +970,10 @@ export default async function handler(req, res) {
         menu: ACTION_MENU[action] ?? (form.get('view') || 'products'), verb: 'edit', target: failureTarget(form),
         summary: `Aksi ${action || '?'} ditolak`,
       });
-      redirect(`${PATH}?view=${form.get('view') || ACTION_MENU[action] || 'products'}&error=${encodeURIComponent(error.message)}`);
+      redirect(afterWrite(
+        { view: form.get('view') || ACTION_MENU[action] || 'products', kind: 'error', message: error.message },
+        form,
+      ));
     }
     return;
   }
@@ -1273,7 +1332,7 @@ export default async function handler(req, res) {
     };
     const orders = filterOrders(data.orders, filter);
     console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'} (${took()})`);
-    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery, flash }));
+    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery, flash, csrf }));
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);
     send(502, dashboardError('Could not load orders', error.message));

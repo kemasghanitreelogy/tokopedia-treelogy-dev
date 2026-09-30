@@ -1266,10 +1266,15 @@ async function cmdNotifyTest() {
  */
 async function cmdShopifyPrices() {
   const t0 = Date.now();
-  const { written, skipped, unknown, syncedAt } = await syncShopifyPrices();
+  const { written, skipped, unknown, conflicts, syncedAt } = await syncShopifyPrices();
   console.log(`\n  ${written} SKU berharga dari Shopify  ·  ${skipped} varian dilewati  ·  ${Math.round((Date.now() - t0) / 1000)} detik`);
   if (unknown.length > 0) {
     console.log(`  ${warn(`${unknown.length} SKU master tanpa harga Shopify: ${unknown.slice(0, 6).join(', ')}${unknown.length > 6 ? '...' : ''}`)}`);
+  }
+  // A SKU on two live listings at two prices is a duplicate to merge in Shopify. We take
+  // the lower one because that is what a buyer pays, but nobody should have to guess.
+  for (const clash of conflicts ?? []) {
+    console.log(`  ${warn(`${clash.sku} punya ${clash.prices.length} harga hidup (${clash.prices.map((n) => n.toLocaleString('id-ID')).join(' / ')}) - dipakai ${clash.used.toLocaleString('id-ID')}`)}`);
   }
   console.log(`  ${ok(`harga tersimpan ${new Date(syncedAt * 1000).toISOString()}`)}\n`);
   return 0;

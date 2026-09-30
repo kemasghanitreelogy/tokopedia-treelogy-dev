@@ -23,6 +23,7 @@ import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
 import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS } from '../src/orders-refresh.js';
+import { discardManual } from '../src/mekari/discard.js';
 
 /** One Shopee detail call takes fifty ids; a worklist never needs more than a handful. */
 const SETTLE_MAX = 20;
@@ -222,7 +223,7 @@ const readCatalogSafely = () =>
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
-  label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders',
+  label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', discard_manual: 'jurnal',
   user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
 };
 const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_status', 'user_delete']);
@@ -547,6 +548,31 @@ async function handleWrite(form, ip, user, csrf) {
           ? `Membaca ulang ${id} dari platform, tidak ada perubahan`
           : `Membaca ulang ${id} dari platform: ${what}`,
         changes,
+      },
+    };
+  }
+
+  if (action === 'discard_manual') {
+    const id = String(form.get('order') ?? '').trim();
+    if (!id) throw new Error('tidak ada transaksi yang disebut');
+
+    const out = await discardManual(id);
+
+    const where = [
+      out.wasInvoiced ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum pernah masuk Jurnal',
+      out.removedFromList ? 'baris pesanan dihapus' : 'tidak ada baris pesanan untuk dihapus',
+    ].join(', ');
+
+    console.log(`dashboard: discard_manual ${id} - ${where}`);
+    return {
+      view: 'orders', message: `${id} dihapus (${where})`,
+      audit: {
+        menu: 'jurnal', verb: 'delete', target: `manual ${id}`,
+        summary: `Menghapus transaksi manual ${id} senilai Rp${out.total.toLocaleString('id-ID')} - ${where}`,
+        changes: [
+          { field: 'nilai', from: String(out.total), to: null },
+          ...(out.wasInvoiced ? [{ field: 'faktur Jurnal', from: String(out.transactionNo ?? out.invoiceId), to: null }] : []),
+        ],
       },
     };
   }

@@ -225,6 +225,27 @@ export async function ordersByIds(selection) {
 }
 
 /**
+ * Remove one order from the table.
+ *
+ * The only caller is the operator discarding a typed-in sale they should not have typed,
+ * which is the one kind of order that exists here and nowhere else: a marketplace row
+ * deleted from this table simply comes back on the next sweep, so nothing else has any
+ * business calling this.
+ *
+ * Returns how many rows went, so a caller can tell "removed" from "was not there" -
+ * deleting nothing is not an error, but it is not a deletion either.
+ */
+export async function deleteOrder(channel, id) {
+  if (!channel || !id) return 0;
+  const rows = await request('orders', {
+    method: 'DELETE',
+    params: { channel: `eq.${channel}`, id: `eq.${id}`, select: 'id' },
+    prefer: 'return=representation',
+  });
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+/**
  * How far each source has actually been read.
  *
  * Keyed by source, not by channel: one TikTok Shop pull answers for both the tokopedia

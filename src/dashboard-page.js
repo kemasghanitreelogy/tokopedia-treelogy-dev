@@ -366,6 +366,29 @@ function refreshButton(order, { csrf, back }) {
 }
 
 /**
+ * Throw away a sale that was typed in by mistake.
+ *
+ * Only a typed-in one. Every other order on this dashboard describes something that
+ * happened on a platform whether or not we like it, and deleting our row would only make
+ * it come back on the next sweep. A consignment slip entered twice describes nothing, and
+ * until now taking it back meant opening Jurnal, deleting the invoice by hand, and
+ * leaving this list still showing it.
+ */
+function discardButton(order, { csrf, back }) {
+  if (order.channel !== 'manual' || !csrf) return '';
+  return `<form class="od__sync od__sync--bad" method="post"
+      data-confirm="Hapus ${escape(order.id)} senilai ${escape(rupiah(order.total))}? Fakturnya di Mekari Jurnal ikut dihapus, dan ini tidak bisa dibatalkan.">
+    <input type="hidden" name="csrf" value="${escape(csrf)}">
+    <input type="hidden" name="action" value="discard_manual">
+    <input type="hidden" name="order" value="${escape(order.id)}">
+    <input type="hidden" name="view" value="orders">
+    <input type="hidden" name="back" value="${escape(back)}">
+    <button class="od__sync__b um__act--bad" type="submit">${svg('trash')}<span>Hapus transaksi</span></button>
+    <span class="od__sync__n">Transaksi yang diketik manual. Menghapusnya juga menghapus fakturnya di Jurnal - kecuali faktur itu sudah menerima pembayaran.</span>
+  </form>`;
+}
+
+/**
  * Everything known about one order, as the popup shows it.
  *
  * Rendered with the list rather than fetched on click: the page already holds the whole
@@ -425,6 +448,7 @@ function orderDetail(order, index, { csrf = null, back = '' } = {}) {
     </dl>
 
     ${refreshButton(order, { csrf, back })}
+    ${discardButton(order, { csrf, back })}
 
     <a class="od__print" target="_blank" rel="noopener"
        href="/api/invoice?channel=${escape(order.channel)}&amp;id=${escape(encodeURIComponent(order.id))}">
@@ -2694,6 +2718,7 @@ tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2p
   color:var(--fg); background:var(--panel-2); border:1px solid var(--line);
   transition:border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out)}
 .od__sync__b:hover{border-color:var(--brand); color:var(--brand)}
+.od__sync--bad .od__sync__b:hover{border-color:var(--bad); color:var(--bad)}
 .od__sync__b[disabled]{opacity:.6; cursor:default}
 .od__sync__b .ico{width:16px; height:16px}
 .od__sync__n{font-size:.78rem; color:var(--dim); flex:1 1 14rem; min-width:0}

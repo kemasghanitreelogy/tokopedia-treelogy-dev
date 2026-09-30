@@ -7,7 +7,7 @@ test.after(async () => { await closeStore(); });
 
 test('with nothing synced yet the form simply has no prices to offer', async () => {
   await deleteDoc(PRICES_DOC);
-  assert.deepEqual(await loadShopifyPrices(), { syncedAt: 0, prices: {} });
+  assert.deepEqual(await loadShopifyPrices(), { syncedAt: 0, prices: {}, conflicts: [] });
   assert.deepEqual(await priceBySku(), {});
 });
 
@@ -45,16 +45,35 @@ test('the sync reads the shape fetchProducts actually returns, not the one the q
     assert.equal(result.written, 2);
     assert.equal(result.skipped, 3);
 
-    const { prices, syncedAt } = await loadShopifyPrices();
+    const { prices, syncedAt, conflicts } = await loadShopifyPrices();
     assert.equal(syncedAt, 1789200000);
     assert.equal(prices['OMP-90-001'].price, 625000);
-    // A SKU listed twice keeps the dearer price: too low is money gone, too high is a question.
-    assert.equal(prices['OMP-45-001'].price, 399000);
+    /*
+     * A SKU on two live listings keeps the lower price, because that is the one a buyer
+     * is charged. Taking the dearer was meant to be cautious and was the opposite: this
+     * shop duplicated a listing, marked only one copy down, and the form filled in
+     * Rp1.265.000 for a bundle the storefront sells at Rp1.045.000 - the crossed-out
+     * price to the rupiah.
+     */
+    assert.equal(prices['OMP-45-001'].price, 370000);
     assert.equal(prices['ARCHIVED-1'], undefined);
     assert.ok(result.unknown.includes('OMC-270-001'), 'SKU master tanpa harga dilaporkan');
+
+    // And the disagreement is reported rather than quietly resolved: one SKU on two live
+    // listings at two prices is a duplicate to merge in Shopify.
+    assert.deepEqual(conflicts, [{ sku: 'OMP-45-001', prices: [370000, 399000], used: 370000 }]);
   } finally {
     if (before === undefined) delete process.env.SHOPIFY_ADMIN_API;
     else process.env.SHOPIFY_ADMIN_API = before;
     await deleteDoc(PRICES_DOC);
   }
+});
+
+test('the crossed-out price is never what lands in the form', async () => {
+  // Shopify keeps two numbers per variant: `price`, what is charged, and
+  // `compareAtPrice`, the one with the line through it. Only the first is ever read -
+  // pinned here because reading the wrong one looks like a working sync.
+  const { PRODUCTS_QUERY } = await import('../src/shopify/shop.js');
+  assert.match(PRODUCTS_QUERY, /\bprice\b/);
+  assert.ok(!/compareAtPrice/.test(PRODUCTS_QUERY), 'harga coret tidak boleh ikut diminta');
 });

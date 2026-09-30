@@ -16,9 +16,35 @@ const RETRYABLE = new Set([
 ]);
 const RETRY_DELAYS_MS = [400, 1000, 2200, 4000];
 
+/**
+ * Shopee namespaces its error codes and this set was written without the namespace, so
+ * nothing in it had ever matched.
+ *
+ * What comes back is `common.error_server`, not `error_server`. The membership test was
+ * therefore always false, every transient error was treated as a final answer, and the
+ * backoff below never ran once. On 30 Sep at 02.13 a single create_shipping_document
+ * returned `common.error_server` and all seventeen labels in that print run were reported
+ * failed; the operator pressed refresh, the same call succeeded, and the retry that was
+ * supposed to have done that automatically had never been reachable.
+ *
+ * The last segment is what names the fault; the first only says which part of the API
+ * raised it, and the same fault is namespaced differently by different endpoints.
+ */
+const faultOf = (code) => String(code ?? '').split('.').pop();
+
 /** A transport failure or a 5xx is transient by definition; the request never completed. */
 const isTransport = (error) =>
   error.name === 'TypeError' || error.name === 'AbortError' || error.httpStatus >= 500 || error.httpStatus === 429;
+
+/**
+ * Whether an error says "ask again", as opposed to answering the question.
+ *
+ * Exported because a caller that batches - a print run, say - has to tell a fault of
+ * Shopee's from a fault of the order's. The first is worth waiting out or splitting the
+ * batch over; the second is the order's own problem and no amount of asking fixes it.
+ */
+export const isTransientShopeeError = (error) =>
+  RETRYABLE.has(faultOf(error?.code)) || isTransport(error ?? {});
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -37,7 +63,7 @@ export async function callShopApi(config, path, auth, params = {}, body) {
       return await callShopApiOnce(config, path, auth, params, body);
     } catch (error) {
       lastError = error;
-      const retryable = RETRYABLE.has(error.code) || isTransport(error);
+      const retryable = isTransientShopeeError(error);
       if (!retryable || attempt === RETRY_DELAYS_MS.length) throw error;
       // Jitter keeps parallel callers from retrying in lockstep and tripping the limit again.
       await sleep(RETRY_DELAYS_MS[attempt] + Math.floor(Math.random() * 250));

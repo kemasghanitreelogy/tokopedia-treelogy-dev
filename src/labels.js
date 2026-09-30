@@ -5,7 +5,7 @@ import { loadConfig } from './config.js';
 import { benchDate, benchZone } from './clock.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
-import { callShopApi } from './shopee/client.js';
+import { callShopApi, isTransientShopeeError } from './shopee/client.js';
 import { buildShopUrl } from './shopee/sign.js';
 
 /**
@@ -76,11 +76,24 @@ async function fetchBytes(url, init = {}) {
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status} saat mengunduh dokumen`);
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status} saat mengunduh dokumen`);
+      // Carried, not just printed: a 502 from the document host is the same passing
+      // fault as a 502 from the API, and only the status says which it was.
+      error.httpStatus = response.status;
+      throw error;
+    }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.length < 5 || String.fromCharCode(...bytes.slice(0, 4)) !== '%PDF') {
-      // The platforms answer errors with JSON at the same URL shape as a PDF.
-      throw new Error(`bukan PDF: ${Buffer.from(bytes.slice(0, 120)).toString()}`);
+      // The platforms answer errors with JSON at the same URL shape as a PDF, which means
+      // the fault code arrives in the body with a 200 over it. Read out, so a caller can
+      // tell "ask again" from "this order has no document".
+      const text = bytes.length <= 4096 ? Buffer.from(bytes).toString() : '';
+      const error = new Error(`bukan PDF: ${Buffer.from(bytes.slice(0, 120)).toString()}`);
+      try {
+        error.code = JSON.parse(text).error || undefined;
+      } catch { /* not JSON at all, which is its own kind of answer */ }
+      throw error;
     }
     return bytes;
   } finally {
@@ -185,6 +198,63 @@ export async function shopeeTracking(config, auth, orders, { call = callShopApi 
 }
 
 /**
+ * How many extra create calls a print run may spend finding which order Shopee objected to.
+ *
+ * Halving a group of seventeen isolates one bad order in about nine calls. Without a
+ * ceiling an outage would turn one failed run into thirty-one failed calls, each with its
+ * own backoff, and the bench would wait minutes to be told the same thing.
+ */
+export const CREATE_SPLIT_BUDGET = 10;
+
+/**
+ * Ask Shopee to generate the waybills, and make sure a refusal names the right orders.
+ *
+ * Shopee usually answers a batch item by item, and those answers are passed straight
+ * through. Sometimes it refuses the whole request without saying which row it objected
+ * to - `common.error_server` is the one this shop sees - and the old code wrote that one
+ * sentence against every order in the batch. Seventeen labels were reported failed on
+ * 30 Sep for a fault that belonged to at most one of them, and possibly to none.
+ *
+ * A group that comes back with no detail is therefore halved and each half asked again.
+ * One order alone is its own answer. The transport layer has already waited the fault
+ * out by this point, so what reaches here is either a bad row worth isolating or a
+ * Shopee that is properly down - and the budget is what stops the second case from
+ * costing a call per order.
+ */
+export async function createShopeeDocuments(config, auth, orderList, note, budget, { call = callShopApi } = {}) {
+  try {
+    const created = await call(config, '/api/v2/logistics/create_shipping_document', auth, {}, { order_list: orderList });
+    for (const row of created.response?.result_list ?? []) {
+      if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
+    }
+    return;
+  } catch (error) {
+    const rows = error.response?.result_list ?? [];
+    if (rows.length > 0) {
+      for (const row of rows) {
+        if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
+      }
+      return;
+    }
+
+    if (orderList.length === 1 || budget.left <= 0) {
+      const reason = isTransientShopeeError(error)
+        ? `Shopee menolak dan tetap menolak setelah dicoba ulang - coba cetak lagi sebentar lagi (${error.code ?? 'tanpa kode'})`
+        : error.message;
+      for (const item of orderList) note(item.order_sn, reason);
+      return;
+    }
+
+    budget.left -= 2;
+    const half = Math.ceil(orderList.length / 2);
+    // One after the other, not both at once: if Shopee is the thing that is struggling,
+    // doubling the requests at it is the wrong answer.
+    await createShopeeDocuments(config, auth, orderList.slice(0, half), note, budget, { call });
+    await createShopeeDocuments(config, auth, orderList.slice(half), note, budget, { call });
+  }
+}
+
+/**
  * Shopee is a three-step, asynchronous flow, and the final download is all-or-nothing:
  * a single not-yet-ready order makes the whole PDF request fail. So the result is polled
  * and filtered down to READY orders before anything is downloaded - otherwise one bad
@@ -245,19 +315,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
       return item;
     });
     if (orderList.length === 0) return { pages: [], failures };
-    try {
-      const created = await callShopApi(config, '/api/v2/logistics/create_shipping_document', auth, {}, { order_list: orderList });
-      for (const row of created.response?.result_list ?? []) {
-        if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
-      }
-    } catch (error) {
-      for (const row of error.response?.result_list ?? []) {
-        if (row.fail_error) note(row.order_sn, row.fail_message || row.fail_error);
-      }
-      if (!error.response?.result_list) {
-        for (const sn of askable) note(sn, error.message);
-      }
-    }
+    await createShopeeDocuments(config, auth, orderList, note, { left: CREATE_SPLIT_BUDGET });
     for (const sn of askable) {
       if (!failures.some((f) => f.id === sn)) pending.add(sn);
     }
@@ -292,6 +350,9 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
 /** Shopee refuses to combine some packages in one document, and only says so on download. */
 const CANNOT_COMBINE = 'packages_can_not_download_together';
 
+/** Short, because the bench is standing there: about five seconds of waiting, then split. */
+const DOWNLOAD_RETRY_MS = [500, 1500, 3000];
+
 /**
  * Download a group of waybills, splitting only as far as the platform forces.
  *
@@ -300,11 +361,11 @@ const CANNOT_COMBINE = 'packages_can_not_download_together';
  * incompatible pair costs O(log n) extra requests instead of falling back to one call
  * per label. A group of one that still fails is a real per-order failure.
  */
-async function downloadShopeeBatch(config, auth, orderSns, documentType, depth = 0) {
+export async function downloadShopeeBatch(config, auth, orderSns, documentType, depth = 0) {
   if (orderSns.length === 0) return { pages: [], failures: [] };
 
   const url = buildShopUrl(config, '/api/v2/logistics/download_shipping_document', auth);
-  const attempt = async (group) =>
+  const once = async (group) =>
     fetchBytes(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -313,6 +374,25 @@ async function downloadShopeeBatch(config, auth, orderSns, documentType, depth =
         order_list: group.map((order_sn) => ({ order_sn })),
       }),
     });
+
+  /*
+   * The download is the one step of the print run that never asked twice.
+   *
+   * It does not go through callShopApi - the answer is a PDF, not JSON - so it inherited
+   * none of the transport's backoff, and a passing 502 at the document host failed a
+   * whole group on the first try. Splitting cannot help a fault that belongs to Shopee,
+   * so waiting it out comes first and the split stays for what it is actually for.
+   */
+  const attempt = async (group) => {
+    for (let ask = 0; ; ask += 1) {
+      try {
+        return await once(group);
+      } catch (error) {
+        if (!isTransientShopeeError(error) || ask >= DOWNLOAD_RETRY_MS.length) throw error;
+        await sleep(DOWNLOAD_RETRY_MS[ask]);
+      }
+    }
+  };
 
   try {
     const bytes = await attempt(orderSns);

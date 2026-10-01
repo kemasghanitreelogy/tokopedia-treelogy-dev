@@ -550,7 +550,20 @@ export const PRINTABLE_STAGES = new Set(['to_ship', 'shipping']);
  */
 export const printKey = (channel, id) => `${channel}:${id}`;
 export const printedEntry = (printed, order) => printed[printKey(order.channel, order.id)] ?? printed[order.id] ?? null;
-const wasPrinted = printedEntry;
+
+/**
+ * Whether the sheet that was printed still describes this order.
+ *
+ * An entry marked stale is one whose order was edited after its label came out. The label
+ * exists and it is wrong, so the order is not "sudah dicetak" - it is waiting to be
+ * printed again, and the queue has to say so or the parcel leaves with the old contents
+ * on the outside. printedEntry still returns it, because the reprint history is about
+ * what happened and not about what is current.
+ */
+const wasPrinted = (printed, order) => {
+  const entry = printedEntry(printed, order);
+  return entry && !entry.stale ? entry : null;
+};
 
 /**
  * Which print run an order belongs to.
@@ -729,6 +742,9 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     }
     if (!String(order.shipTo ?? '').trim()) return { state: 'none', note: 'tanpa alamat, tidak perlu label' };
     if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
+    // A sheet that was printed and then invalidated by an edit is worth naming: "siap
+    // dicetak" alone would read as a label nobody has got round to.
+    if (printedEntry(printed, order)) return { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' };
     return { state: 'needsPrint', note: 'siap dicetak' };
   }
 

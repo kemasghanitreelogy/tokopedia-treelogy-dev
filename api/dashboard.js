@@ -20,10 +20,22 @@ import { runAction, massArrange, planArrangement, needsSettling, settleable, old
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
-import { printedLabels, markPrinted, arrangedOrders } from '../src/shopify/label.js';
+import { printedLabels, markPrinted, markLabelStale, arrangedOrders } from '../src/shopify/label.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
-import { refreshOrders, refreshOneOrder, RESHIPS } from '../src/orders-refresh.js';
+import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
+import { amendManualInvoice } from '../src/mekari/amend.js';
+import { orderById } from '../src/db/orders.js';
+
+/**
+ * Which typed-in sources can be corrected in place rather than deleted and re-entered.
+ *
+ * WhatsApp alone, by decision. It is the one whose order is agreed in a conversation that
+ * keeps going - a jar added, an address corrected - while a consignment slip or a walk-in
+ * is written down after the fact from something that already happened. Widening this is
+ * one entry; it is deliberately not wide.
+ */
+const EDITABLE_SOURCES = new Set(['DP']);
 
 /** One Shopee detail call takes fifty ids; a worklist never needs more than a handful. */
 const SETTLE_MAX = 20;
@@ -109,7 +121,7 @@ import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
-import { channelToday } from '../src/clock.js';
+import { channelToday, channelDate } from '../src/clock.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
 import { loadImageManifest } from '../src/mekari/images.js';
 import { loadForecast } from '../src/forecast/engine.js';
@@ -224,6 +236,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
   label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', discard_manual: 'jurnal',
+  manual_update: 'jurnal',
   user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
 };
 const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_status', 'user_delete']);
@@ -548,6 +561,113 @@ async function handleWrite(form, ip, user, csrf) {
           ? `Membaca ulang ${id} dari platform, tidak ada perubahan`
           : `Membaca ulang ${id} dari platform: ${what}`,
         changes,
+      },
+    };
+  }
+
+  if (action === 'manual_update') {
+    if (!isMekariConfigured()) throw new Error('kredensial Mekari belum diisi');
+
+    const code = String(form.get('code') ?? '').trim();
+    const before = await orderById('manual', code);
+    if (!before) throw new Error(`transaksi ${code} tidak ada di daftar`);
+    if (!EDITABLE_SOURCES.has(String(before.source ?? '').toUpperCase())) {
+      throw new Error(`${code} bukan pesanan WhatsApp, tidak bisa diubah di sini`);
+    }
+
+    const lines = form.getAll('sku').map((sku, index) => ({
+      sku,
+      qty: Number(form.getAll('qty')[index]),
+      unitPrice: Number(form.getAll('unitPrice')[index]),
+      unitDiscount: Number(form.getAll('unitDiscount')[index]),
+      discountMode: form.getAll('discountMode')[index],
+    }));
+
+    // Rebuilt from scratch and checked from scratch, exactly as a new one is. The code
+    // and the source come from the stored order rather than the form: both are fixed, and
+    // a form that sent different ones would be pointing the edit at another sale.
+    const order = buildManualOrder({
+      source: before.source,
+      code: before.id,
+      date: form.get('date'),
+      note: form.get('note'),
+      addedBy: user.name || user.email,
+      shipping: form.get('shipping'),
+      buyer: form.get('buyer'),
+      buyerPhone: form.get('buyerPhone'),
+      buyerEmail: form.get('buyerEmail'),
+      shipTo: form.get('shipTo'),
+      carrier: form.get('carrier'),
+      lines,
+    });
+
+    /*
+     * The sale happened when it happened.
+     *
+     * An edit is not a new sale, so leaving the date alone must leave the moment alone -
+     * otherwise correcting an address at three o'clock moves a two o'clock order down the
+     * list for no reason anybody could explain. A date that was actually changed does
+     * move it, because that is what changing it means.
+     */
+    if (channelDate(before.createdAt, 'manual') === String(form.get('date') ?? '')) {
+      order.createdAt = before.createdAt;
+    }
+
+    const claimed = Number(form.get('total'));
+    if (Number.isFinite(claimed) && claimed !== order.total) {
+      throw new Error(`total di layar (${claimed}) tidak sama dengan hasil hitung ulang (${order.total})`);
+    }
+    if (process.env.MEKARI_SYNC_LIVE !== '1') {
+      throw new Error(`${code} valid senilai ${order.total}, tapi MEKARI_SYNC_LIVE belum disetel`);
+    }
+
+    // Jurnal first. If the books refuse the change - a payment has been recorded against
+    // the invoice - our own row must not quietly move away from them.
+    const amended = await amendManualInvoice(order);
+
+    // Who changed it, kept on the order itself so the popup can say so without anybody
+    // having to open the activity log.
+    const edited = {
+      ...order,
+      editedAt: Math.floor(Date.now() / 1000),
+      editedBy: user.name || user.email,
+      editedTimes: Number(before.editedTimes ?? 0) + 1,
+    };
+    const saved = await saveOrders([edited], { source: 'manual-edit' });
+    if (saved.rejected.length > 0) throw new Error(`faktur sudah diperbarui tapi daftar pesanan menolak: ${saved.rejected[0].error}`);
+
+    const changes = diffOrder(before, edited);
+
+    /*
+     * A label already on paper no longer describes this parcel.
+     *
+     * Only when something that is printed on it moved - the products, the address, the
+     * name. A phone number or a note does not send anybody back to the printer, and
+     * putting the parcel back in the queue for one would cost a second sheet for nothing.
+     */
+    let reprint = false;
+    if (changes.some((c) => RESHIPS.has(c.field))) {
+      reprint = (await markLabelStale([`manual:${code}`], {
+        by: user.email, reason: `diubah oleh ${user.name || user.email}`,
+      }).catch(() => 0)) > 0;
+    }
+
+    invalidate('orders');
+    invalidate('jurnal');
+
+    const what = changes.map((c) => c.field).join(', ') || 'tidak ada yang berubah';
+    console.log(`dashboard: manual_update ${code} - ${what}${reprint ? ' (label perlu cetak ulang)' : ''}`);
+    return {
+      view: 'orders',
+      message: `${code} diubah (${what})${amended.amended ? '' : ' - belum ada faktur di Jurnal untuk diperbarui'}${reprint ? ' - label ditandai perlu cetak ulang' : ''}`,
+      audit: {
+        menu: 'jurnal', verb: 'edit', target: `manual ${code}`,
+        summary: `Mengubah ${code} menjadi Rp${order.total.toLocaleString('id-ID')} - ${what}`,
+        changes: [
+          ...changes,
+          ...(amended.amended ? [{ field: 'faktur Jurnal', from: String(amended.transactionNo ?? amended.invoiceId), to: 'diperbarui' }] : []),
+          ...(reprint ? [{ field: 'label', from: 'sudah dicetak', to: 'perlu cetak ulang' }] : []),
+        ],
       },
     };
   }
@@ -1151,6 +1271,40 @@ export default async function handler(req, res) {
         generatedAt: Date.now(), csrf, flash,
         selected: url.searchParams.get('sku') ?? null,
         images: await imagesByKey(),
+      }));
+      return;
+    }
+
+    /*
+     * Correcting a typed-in sale, in the same form it was typed in.
+     *
+     * A WhatsApp order is agreed in a conversation, and the conversation carries on after
+     * it is written down: a jar added, an address corrected. Until now the only way to
+     * reflect that was to delete the whole thing and type it again, which loses the
+     * invoice number and the sequence position with it.
+     */
+    if (view === 'jurnal' && url.searchParams.get('edit')) {
+      const code = String(url.searchParams.get('edit')).slice(0, 64);
+      const order = await orderById('manual', code).catch(() => null);
+      if (!order) {
+        send(404, dashboardError('Transaksi tidak ditemukan', `${code} tidak ada di daftar pesanan.`));
+        return;
+      }
+      if (!EDITABLE_SOURCES.has(String(order.source ?? '').toUpperCase())) {
+        send(403, dashboardError('Tidak bisa diubah', `${code} bukan pesanan WhatsApp. Hapus lalu masukkan ulang kalau datanya salah.`));
+        return;
+      }
+      const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })), SWR);
+      send(200, renderManual({ user,
+        range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
+        editing: order,
+        source: String(order.source ?? '').toUpperCase(),
+        code: order.id,
+        today: channelToday('manual'),
+        contacts: [...(ledger.contacts ?? [])].sort(),
+        existingCodes: [], images: await imagesByKey(),
+        prices: await cached('shopify-prices', 5 * 60_000, () => priceBySku().catch(() => ({})), SWR),
+        live: process.env.MEKARI_SYNC_LIVE === '1',
       }));
       return;
     }

@@ -374,6 +374,22 @@ function refreshButton(order, { csrf, back }) {
  * until now taking it back meant opening Jurnal, deleting the invoice by hand, and
  * leaving this list still showing it.
  */
+/**
+ * Correct a WhatsApp order that was agreed in a conversation that carried on.
+ *
+ * Only WhatsApp. A consignment slip or a walk-in is written down after the fact from
+ * something that already happened; a WhatsApp sale is still being negotiated while it
+ * sits here, and until now a jar added meant deleting the whole transaction and typing it
+ * again - which loses the invoice number in Jurnal along with it.
+ */
+export const EDITABLE_MANUAL_SOURCES = new Set(['DP']);
+
+function editButton(order, { back }) {
+  if (order.channel !== 'manual' || !EDITABLE_MANUAL_SOURCES.has(String(order.source ?? '').toUpperCase())) return '';
+  return `<a class="od__sync__b" href="?view=jurnal&amp;edit=${escape(encodeURIComponent(order.id))}&amp;back=${escape(encodeURIComponent(back))}">
+    ${svg('list')}<span>Ubah transaksi</span></a>`;
+}
+
 function discardButton(order, { csrf, back }) {
   if (order.channel !== 'manual' || !csrf) return '';
   return `<form class="od__sync od__sync--bad" method="post"
@@ -384,6 +400,7 @@ function discardButton(order, { csrf, back }) {
     <input type="hidden" name="view" value="orders">
     <input type="hidden" name="back" value="${escape(back)}">
     <button class="od__sync__b um__act--bad" type="submit">${svg('trash')}<span>Hapus transaksi</span></button>
+    ${editButton(order, { back })}
     <span class="od__sync__n">Transaksi yang diketik manual. Menghapusnya juga menghapus fakturnya di Jurnal - kecuali faktur itu sudah menerima pembayaran.</span>
   </form>`;
 }
@@ -423,6 +440,9 @@ function orderDetail(order, index, { csrf = null, back = '' } = {}) {
       <span class="pill pill--${stage.tone}">${escape(stage.label)}</span>
       <span class="od__when">${escape(dateTime(order.createdAt, order.channel))}</span>
     </div>
+    ${order.editedBy ? `<p class="od__edited">${svg('warn')}<span>Diubah oleh <b>${escape(order.editedBy)}</b> &middot; ${
+      escape(dateTime(order.editedAt, order.channel))}${
+      Number(order.editedTimes) > 1 ? ` &middot; ${escape(String(order.editedTimes))}&times;` : ''}</span></p>` : ''}
     <p class="od__id mono">${escape(order.id)}</p>
 
     <dl class="od__grid">
@@ -2719,6 +2739,11 @@ tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2p
   transition:border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out)}
 .od__sync__b:hover{border-color:var(--brand); color:var(--brand)}
 .od__sync--bad .od__sync__b:hover{border-color:var(--bad); color:var(--bad)}
+.od__sync--bad a.od__sync__b:hover{border-color:var(--brand); color:var(--brand)}
+a.od__sync__b{text-decoration:none}
+.od__edited{display:flex; align-items:center; gap:.45rem; margin:.1rem 0 .9rem;
+  font-size:.82rem; color:var(--warn)}
+.od__edited .ico{width:15px; height:15px; flex:none}
 .od__sync__b[disabled]{opacity:.6; cursor:default}
 .od__sync__b .ico{width:16px; height:16px}
 .od__sync__n{font-size:.78rem; color:var(--dim); flex:1 1 14rem; min-width:0}
@@ -3410,13 +3435,27 @@ export function renderJurnal({
  */
 export function renderManual({
   range, errors, shopeeShop, generatedAt, csrf, flash, source, code, today, contacts = [],
-  live, existingCodes = [], images = {}, seqTail = '', prices = {}, user = null,
+  live, existingCodes = [], images = {}, seqTail = '', prices = {}, user = null, editing = null,
 }) {
-  const chosen = SOURCE_OPTIONS.find((o) => o.prefix === source) ?? SOURCE_OPTIONS[0];
+  /*
+   * The same form, filled in, when an order is being corrected rather than entered.
+   *
+   * Two things are deliberately not editable. The code is the invoice's custom_id in
+   * Jurnal - the whole of this system's idempotency - so changing it would orphan the
+   * invoice it names and let a second one be created beside it. And the source decides
+   * the receivable account, the tag and the term; changing it is not a correction but a
+   * different sale, which is what delete-and-re-enter is for.
+   */
+  const edit = editing ?? null;
+  const chosen = SOURCE_OPTIONS.find((o) => o.prefix === (edit ? String(edit.source ?? '').toUpperCase() : source))
+    ?? SOURCE_OPTIONS[0];
 
-  const sources = SOURCE_OPTIONS.map((o) => `
-    <label class="src__o">
+  const sources = SOURCE_OPTIONS
+    .filter((o) => !edit || o.prefix === chosen.prefix)
+    .map((o) => `
+    <label class="src__o${edit ? ' src__o--fixed' : ''}">
       <input type="radio" name="source" value="${o.prefix}" ${o.prefix === chosen.prefix ? 'checked' : ''}
+             ${edit ? 'readonly tabindex="-1"' : ''}
              data-term="${o.termDays}" data-label="${escape(o.label)}">
       <span class="src__b">
         <span class="src__p">${o.prefix}</span>
@@ -3424,6 +3463,13 @@ export function renderManual({
         <span class="src__t">Net ${o.termDays}</span>
       </span>
     </label>`).join('');
+
+  /** The author suffix is added again on save, so it must not be edited back in by hand. */
+  const noteOf = (order) => String(order?.note ?? '')
+    .replace(/\s*-\s*(ditambahkan|diubah) oleh .*$/u, '')
+    .trim();
+
+  const editLines = edit ? (edit.finance?.lines?.length ? edit.finance.lines : (edit.lines ?? [])) : [];
 
   /*
    * Only what the storefront sells.
@@ -3438,9 +3484,33 @@ export function renderManual({
    */
   const offered = sellableInShopify(prices);
   const fromShopify = offered.length > 0;
-  const catalogue = fromShopify
+  let catalogue = fromShopify
     ? offered
     : SELLABLE.map((p) => ({ ...p, price: 0 }));
+
+  /*
+   * A line already on the order keeps its product, whatever the storefront sells today.
+   *
+   * The list is narrowed to what Shopify prices, and an edited order can carry a gift SKU
+   * or a listing that has since been retired. Dropping those options would silently empty
+   * the select on a row the operator never touched, and the save would then rebuild the
+   * sale without it.
+   */
+  if (edit) {
+    const have = new Set(catalogue.map((p) => p.sku));
+    for (const line of editLines) {
+      const sku = String(line.sku ?? '').trim();
+      if (!sku || have.has(sku)) continue;
+      have.add(sku);
+      const known = SELLABLE.find((p) => p.sku === sku);
+      catalogue = [...catalogue, {
+        sku,
+        name: known?.name ?? line.name ?? sku,
+        category: known?.category ?? 'gift',
+        price: Number(line.unitPrice) || 0,
+      }];
+    }
+  }
 
   // Grouped so a long flat list does not have to be read top to bottom every time.
   const byCategory = new Map();
@@ -3457,33 +3527,41 @@ export function renderManual({
     }</optgroup>`)
     .join('');
 
-  const lineRow = (index) => `
+  const lineRow = (index, line = null) => {
+    // A discount typed as a percentage is stored as rupiah and remembered as a percent.
+    // Restoring it as rupiah would be arithmetically identical and still wrong: the
+    // operator gave an instruction, and the form should show the instruction back.
+    const percent = line && Number.isFinite(Number(line.discountPercent));
+    const discount = percent ? Number(line.discountPercent) : Number(line?.unitDiscount ?? 0);
+    const picture = line ? (images[line.sku]?.thumb || images[line.sku]?.url || '') : '';
+    return `
     <div class="ln" data-row>
       <span class="ln__prod">
-        <img class="ln__pic" alt="" width="38" height="38" hidden>
+        <img class="ln__pic" alt="" width="38" height="38" ${picture ? `src="${escape(picture)}"` : 'hidden'}>
         <select name="sku" aria-label="Produk baris ${index + 1}">
           <option value="">Pilih produk&hellip;</option>
-          ${productOptions}
+          ${line ? productOptions.replace(`value="${escape(String(line.sku ?? ''))}"`, `value="${escape(String(line.sku ?? ''))}" selected`) : productOptions}
         </select>
       </span>
-      <input type="number" name="qty" value="1" min="1" step="1" inputmode="numeric" aria-label="Kuantitas">
-      <input type="number" name="unitPrice" value="" min="0" step="1" inputmode="numeric" placeholder="Harga" aria-label="Harga satuan">
+      <input type="number" name="qty" value="${escape(String(line?.qty ?? 1))}" min="1" step="1" inputmode="numeric" aria-label="Kuantitas">
+      <input type="number" name="unitPrice" value="${line ? escape(String(Number(line.unitPrice) || 0)) : ''}" min="0" step="1" inputmode="numeric" placeholder="Harga" aria-label="Harga satuan">
       <span class="ln__disc">
-        <input type="number" name="unitDiscount" value="0" min="0" step="1" inputmode="numeric"
-               aria-label="Diskon baris ${index + 1}">
+        <input type="number" name="unitDiscount" value="${escape(String(discount || 0))}" min="0" step="1" inputmode="numeric"
+               ${percent ? 'max="100"' : ''} aria-label="Diskon baris ${index + 1}">
         <span class="seg" role="group" aria-label="Satuan diskon baris ${index + 1}">
-          <button class="seg__b is-on" type="button" data-mode="rp" aria-pressed="true">Rp</button>
-          <button class="seg__b" type="button" data-mode="pct" aria-pressed="false">%</button>
+          <button class="seg__b${percent ? '' : ' is-on'}" type="button" data-mode="rp" aria-pressed="${percent ? 'false' : 'true'}">Rp</button>
+          <button class="seg__b${percent ? ' is-on' : ''}" type="button" data-mode="pct" aria-pressed="${percent ? 'true' : 'false'}">%</button>
         </span>
-        <input type="hidden" name="discountMode" value="rp">
+        <input type="hidden" name="discountMode" value="${percent ? 'pct' : 'rp'}">
       </span>
       <span class="ln__t" data-line-total>&mdash;</span>
       <button class="ln__x" type="button" data-remove aria-label="Hapus baris ${index + 1}">&times;</button>
     </div>`;
+  };
 
   return shell({ user,
     csrf,
-    title: 'Transaksi manual',
+    title: edit ? `Ubah ${edit.id}` : 'Transaksi manual',
     range,
     errors,
     shopeeShop,
@@ -3495,10 +3573,13 @@ export function renderManual({
     body: `
       ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif.</span></div>`}
       ${fromShopify ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Harga Shopify belum tersinkron, jadi daftar produk masih menampilkan seluruh katalog dan harga harus diisi manual.</span></div>`}
-      <form method="post" id="mxform" data-confirm="Simpan transaksi ini dan kirim ke Mekari Jurnal?">
+      ${edit ? `<div class="alert alert--soft">${svg('warn')}<span>Mengubah transaksi yang sudah tercatat. Fakturnya di Mekari Jurnal ikut diperbarui di tempat - nomor fakturnya tidak berubah - dan kalau labelnya sudah dicetak, tandanya dilepas supaya dicetak ulang.</span></div>` : ''}
+      <form method="post" id="mxform" data-confirm="${edit
+        ? `Simpan perubahan pada ${escape(edit.id)} dan perbarui fakturnya di Mekari Jurnal?`
+        : 'Simpan transaksi ini dan kirim ke Mekari Jurnal?'}">
         <input type="hidden" name="csrf" value="${escape(csrf)}">
         <input type="hidden" name="view" value="jurnal">
-        <input type="hidden" name="action" value="manual_invoice">
+        <input type="hidden" name="action" value="${edit ? 'manual_update' : 'manual_invoice'}">
 
         <div class="mx">
           <div class="panel">
@@ -3512,16 +3593,17 @@ export function renderManual({
               <div class="flds">
                 <div class="fld fld--mono">
                   <label for="code">Kode transaksi</label>
-                  <input id="code" name="code" value="${escape(code)}" required maxlength="43"
-                         pattern="[A-Za-z]{2}-[A-Za-z0-9-]{1,40}" data-code>
+                  <input id="code" name="code" value="${escape(edit ? edit.id : code)}" required maxlength="43"
+                         pattern="[A-Za-z]{2}-[A-Za-z0-9-]{1,40}" ${edit ? 'readonly' : 'data-code'}>
+                  ${edit ? '<span class="fld__hint">Kode tidak bisa diubah: ini yang menghubungkan transaksi ini dengan fakturnya di Jurnal.</span>' : ''}
                 </div>
                 <div class="fld">
                   <label for="date">Tanggal</label>
-                  <input id="date" name="date" type="date" value="${escape(today)}" max="${escape(today)}" required>
+                  <input id="date" name="date" type="date" value="${escape(edit ? channelDate(edit.createdAt, BENCH_CHANNEL) : today)}" max="${escape(today)}" required>
                 </div>
                 <div class="fld">
                   <label for="shipping">Ongkir</label>
-                  <input id="shipping" name="shipping" type="number" value="0" min="0" step="1" inputmode="numeric">
+                  <input id="shipping" name="shipping" type="number" value="${escape(String(edit?.finance?.shipping ?? 0))}" min="0" step="1" inputmode="numeric">
                 </div>
               </div>
             </div>
@@ -3532,22 +3614,22 @@ export function renderManual({
                 <div class="fld">
                   <label for="buyer">Nama pelanggan</label>
                   <input id="buyer" name="buyer" list="mxcontacts" maxlength="120" autocomplete="off"
-                         placeholder="Nama orang atau toko" data-customer>
+                         value="${escape(edit?.buyer ?? '')}" placeholder="Nama orang atau toko" data-customer>
                   <span class="fld__hint" data-customer-hint>Kosong: ditagih atas nama ${escape(chosen.label)}</span>
                 </div>
                 <div class="fld">
                   <label for="buyerPhone">Nomor telepon</label>
-                  <input id="buyerPhone" name="buyerPhone" type="tel" maxlength="40" autocomplete="off" placeholder="08...">
+                  <input id="buyerPhone" name="buyerPhone" type="tel" maxlength="40" autocomplete="off" value="${escape(edit?.buyerPhone ?? '')}" placeholder="08...">
                 </div>
                 <div class="fld">
                   <label for="buyerEmail">Email</label>
-                  <input id="buyerEmail" name="buyerEmail" type="email" maxlength="120" autocomplete="off" placeholder="nama@contoh.id">
+                  <input id="buyerEmail" name="buyerEmail" type="email" maxlength="120" autocomplete="off" value="${escape(edit?.buyerEmail ?? '')}" placeholder="nama@contoh.id">
                 </div>
                 <div class="fld">
                   <label for="carrier">Kurir</label>
                   <select id="carrier" name="carrier">
                     <option value="">Belum ditentukan</option>
-                    ${MANUAL_CARRIERS.map((name) => `<option value="${escape(name)}">${escape(name)}</option>`).join('')}
+                    ${MANUAL_CARRIERS.map((name) => `<option value="${escape(name)}"${edit?.carrier === name ? ' selected' : ''}>${escape(name)}</option>`).join('')}
                   </select>
                 </div>
               </div>
@@ -3555,7 +3637,7 @@ export function renderManual({
                 <div class="fld">
                   <label for="shipTo">Alamat</label>
                   <textarea id="shipTo" name="shipTo" rows="2" maxlength="400" data-nomoji
-                            placeholder="Jalan, kelurahan, kecamatan, kota, provinsi, kode pos"></textarea>
+                            placeholder="Jalan, kelurahan, kecamatan, kota, provinsi, kode pos">${escape(edit?.shipTo ?? '')}</textarea>
                 </div>
               </div>
               <datalist id="mxcontacts">${
@@ -3568,7 +3650,7 @@ export function renderManual({
               <div class="lnh">
                 <span>Produk</span><span>Qty</span><span>Harga</span><span>Diskon</span><span>Subtotal</span><span></span>
               </div>
-              <div id="lines">${lineRow(0)}</div>
+              <div id="lines">${editLines.length > 0 ? editLines.map((line, i) => lineRow(i, line)).join('') : lineRow(0)}</div>
               <button class="addln" type="button" id="addln">+ Tambah baris</button>
             </div>
 
@@ -3576,7 +3658,7 @@ export function renderManual({
               <h3 class="fset__h">Catatan</h3>
               <div class="fld">
                 <label for="note">Keterangan (ikut ke memo faktur)</label>
-                <input id="note" name="note" maxlength="200" placeholder="mis. titip di toko A, tempo 7 hari"
+                <input id="note" name="note" maxlength="200" value="${escape(noteOf(edit))}" placeholder="mis. titip di toko A, tempo 7 hari"
                   data-nomoji aria-describedby="note-warn">
                 <p class="fld__warn" id="note-warn" hidden>
                   Jurnal menolak faktur yang memonya berisi emoji, jadi emoji dilepas sebelum dikirim
@@ -3594,7 +3676,7 @@ export function renderManual({
               <div class="sum__r"><span>Jatuh tempo</span><b data-sum-due>&mdash;</b></div>
               <div class="sum__t"><span>Total</span><b data-sum-total>Rp0</b></div>
               <input type="hidden" name="total" data-total-field value="0">
-              <button class="sum__go" type="submit" id="mxgo" disabled>Simpan &amp; kirim ke Jurnal</button>
+              <button class="sum__go" type="submit" id="mxgo" disabled>${edit ? 'Simpan perubahan' : 'Simpan &amp; kirim ke Jurnal'}</button>
             </div>
           </aside>
         </div>
@@ -3634,6 +3716,10 @@ export function renderManual({
   var lines = document.getElementById('lines');
   var template = lines.firstElementChild.cloneNode(true);
   var codeField = form.querySelector('[data-code]');
+  // Editing an existing transaction rather than entering a new one. The code is fixed,
+  // the source is fixed, and the rows arrive already filled in.
+  var editing = form.querySelector('[name="action"]').value === 'manual_update';
+  var code = form.querySelector('[name="code"]').value;
   var customerHint = form.querySelector('[data-customer-hint]');
   var dateField = form.querySelector('input[name="date"]');
   var shipField = form.querySelector('input[name="shipping"]');
@@ -3689,7 +3775,9 @@ export function renderManual({
   }
 
   function refreshCode() {
-    if (codeIsOurs) codeField.value = suggest();
+    // Absent while editing: the code is the invoice's identity in Jurnal and is shown
+    // read-only, so there is nothing here to regenerate.
+    if (codeIsOurs && codeField) codeField.value = suggest();
   }
 
   function total() {
@@ -3729,8 +3817,10 @@ export function renderManual({
     go.disabled = goods <= 0;
     // The confirmation quotes what is actually about to be written - the house rule for
     // anything that writes - so it is rebuilt whenever the numbers change.
-    form.dataset.confirm = 'Simpan ' + (codeField.value || 'transaksi') +
-      ' senilai ' + rupiah(goods + ship) + ' dan kirim ke Mekari Jurnal?';
+    form.dataset.confirm = editing
+      ? 'Simpan perubahan pada ' + code + ' senilai ' + rupiah(goods + ship) + ' dan perbarui fakturnya di Mekari Jurnal?'
+      : 'Simpan ' + ((codeField && codeField.value) || 'transaksi') +
+        ' senilai ' + rupiah(goods + ship) + ' dan kirim ke Mekari Jurnal?';
     return goods + ship;
   }
 
@@ -3774,12 +3864,31 @@ export function renderManual({
     });
   }
 
-  wire(lines.firstElementChild);
+  // Every row, not just the first: an edited transaction opens with as many rows as it
+  // has lines, and the ones past the first had no working remove button or discount
+  // toggle at all.
+  Array.prototype.forEach.call(lines.querySelectorAll('[data-row]'), wire);
 
   document.getElementById('addln').addEventListener('click', function () {
     var row = template.cloneNode(true);
+    // Emptied field by field, because when editing, the row this was cloned from is a
+    // filled one - a new line that arrives carrying somebody else's quantity and
+    // discount is worse than no shortcut at all.
     row.querySelector('select').value = '';
     row.querySelector('[name="unitPrice"]').value = '';
+    row.querySelector('[name="qty"]').value = '1';
+    var discount = row.querySelector('[name="unitDiscount"]');
+    discount.value = '0';
+    discount.removeAttribute('max');
+    row.querySelector('[name="discountMode"]').value = 'rp';
+    Array.prototype.forEach.call(row.querySelectorAll('.seg__b'), function (button) {
+      var on = button.dataset.mode === 'rp';
+      button.classList.toggle('is-on', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    var picture = row.querySelector('.ln__pic');
+    picture.hidden = true;
+    picture.removeAttribute('src');
     row.querySelector('[data-line-total]').textContent = '\\u2014';
     lines.appendChild(row);
     wire(row);

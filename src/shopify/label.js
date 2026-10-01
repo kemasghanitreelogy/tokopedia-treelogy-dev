@@ -433,6 +433,35 @@ export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1
 }
 
 /**
+ * Say that a label already on paper no longer describes its order.
+ *
+ * The sheet exists. It is simply wrong - somebody edited the order after it came out of
+ * the printer, and the parcel would go out with the previous contents written on the
+ * outside. The entry is kept rather than deleted, because the reprint history is a record
+ * of who printed what and when, and losing a row from it to hide a mistake is the wrong
+ * trade. `stale` is what the queue reads: the order goes back to "siap dicetak" while the
+ * history still shows the run it was in.
+ *
+ * @param {string[]} ids order keys, exactly as the print path writes them
+ */
+export async function markLabelStale(ids, { by = '', at = Math.floor(Date.now() / 1000), reason = '' } = {}) {
+  const wanted = ids.filter(Boolean);
+  if (wanted.length === 0) return 0;
+  let touched = 0;
+  await updateDoc(PRINTED_DOC, (current) => {
+    const next = current ?? structuredClone(EMPTY);
+    for (const id of wanted) {
+      const existing = next.printed[id];
+      if (!existing || existing.stale) continue;
+      next.printed[id] = { ...existing, stale: true, staleAt: at, staleBy: by, staleReason: reason };
+      touched += 1;
+    }
+    return next;
+  }, structuredClone(EMPTY));
+  return touched;
+}
+
+/**
  * The running pick number, reserved inside a store transaction so two printers cannot
  * be handed the same one. An abandoned print leaves a gap, never a repeat.
  */

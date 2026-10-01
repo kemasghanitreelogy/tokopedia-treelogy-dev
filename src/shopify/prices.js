@@ -2,6 +2,10 @@ import { readDoc, writeDoc } from '../store/index.js';
 import { fetchProducts } from './shop.js';
 import { isShopifyConfigured } from './config.js';
 import { PRODUCTS } from '../master.js';
+import { shopifyPriceOf } from '../mekari/manual.js';
+
+/** The doc keeps `{price, title}`; the alias lookup wants the bare numbers. */
+const flat = (rows) => Object.fromEntries(Object.entries(rows).map(([sku, row]) => [sku, row.price]));
 
 /**
  * What each SKU sells for, copied out of Shopify and kept in our own store.
@@ -99,8 +103,14 @@ export async function syncShopifyPrices({ now = Math.floor(Date.now() / 1000), r
 
   await writeDoc(PRICES_DOC, { ...EMPTY, syncedAt: now, prices, conflicts });
 
-  // The useful half of the report: SKUs we sell that Shopify gave no price for. Those
-  // are the ones somebody will still have to type by hand.
-  const unknown = PRODUCTS.map((p) => p.sku).filter((sku) => !prices[sku]);
+  /*
+   * The useful half of the report: SKUs we sell that Shopify gave no price for.
+   *
+   * Looked up the way the form looks them up - through the master aliases - because
+   * Shopify spells several of these its own way. Comparing bare keys had this crying
+   * wolf about Travel Pouch and the 3 ml oil, which Shopify prices perfectly well under
+   * GFT-POUCH-001 and GFT-MYST-001.
+   */
+  const unknown = PRODUCTS.map((p) => p.sku).filter((sku) => shopifyPriceOf(flat(prices), sku) === null);
   return { written: Object.keys(prices).length, skipped, unknown, conflicts, syncedAt: now };
 }

@@ -46,10 +46,13 @@ export const SELLABLE = PRODUCTS.map((p) => ({
 export function shopifyPriceOf(prices, sku) {
   const product = findProduct(sku);
   for (const key of [sku, product?.sku, ...(product?.aliases ?? [])]) {
-    const n = Number(prices?.[key]);
-    if (Number.isFinite(n) && n > 0) return n;
+    if (key === undefined || prices?.[key] === undefined || prices?.[key] === null) continue;
+    const n = Number(prices[key]);
+    // Null for "the storefront does not carry this", a number for what it charges - and
+    // zero is one of the numbers. A free gift is listed, and listed is the question.
+    if (Number.isFinite(n) && n >= 0) return n;
   }
-  return 0;
+  return null;
 }
 
 /**
@@ -67,7 +70,7 @@ export function shopifyPriceOf(prices, sku) {
 export function sellableInShopify(prices = {}) {
   return SELLABLE
     .map((item) => ({ ...item, price: shopifyPriceOf(prices, item.sku) }))
-    .filter((item) => item.price > 0);
+    .filter((item) => item.price !== null);
 }
 
 /**

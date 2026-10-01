@@ -40,10 +40,15 @@ test('the sync reads the shape fetchProducts actually returns, not the one the q
         { sku: 'ARCHIVED-1', price: 100000, status: 'ARCHIVED', title: 'Gone' },
         { sku: '', price: 50000, status: 'ACTIVE', title: 'No SKU' },
         { sku: 'FREE-1', price: 0, status: 'ACTIVE', title: 'Gift' },
+        // Two live listings for one SKU, one of them the free gift version. Bamboo Scoop
+        // is exactly this, and "cheapest wins" alone would price what we sell at nothing.
+        { sku: 'SCOOP-1', price: 0, status: 'ACTIVE', title: 'Scoop (gift)' },
+        { sku: 'SCOOP-1', price: 90000, status: 'ACTIVE', title: 'Scoop' },
       ],
     });
-    assert.equal(result.written, 2);
-    assert.equal(result.skipped, 3);
+    // A gift is listed, active and worth nothing - which is a price, not a missing one.
+    assert.equal(result.written, 4);
+    assert.equal(result.skipped, 2);
 
     const { prices, syncedAt, conflicts } = await loadShopifyPrices();
     assert.equal(syncedAt, 1789200000);
@@ -57,11 +62,16 @@ test('the sync reads the shape fetchProducts actually returns, not the one the q
      */
     assert.equal(prices['OMP-45-001'].price, 370000);
     assert.equal(prices['ARCHIVED-1'], undefined);
+    assert.equal(prices['FREE-1'].price, 0, 'hadiah gratis tetap tercatat, bukan hilang');
+    assert.equal(prices['SCOOP-1'].price, 90000, 'yang dijual menang atas yang digratiskan');
     assert.ok(result.unknown.includes('OMC-270-001'), 'SKU master tanpa harga dilaporkan');
 
     // And the disagreement is reported rather than quietly resolved: one SKU on two live
     // listings at two prices is a duplicate to merge in Shopify.
-    assert.deepEqual(conflicts, [{ sku: 'OMP-45-001', prices: [370000, 399000], used: 370000 }]);
+    assert.deepEqual(conflicts, [
+      { sku: 'OMP-45-001', prices: [370000, 399000], used: 370000 },
+      { sku: 'SCOOP-1', prices: [0, 90000], used: 90000 },
+    ]);
   } finally {
     if (before === undefined) delete process.env.SHOPIFY_ADMIN_API;
     else process.env.SHOPIFY_ADMIN_API = before;

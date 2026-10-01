@@ -940,6 +940,7 @@ tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:poin
   padding-right:.6rem; margin-right:.2rem; border-right:1px solid var(--glass-line)}
 .rpf__to{color:var(--dim); padding:0 .1rem}
 .rpf__n{font-size:.8rem; color:var(--muted); white-space:nowrap}
+.lbs__in{min-width:16rem; flex:0 1 22rem}
 .rpf__hint{margin:0 .15rem 1rem; font-size:.78rem; color:var(--dim)}
 .xp__c{display:inline-block; padding:.12rem .5rem; border-radius:999px; font-size:.78rem;
   color:var(--act); background:color-mix(in srgb,var(--act) 14%,transparent);
@@ -3785,12 +3786,19 @@ export function renderManual({
     Array.prototype.forEach.call(lines.querySelectorAll('[data-row]'), function (row) {
       var sku = row.querySelector('select').value;
       var qty = num(row.querySelector('[name="qty"]'));
-      var price = num(row.querySelector('[name="unitPrice"]'));
+      var priceField = row.querySelector('[name="unitPrice"]');
+      var price = num(priceField);
       var disc = discountOf(row, price);
       var cell = row.querySelector('[data-line-total]');
-      // A row without a product or a price contributes nothing and says so, rather than
-      // quietly counting as zero in a total that looks complete.
-      if (!sku || price <= 0 || qty <= 0) { cell.textContent = '\\u2014'; return; }
+      /*
+       * A row nobody has finished contributes nothing and says so, rather than quietly
+       * counting as zero in a total that looks complete.
+       *
+       * An empty price box is unfinished. A price of zero is not: a free gift is a real
+       * line worth nothing, and reading the two the same way is what kept Travel Pouch
+       * showing a dash beside a product that had been chosen on purpose.
+       */
+      if (!sku || qty <= 0 || priceField.value === '' || price < 0) { cell.textContent = '\\u2014'; return; }
       var net = Math.max(0, price - disc) * qty;
       cell.textContent = rupiah(net);
       goods += net;
@@ -3916,7 +3924,9 @@ export function renderManual({
     var field = row.querySelector('[name="unitPrice"]');
     var option = select.options[select.selectedIndex];
     var price = option ? Number(option.dataset.price) : 0;
-    field.value = select.value && price > 0 ? String(price) : '';
+    // Zero is written, not left blank: the storefront gives this away, and an empty box
+    // would look like a price nobody had filled in yet.
+    field.value = select.value ? String(price) : '';
   }
 
   form.addEventListener('change', function (e) {
@@ -4359,7 +4369,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     // The stage pill is redundant here - every row on this page is printable by
     // definition, and the readiness note already says what matters.
     const times = Number(entry?.times ?? 0);
-    return `<tr>
+    return `<tr data-id="${escape(String(o.id).toLowerCase())}">
       <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
         ${batchKey ? `data-batch="${escape(batchKey)}"` : ''} aria-label="Cetak label ${escape(o.id)}"></td>
       <td>${channelTag(o)}</td>
@@ -4419,7 +4429,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         const who = batch.by ? escape(personName(batch.by)) : 'pencetak tidak tercatat';
         // A checkbox on the heading, because reprinting one whole run is the reason this
         // list is open: "the batch Vanya printed at eleven, print it again".
-        return `<tr class="grp" data-batch="${escape(batch.key)}"><td colspan="5">
+        return `<tr class="grp" data-grp="${escape(batch.key)}"><td colspan="5">
           <label class="grp__sel">
             <input type="checkbox" class="grp__pick" data-batch="${escape(batch.key)}" checked
               aria-label="Pilih batch ${escape(when)} oleh ${who}">
@@ -4491,6 +4501,27 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     </form>
     <p class="rpf__hint">Cetakan tercatat ${escape(dayHint)} (jam ${escape(printZone)}). Filter tanggal dan pencetak menumpuk di atas pengelompokan per batch.</p>`;
 
+  /*
+   * Finding one parcel in a hundred, without a round trip.
+   *
+   * Outside both forms on purpose: inside the GET filter form Enter would reload the
+   * page, and inside the print form it would send a print job - which is the one
+   * keystroke an operator looking for an order must never fire by accident.
+   *
+   * It filters as it is typed, and it takes the hidden rows out of the print with it:
+   * pressing "Cetak" after a search prints what is on screen, not the hundred behind it.
+   */
+  const search = (showReprints ? shownBatches.length > 0 : candidates.length > 0)
+    ? `<div class="filters lbs">
+        <label class="dr__lbl" for="lbq">Cari order ID</label>
+        <input class="dr__in lbs__in" type="search" id="lbq" autocomplete="off" spellcheck="false"
+               placeholder="mis. 11143 atau 2609..." aria-label="Saring daftar berdasarkan order ID">
+        <button class="chip" type="button" id="lbq-clear" hidden>Hapus pencarian</button>
+        <span class="grow"></span>
+        <span class="rpf__n" id="lbq-n" hidden></span>
+      </div>`
+    : '';
+
   return shell({ user,
     csrf,
     title: 'Cetak Label',
@@ -4518,6 +4549,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
            : `<a class="chip" href="?view=labels&reprint=${showReprints ? '0' : '1'}">${
               showReprints ? 'Kembali ke daftar harian' : 'Tampilkan cetak ulang'}</a>`}</div>`
       : `${reprintFilters}
+        ${search}
         <form method="post" action="/api/labels" target="_blank">
           <input type="hidden" name="csrf" value="${escape(csrf)}">
           <div class="filters">
@@ -4553,17 +4585,22 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   var toggle = document.getElementById('pickall');
   if (!picks.length) return;
 
+  // Only what a search has left on screen counts. A disabled row is not printed, so
+  // counting it would promise a sheet that is not coming.
+  function visible() { return picks.filter(function (p) { return !p.disabled; }); }
+
   function sync() {
-    var n = picks.filter(function (p) { return p.checked; }).length;
+    var live = visible();
+    var n = live.filter(function (p) { return p.checked; }).length;
     counter.textContent = n;
-    head.checked = n === picks.length;
-    head.indeterminate = n > 0 && n < picks.length;
+    head.checked = live.length > 0 && n === live.length;
+    head.indeterminate = n > 0 && n < live.length;
     // One control, and it says what pressing it will do rather than what is true now.
-    var allOn = n > 0 && n === picks.length;
+    var allOn = n > 0 && n === live.length;
     toggle.textContent = allOn ? 'Kosongkan semua' : 'Pilih semua';
     toggle.setAttribute('aria-pressed', allOn ? 'true' : 'false');
   }
-  function setAll(value) { picks.forEach(function (p) { p.checked = value; }); syncBatches(); sync(); }
+  function setAll(value) { visible().forEach(function (p) { p.checked = value; }); syncBatches(); sync(); }
 
   // One checkbox per print run, on its heading. Reprinting a whole batch is the reason
   // this list is open, and ticking forty rows by hand to do it is not a feature.
@@ -4573,7 +4610,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   }
   function syncBatches() {
     batchPicks.forEach(function (b) {
-      var mine = rowsOf(b.getAttribute('data-batch'));
+      var mine = rowsOf(b.getAttribute('data-batch')).filter(function (p) { return !p.disabled; });
       var on = mine.filter(function (p) { return p.checked; }).length;
       b.checked = mine.length > 0 && on === mine.length;
       b.indeterminate = on > 0 && on < mine.length;
@@ -4581,13 +4618,74 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   }
   batchPicks.forEach(function (b) {
     b.addEventListener('change', function () {
-      rowsOf(b.getAttribute('data-batch')).forEach(function (p) { p.checked = b.checked; });
+      rowsOf(b.getAttribute('data-batch'))
+        .filter(function (p) { return !p.disabled; })
+        .forEach(function (p) { p.checked = b.checked; });
       sync();
     });
   });
 
   picks.forEach(function (p) { p.addEventListener('change', function () { syncBatches(); sync(); }); });
   head.addEventListener('change', function () { setAll(head.checked); });
+
+  /*
+   * The search, applied on every keystroke.
+   *
+   * A hidden row is not merely out of sight: its checkbox is disabled, and a disabled
+   * control is not submitted. So "Cetak" after a search prints exactly what is on screen.
+   * Disabling rather than unticking is what lets the whole selection come back untouched
+   * when the box is cleared.
+   */
+  var box = document.getElementById('lbq');
+  if (box) {
+    var clear = document.getElementById('lbq-clear');
+    var tally = document.getElementById('lbq-n');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('tbody tr[data-id]'));
+    var groups = Array.prototype.slice.call(document.querySelectorAll('tbody tr.grp'));
+
+    function apply() {
+      var needle = box.value.trim().toLowerCase();
+      var shown = 0;
+      rows.forEach(function (row) {
+        var hit = !needle || row.getAttribute('data-id').indexOf(needle) !== -1;
+        row.hidden = !hit;
+        var pick = row.querySelector('.pick');
+        if (pick) pick.disabled = !hit;
+        if (hit) shown += 1;
+      });
+      // A batch heading with nothing under it is a heading for nothing - and one that
+      // still claims three labels above two rows reads as a list with something missing.
+      groups.forEach(function (group) {
+        var key = group.getAttribute('data-grp');
+        var mine = rows.filter(function (row) {
+          var pick = row.querySelector('.pick');
+          return pick && pick.getAttribute('data-batch') === key;
+        });
+        var left = mine.filter(function (row) { return !row.hidden; }).length;
+        group.hidden = left === 0;
+        var count = group.querySelector('.grp__n');
+        if (count) {
+          if (!count.dataset.full) count.dataset.full = count.textContent;
+          count.textContent = needle && left !== mine.length
+            ? left + ' dari ' + count.dataset.full
+            : count.dataset.full;
+        }
+      });
+      clear.hidden = !needle;
+      tally.hidden = !needle;
+      tally.textContent = shown + ' dari ' + rows.length + ' label';
+      syncBatches();
+      sync();
+    }
+
+    box.addEventListener('keyup', apply);
+    // Typing is not the only way text gets in: the clear cross inside a search field and
+    // a paste both fire input and neither fires keyup.
+    box.addEventListener('input', apply);
+    box.addEventListener('keydown', function (e) { if (e.key === 'Escape') { box.value = ''; apply(); } });
+    clear.addEventListener('click', function () { box.value = ''; apply(); box.focus(); });
+  }
+
   syncBatches();
   toggle.addEventListener('click', function () {
     setAll(toggle.getAttribute('aria-pressed') !== 'true');

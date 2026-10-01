@@ -88,7 +88,7 @@ test('the reprint page shows a heading per run, naming the person and the count'
     people: { 'vanya@treelogy.com': 'Vanya', 'kemas@treelogy.com': 'Kemas Ghani' },
   });
 
-  assert.match(html, /<tr class="grp" data-batch="b2"><td colspan="5">/);
+  assert.match(html, /<tr class="grp" data-grp="b2"><td colspan="5">/);
   // The heading's own checkbox: reprinting one whole run is the reason this list exists.
   assert.match(html, /<input type="checkbox" class="grp__pick" data-batch="b1" checked/);
   assert.match(html, /class="pick"[^>]*value="shopee:260918AAA"[^>]*data-batch="b1"/);
@@ -269,4 +269,31 @@ test('nothing is pressed when no date is filtered, and no way-out chip is offere
   assert.doesNotMatch(html, /chip is-on/);
   assert.doesNotMatch(html, /Semua tanggal/);
   assert.match(html, />Hari ini</);
+});
+
+test('a search over the print list filters as it is typed, and takes hidden rows out of the print', () => {
+  const html = page({
+    showReprints: true,
+    printed: {
+      'shopee:260918AAA': { at: 1790261000, by: 'vanya@treelogy.com', batch: 'b1', times: 1 },
+      'tiktok_shop:586000CCC': { at: 1790290000, by: 'kemas@treelogy.com', batch: 'b2', times: 1 },
+    },
+    people: {},
+  });
+  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
+
+  // Outside both forms: inside the filter form Enter reloads the page, and inside the
+  // print form it sends a print job.
+  assert.match(html, /<div class="filters lbs">/);
+  assert.ok(html.indexOf('class="filters lbs"') < html.indexOf('<form method="post" action="/api/labels"'));
+  assert.match(html, /id="lbq"[^>]*type="search"|type="search"[^>]*id="lbq"/);
+  assert.ok(!/id="lbq"[^>]*\sname=/.test(html), 'kotak cari tidak ikut terkirim ke mana pun');
+
+  assert.match(script, /box\.addEventListener\('keyup', apply\)/);
+  // A hidden row is disabled, and a disabled control is not submitted - so "Cetak" after
+  // a search prints what is on screen.
+  assert.match(script, /pick\.disabled = !hit/);
+  assert.match(script, /function visible\(\)/);
+  // Every row carries the id the filter reads, rather than the filter reading markup.
+  assert.match(html, /<tr data-id="260918aaa"/, 'id disimpan di baris, sudah huruf kecil');
 });

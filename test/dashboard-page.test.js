@@ -788,6 +788,19 @@ test('the manual form offers only what Shopify sells, at the price Shopify sells
   assert.ok(!/value="Travel-Pouch"/.test(markup), 'hadiah tidak ditawarkan');
 });
 
+test('a free gift is a product the form offers, at nothing', () => {
+  // Travel Pouch and the 3 ml oil are listed, active and priced at zero on the storefront.
+  // Reading "no price" and "free" as the same thing hid the two products an operator adds
+  // to a WhatsApp order most often.
+  const markup = manualPage({ prices: { ...SHOPIFY_PRICES, 'Travel-Pouch': 0, 'Oil-3ml': 0 } }).split('<script>')[0];
+  assert.match(markup, /value="Travel-Pouch" data-price="0"/);
+  assert.match(markup, /value="Oil-3ml" data-price="0"/);
+  // And a row at zero is a finished row, not an unfinished one - only an empty price box
+  // is unfinished.
+  const script = manualPage({ prices: SHOPIFY_PRICES }).split('<script>').pop();
+  assert.match(script, /priceField\.value === ''/);
+});
+
 test('an unsynced price list leaves the whole catalogue offered, and says why', () => {
   // An empty dropdown is a form nobody can use; the banner is what stops it being a
   // silent one.
@@ -803,7 +816,7 @@ test('changing the product replaces the price rather than keeping the last one',
   // Rp1.265.000, because the old fill only ever wrote into an empty field.
   const script = manualPage({ prices: SHOPIFY_PRICES }).split('<script>').pop();
   assert.match(script, /function syncPrice\(select\)/);
-  assert.match(script, /field\.value = select\.value && price > 0 \? String\(price\) : '';/);
+  assert.match(script, /field\.value = select\.value \? String\(price\) : '';/);
   assert.match(script, /if \(e\.target\.name === 'sku'\).*syncPrice\(e\.target\)/);
   assert.ok(!/if \(price > 0 && !field\.value\)/.test(script), 'tidak lagi mengisi sekali saja');
 });

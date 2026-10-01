@@ -25,7 +25,7 @@ export async function loadShopifyPrices() {
   return { syncedAt: doc?.syncedAt ?? 0, prices: doc?.prices ?? {}, conflicts: doc?.conflicts ?? [] };
 }
 
-/** Just the numbers, for a caller that only wants to fill a field. */
+/** Just the numbers, for a caller that only wants to fill a field. Zero is one of them. */
 export async function priceBySku() {
   const { prices } = await loadShopifyPrices();
   return Object.fromEntries(Object.entries(prices).map(([sku, row]) => [sku, row.price]));
@@ -54,7 +54,16 @@ export async function syncShopifyPrices({ now = Math.floor(Date.now() / 1000), r
   for (const variant of variants) {
     const sku = String(variant.sku ?? '').trim();
     const price = Math.round(Number(variant.price) || 0);
-    if (variant.status !== 'ACTIVE' || !sku || price <= 0) { skipped += 1; continue; }
+    /*
+     * Zero is a price, and it took two missing products to notice.
+     *
+     * Travel Pouch and the 3 ml oil are free gifts: listed, active, bought by nobody and
+     * priced at nothing, with their worth shown as the crossed-out number beside it. The
+     * old guard read "price <= 0" as "this variant did not tell us a price" and dropped
+     * them, so the two things an operator most often adds to a WhatsApp order were the
+     * two things the form would not offer.
+     */
+    if (variant.status !== 'ACTIVE' || !sku || !Number.isFinite(price) || price < 0) { skipped += 1; continue; }
 
     if (!seen.has(sku)) seen.set(sku, new Set());
     seen.get(sku).add(price);
@@ -72,9 +81,14 @@ export async function syncShopifyPrices({ now = Math.floor(Date.now() / 1000), r
      * compareAtPrice is never read here, and never should be - it is the number with the
      * line through it.
      */
-    if (!prices[sku] || price < prices[sku].price) {
-      prices[sku] = { price, title: variant.title ?? '' };
-    }
+    const held = prices[sku];
+    // A listing that charges something beats one that does not, whatever the order they
+    // arrive in: Bamboo Scoop sits on two live products, one of them the free gift
+    // version, and "cheapest wins" alone would price the thing we sell at nothing.
+    const better = !held
+      || (held.price === 0 && price > 0)
+      || (price > 0 && held.price > 0 && price < held.price);
+    if (better) prices[sku] = { price, title: variant.title ?? '' };
   }
 
   // Said out loud rather than resolved quietly: one SKU on two live listings at two

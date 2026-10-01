@@ -106,7 +106,9 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
       ${filter.status ? `<input type="hidden" name="status" value="${escape(filter.status)}">` : ''}
       <label class="visually-hidden" for="ac-q">Cari aktivitas</label>
       ${svg('search', 'ac__search-ico')}
-      <input class="search" id="ac-q" name="q" type="search" value="${escape(filter.q)}" placeholder="Cari SKU, pesanan, nama…">
+      <input class="search" id="ac-q" name="q" type="search" value="${escape(filter.q)}"
+             autocomplete="off" spellcheck="false"
+             placeholder="Cari order ID, SKU, nama…">
     </form>
   </section>`;
 

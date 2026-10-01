@@ -71,3 +71,34 @@ test('every verb has a label and every dashboard view has a menu name', () => {
   for (const v of Object.values(VERBS)) assert.ok(v.label && v.tone);
   for (const m of ['orders', 'process', 'stock', 'products', 'jurnal', 'labels', 'users', 'auth']) assert.ok(MENUS[m]);
 });
+
+test('the search finds a parcel by its order id, which only the change list names', async () => {
+  const { searchable } = await import('../src/audit.js');
+
+  // What a print run actually stores: a summary that counts, a target that counts, and
+  // fifty changes that name. Searching the first two finds nothing anybody looks for.
+  const printRun = {
+    summary: 'Mencetak 50 label (a6) untuk 50 pesanan',
+    target: '50 pesanan',
+    action: 'print_labels',
+    actor: { email: 'anna@treelogy.com', name: 'Anna' },
+    changes: [
+      { field: 'shopify #11143', to: 'dicetak' },
+      { field: 'tiktok_shop 586349730523481156', to: 'dicetak' },
+      { field: 'shopee 260930CEKPCFSM', to: 'gagal', note: 'nomor resi belum terbit di kurir' },
+    ],
+  };
+
+  const hay = searchable(printRun);
+  assert.ok(hay.includes('11143'), 'order id Shopify ketemu');
+  assert.ok(hay.includes('586349730523481156'), 'order id TikTok ketemu');
+  assert.ok(hay.includes('260930cekpcfsm'), 'order id Shopee ketemu, huruf kecil');
+  // What was already searchable stays searchable.
+  assert.ok(hay.includes('anna'));
+  assert.ok(hay.includes('mencetak 50 label'));
+  // And the reason a line failed is searchable too, which is how "belum terbit" is found.
+  assert.ok(hay.includes('belum terbit'));
+
+  // An entry with nothing attached must not throw its way out of a search.
+  assert.equal(searchable({ summary: 'x' }).trim(), 'x');
+});

@@ -112,6 +112,19 @@ export function daysBetween(from, to) {
 }
 
 /**
+ * Everything about one entry that somebody might type into the search box.
+ *
+ * The changes are in here, and they are the reason this exists. A print run's summary
+ * reads "Mencetak 50 label (a6) untuk 50 pesanan" and its target reads "50 pesanan" -
+ * neither names a single one of them. The order ids live only in the change list, so
+ * searching for a parcel found nothing on the one page that knows who printed it.
+ */
+export const searchable = (entry) => [
+  entry.summary, entry.target, entry.action, entry.actor?.email, entry.actor?.name, entry.error,
+  ...(entry.changes ?? []).flatMap((c) => [c.field, c.from, c.to, c.note]),
+].join(' ').toLowerCase();
+
+/**
  * Entries for a date range, newest first, with optional filters.
  *
  * @param {{from: string, to: string, actor?: string, menu?: string, status?: string, q?: string}} query
@@ -125,10 +138,7 @@ export async function readActivity({ from, to, actor = '', menu = '', status = '
       if (actor && e.actor.id !== actor) continue;
       if (menu && e.menu !== menu) continue;
       if (status && e.status !== status) continue;
-      if (needle) {
-        const hay = `${e.summary} ${e.target} ${e.action} ${e.actor.email} ${e.actor.name} ${e.error ?? ''}`.toLowerCase();
-        if (!hay.includes(needle)) continue;
-      }
+      if (needle && !searchable(e).includes(needle)) continue;
       entries.push(e);
     }
   }

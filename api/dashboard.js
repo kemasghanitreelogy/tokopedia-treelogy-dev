@@ -25,7 +25,6 @@ import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
 import { amendManualInvoice } from '../src/mekari/amend.js';
-import { postWasteEntry } from '../src/mekari/resend.js';
 import { orderById, ordersByIds, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
 /**
@@ -827,16 +826,17 @@ async function handleWrite(form, ip, user, csrf) {
   }
 
   if (action === 'manual_invoice' && String(form.get('source') ?? '').toUpperCase() === 'RS') {
-    if (!isMekariConfigured()) throw new Error('kredensial Mekari belum diisi');
-
     /*
-     * A resend. Not a sale, so none of the invoice path below runs.
+     * A resend. It never reaches Mekari Jurnal at all, by decision.
      *
-     * The customer paid once, on the order this is attached to, and that invoice already
-     * records it. What the books are missing is the goods that went out wrongly and stay
-     * with the customer by house rule - one journal entry, debited to waste and credited
-     * out of inventory. Everything else about it is a parcel: it gets a label, a picklist
-     * line and a row in the order list at zero.
+     * Not a sale: the customer paid once, on the order this is attached to, and that
+     * invoice already records it. Not a correction either - that invoice says exactly what
+     * was ordered and exactly what was paid; the mistake happened in the warehouse, where
+     * no document was looking. So the books have nothing to change, and a resend that
+     * wrote to them would only be adding a document that says nothing.
+     *
+     * What it is, is a parcel. It gets a label, it goes out, and it is counted at zero so
+     * a month of mistakes never looks like a month of trade.
      */
     const fragment = String(form.get('resendFor') ?? '').trim();
     // The picker fills this in when an order was chosen from the list, which makes the
@@ -876,39 +876,28 @@ async function handleWrite(form, ip, user, csrf) {
       })),
     });
 
-    const ledger = await loadSyncLedger().catch(() => ({ orders: {} }));
-    if (manualCodes(ledger).includes(order.id)) {
+    const existing = await ordersByIds([{ channel: 'manual', id: order.id }]).catch(() => []);
+    if (existing.length > 0) {
       throw new Error(`kode ${order.id} sudah dipakai transaksi lain; buka formulir lagi untuk kode baru`);
     }
-    if (process.env.MEKARI_SYNC_LIVE !== '1') {
-      throw new Error(`${order.id} valid, nilai salah kirim ${order.finance.wrongGoods.value}, tapi MEKARI_SYNC_LIVE belum disetel`);
-    }
-
-    // The books first. A parcel listed as sent against a mistake nobody costed is the one
-    // outcome worth avoiding, and the entry is refused rather than doubled on a repeat.
-    const booked = await postWasteEntry(order, { dryRun: false });
 
     const saved = await saveOrders([order], { source: 'resend' });
-    if (saved.rejected.length > 0) {
-      throw new Error(`beban sudah dibukukan (${booked.customId}) tapi daftar pesanan menolak: ${saved.rejected[0].error}`);
-    }
+    if (saved.rejected.length > 0) throw new Error(`daftar pesanan menolak ${order.id}: ${saved.rejected[0].error}`);
 
     invalidate('orders');
-    invalidate('jurnal');
     const value = order.finance.wrongGoods.value;
-    console.log(`dashboard: resend ${order.id} for ${wrongOrder.channel}/${wrongOrder.id} - waste ${value} (${booked.status})`);
+    console.log(`dashboard: resend ${order.id} for ${wrongOrder.channel}/${wrongOrder.id} - goods lost ${value}`);
     return {
       view: 'orders',
-      message: `${order.id} dibuat untuk ${wrongOrder.id} - Rp${value.toLocaleString('id-ID')} dibukukan sebagai beban barang rusak`,
+      message: `${order.id} dibuat untuk ${wrongOrder.id} - siap dipak dan dicetak labelnya`,
       celebrate: 'Kirim ulang tercatat',
       audit: {
-        menu: 'jurnal', verb: 'add', target: `manual ${order.id}`,
-        summary: `Kirim ulang ${order.id} untuk ${wrongOrder.channel} ${wrongOrder.id} - beban barang rusak Rp${value.toLocaleString('id-ID')}`,
+        menu: 'orders', verb: 'add', target: `manual ${order.id}`,
+        summary: `Kirim ulang ${order.id} untuk ${wrongOrder.channel} ${wrongOrder.id} - barang hilang senilai Rp${value.toLocaleString('id-ID')}`,
         changes: [
           { field: 'pesanan salah kirim', to: `${wrongOrder.channel} ${wrongOrder.id}` },
           ...order.finance.wrongGoods.lines.map((l) => ({ field: `hilang ${l.sku}`, to: `${l.qty} × Rp${l.unitPrice.toLocaleString('id-ID')}` })),
           ...order.finance.lines.map((l) => ({ field: `dikirim ulang ${l.sku}`, to: String(l.qty) })),
-          { field: 'jurnal beban', to: booked.status === 'created' ? booked.customId : `${booked.customId} (sudah ada)` },
         ],
       },
     };

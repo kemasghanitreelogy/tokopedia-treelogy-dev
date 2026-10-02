@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildResend } from '../src/mekari/manual.js';
-import { buildWasteEntry, resendCustomId, WASTE_ACCOUNT, INVENTORY_ACCOUNT, ResendError } from '../src/mekari/resend.js';
 import { PREFIXES, sourceShips } from '../src/mekari/prefix.js';
 import { SOURCES } from '../src/mekari/sources.js';
 
@@ -13,14 +12,6 @@ import { SOURCES } from '../src/mekari/sources.js';
  * resend earns nothing and must never raise a second one. What it does owe the books is
  * the goods that went out by mistake and, by house rule, stay with the customer.
  */
-
-// The shape accountMap actually answers with, read off the live account on 2 Oct: the
-// whole account, not its name. An earlier version of this file took the name for granted
-// and would have sent "[object Object]" to Jurnal.
-const accounts = {
-  [WASTE_ACCOUNT]: { id: 112195862, number: WASTE_ACCOUNT, name: 'Waste Goods Expense' },
-  [INVENTORY_ACCOUNT]: { id: 112195990, number: INVENTORY_ACCOUNT, name: 'Inventory' },
-};
 
 const input = (over = {}) => ({
   source: 'RS',
@@ -75,47 +66,6 @@ test('a resend with nothing left behind has nothing to book, and says so', () =>
 
 test('only RS builds a resend', () => {
   assert.throws(() => buildResend(input({ source: 'DP', code: 'DP-261002-00001AB' })), /bukan kirim ulang/);
-});
-
-/* ------------------------------------------------------------------- the books */
-
-test('the entry debits the loss and credits the goods, and nothing else', () => {
-  const order = buildResend(input());
-  const { payload, value } = buildWasteEntry(order, accounts);
-  const lines = payload.journal_entry.transaction_account_lines_attributes;
-
-  assert.equal(value, 1145000);
-  assert.deepEqual(lines, [
-    { account_name: 'Waste Goods Expense', debit: 1145000 },
-    { account_name: 'Inventory', credit: 1145000 },
-  ]);
-  // It balances, which is the one thing a journal entry has to do.
-  assert.equal(
-    lines.reduce((n, l) => n + (l.debit ?? 0), 0),
-    lines.reduce((n, l) => n + (l.credit ?? 0), 0),
-  );
-});
-
-test('the entry says the whole story, because the ledger is read without an order list beside it', () => {
-  const { payload } = buildWasteEntry(buildResend(input()), accounts);
-  const entry = payload.journal_entry;
-
-  assert.match(entry.memo, /Salah kirim pada shopee 2609ABCDE/);
-  assert.match(entry.memo, /Moringa Powder - 180 gram ×1/);
-  assert.match(entry.memo, /diganti lewat RS-261002-00001AB/);
-  assert.equal(entry.transaction_no, 'RS-261002-00001AB');
-  assert.equal(entry.transaction_date, '2026-10-02');
-  assert.deepEqual(entry.tags, ['Kirim ulang']);
-  // One entry per resend, so a double submit is refused by Jurnal rather than doubled.
-  assert.equal(entry.custom_id, resendCustomId('RS-261002-00001AB'));
-});
-
-test('a missing account is caught here, not by a validation error that names none', () => {
-  const order = buildResend(input());
-  assert.throws(() => buildWasteEntry(order, { [INVENTORY_ACCOUNT]: accounts[INVENTORY_ACCOUNT] }), ResendError);
-  assert.throws(() => buildWasteEntry(order, { [WASTE_ACCOUNT]: accounts[WASTE_ACCOUNT] }), /persediaan/);
-  // A plain string is still accepted, which is what keeps the rest of these readable.
-  assert.doesNotThrow(() => buildWasteEntry(order, { [WASTE_ACCOUNT]: 'Waste Goods Expense', [INVENTORY_ACCOUNT]: 'Inventory' }));
 });
 
 /* ------------------------------------------------------------------ the parcel */
@@ -324,4 +274,63 @@ test('a resend is never queued as an invoice, however complete it looks', async 
   assert.equal(row.state, 'skipped');
   assert.equal(row.total, 0);
   assert.match(row.reason, /dibukukan sebagai beban, bukan penjualan/);
+});
+
+/* ------------------------------------------------------- not a sale anywhere */
+
+test('a resend adds nothing to the turnover it sits beside', async () => {
+  const { summarize } = await import('../src/omni.js');
+  const resend = buildResend(input());
+  const sale = {
+    channel: 'shopee', id: 'X', stage: 'completed', status: 'COMPLETED',
+    total: 500000, createdAt: 1790000000, lines: [], buyer: 'b', carrier: '', tracking: '',
+  };
+
+  // A month of mistakes must never read as a month of trade.
+  assert.equal(resend.total, 0);
+  assert.equal(summarize([resend, sale]).all.revenue, 500000);
+});
+
+test('the popup says which order a resend is putting right, and what was lost', async () => {
+  const { renderDashboard } = await import('../src/dashboard-page.js');
+  const { summarize } = await import('../src/omni.js');
+  const resend = { ...buildResend(input()), buyer: 'Pelanggan A', carrier: 'JNE', tracking: '' };
+
+  const html = renderDashboard({
+    orders: [resend], summary: summarize([resend]), errors: {}, shopeeShop: null,
+    range: { preset: '7d', from: '2026-09-25', to: '2026-10-02', label: '7 hari', since: 1, until: 2, clamped: false },
+    generatedAt: Date.now(), baseQuery: 'view=orders', csrf: 'tok',
+  });
+
+  // Without it a resend is a free parcel with no reason on it, and the reason is the only
+  // thing that explains the zero beside it.
+  assert.match(html, /Kirim ulang untuk/);
+  assert.match(html, /href="\?view=orders&amp;q=2609ABCDE"/);
+  assert.match(html, /barang hilang Rp1\.145\.000/);
+  assert.match(html, /class="od__wrong"/);
+  // The order id reads first; what it is putting right reads under it.
+  assert.ok(html.indexOf('class="od__id') < html.indexOf('class="od__ref"'));
+  // And deleting it cannot claim to remove an invoice that was never written.
+  assert.match(html, /tidak pernah masuk Mekari Jurnal/);
+  assert.ok(!/Fakturnya di Mekari Jurnal ikut dihapus[^"]*RS-261002/.test(html));
+  assert.match(html, /Moringa Powder - 180 gram/);
+
+  // An ordinary order carries none of it.
+  const plain = { ...resend, resendFor: undefined, finance: { lines: resend.finance.lines, shipping: 0 } };
+  assert.ok(!/class="od__ref"/.test(renderDashboard({
+    orders: [plain], summary: summarize([plain]), errors: {}, shopeeShop: null,
+    range: { preset: '7d', from: '2026-09-25', to: '2026-10-02', label: '7 hari', since: 1, until: 2, clamped: false },
+    generatedAt: Date.now(), baseQuery: 'view=orders', csrf: 'tok',
+  })));
+});
+
+test('nothing in the resend path reaches Mekari Jurnal', async () => {
+  // Decided deliberately: the books have nothing to change. The customer paid once, on the
+  // order this is attached to, and that invoice says exactly what was ordered and paid.
+  const fs = await import('node:fs');
+  const route = fs.readFileSync(new URL('../api/dashboard.js', import.meta.url), 'utf8');
+  const branch = route.slice(route.indexOf("action === 'manual_invoice' && String(form.get('source')"), route.indexOf("if (action === 'discard_manual')"));
+  for (const forbidden of ['postWasteEntry', 'journal_entries', 'buildInvoice', 'postManual', 'MEKARI_SYNC_LIVE']) {
+    assert.ok(!branch.includes(forbidden), `jalur kirim ulang masih menyentuh ${forbidden}`);
+  }
 });

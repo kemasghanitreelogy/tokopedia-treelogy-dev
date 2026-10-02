@@ -394,8 +394,11 @@ function editButton(order, { back }) {
 
 function discardButton(order, { csrf, back }) {
   if (order.channel !== 'manual' || !csrf) return '';
+  const isResend = String(order.source ?? '').toUpperCase() === 'RS';
   return `<form class="od__sync od__sync--bad" method="post"
-      data-confirm="Hapus ${escape(order.id)} senilai ${escape(rupiah(order.total))}? Fakturnya di Mekari Jurnal ikut dihapus, dan ini tidak bisa dibatalkan.">
+      data-confirm="${isResend
+        ? `Hapus ${escape(order.id)}? Catatan kirim ulang ini hilang dari dashboard, dan ini tidak bisa dibatalkan.`
+        : `Hapus ${escape(order.id)} senilai ${escape(rupiah(order.total))}? Fakturnya di Mekari Jurnal ikut dihapus, dan ini tidak bisa dibatalkan.`}">
     <input type="hidden" name="csrf" value="${escape(csrf)}">
     <input type="hidden" name="action" value="discard_manual">
     <input type="hidden" name="order" value="${escape(order.id)}">
@@ -403,7 +406,11 @@ function discardButton(order, { csrf, back }) {
     <input type="hidden" name="back" value="${escape(back)}">
     <button class="od__sync__b um__act--bad" type="submit">${svg('trash')}<span>Hapus transaksi</span></button>
     ${editButton(order, { back })}
-    <span class="od__sync__n">Transaksi yang diketik manual. Menghapusnya juga menghapus fakturnya di Jurnal - kecuali faktur itu sudah menerima pembayaran.</span>
+    <span class="od__sync__n">${isResend
+      // A resend never reached Jurnal, so saying its invoice goes with it would be
+      // describing a document that does not exist.
+      ? 'Kirim ulang tidak pernah masuk Mekari Jurnal, jadi menghapusnya hanya menghapus catatan di dashboard ini.'
+      : 'Transaksi yang diketik manual. Menghapusnya juga menghapus fakturnya di Jurnal - kecuali faktur itu sudah menerima pembayaran.'}</span>
   </form>`;
 }
 
@@ -445,7 +452,18 @@ function orderDetail(order, index, { csrf = null, back = '' } = {}) {
     ${order.editedBy ? `<p class="od__edited">${svg('warn')}<span>Diubah oleh <b>${escape(order.editedBy)}</b> &middot; ${
       escape(dateTime(order.editedAt, order.channel))}${
       Number(order.editedTimes) > 1 ? ` &middot; ${escape(String(order.editedTimes))}&times;` : ''}</span></p>` : ''}
+
     <p class="od__id mono">${escape(order.id)}</p>
+    ${order.resendFor?.id ? `<p class="od__ref">
+      <span class="od__ref__l">Kirim ulang untuk</span>
+      <a class="od__ref__a mono" href="?view=orders&amp;q=${escape(encodeURIComponent(order.resendFor.id))}">${escape(order.resendFor.id)}</a>
+      <span class="dim">${escape(CHANNELS[order.resendFor.channel]?.label ?? order.resendFor.channel)}</span>
+      ${order.finance?.wrongGoods?.value
+        ? `<span class="od__ref__v">barang hilang ${escape(rupiah(order.finance.wrongGoods.value))}</span>` : ''}
+    </p>
+    ${order.finance?.wrongGoods?.lines?.length ? `<ul class="od__wrong">${
+      order.finance.wrongGoods.lines.map((l) => `<li><span>${escape(l.name || l.sku)}</span><b class="mono">${escape(String(l.qty ?? 0))}</b></li>`).join('')
+    }</ul>` : ''}` : ''}
 
     <dl class="od__grid">
       ${field('Pembeli', order.buyer)}
@@ -2869,6 +2887,19 @@ a.od__sync__b{text-decoration:none}
 .od__edited{display:flex; align-items:center; gap:.45rem; margin:.1rem 0 .9rem;
   font-size:.82rem; color:var(--warn)}
 .od__edited .ico{width:15px; height:15px; flex:none}
+/* Which order this one is putting right. Without it a resend is a free parcel with no
+   reason on it, and the reason is the only thing that explains the zero. */
+.od__ref{display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; margin:.1rem 0 .3rem;
+  font-size:.84rem}
+.od__ref__l{color:var(--muted)}
+.od__ref__a{color:var(--brand); font-weight:600; text-decoration:none; border-bottom:1px dashed currentColor}
+.od__ref__a:hover{border-bottom-style:solid}
+.od__ref__v{margin-left:auto; font-size:.78rem; color:var(--warn)}
+.od__wrong{list-style:none; margin:0 0 .9rem; padding:.45rem .7rem; border-radius:9px;
+  background:color-mix(in srgb,var(--warn) 9%,transparent); border:1px solid color-mix(in srgb,var(--warn) 22%,transparent);
+  font-size:.8rem; display:grid; gap:.2rem}
+.od__wrong li{display:flex; gap:.6rem}
+.od__wrong li b{margin-left:auto}
 .od__sync__b[disabled]{opacity:.6; cursor:default}
 .od__sync__b .ico{width:16px; height:16px}
 .od__sync__n{font-size:.78rem; color:var(--dim); flex:1 1 14rem; min-width:0}

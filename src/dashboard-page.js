@@ -4295,10 +4295,33 @@ export function renderManual({
       });
     }
 
-    /** Fill a replacement row per line of the chosen order, which is almost always right. */
+    /** Whether anybody has named a replacement product yet. */
+    function replacementEmpty() {
+      return Array.prototype.slice.call(lines.querySelectorAll('[data-row]'))
+        .every(function (row) { return !row.querySelector('select').value; });
+    }
+
+    /** Back to one blank row, for when the chosen order is swapped for another. */
+    function clearReplacement() {
+      var rows = Array.prototype.slice.call(lines.querySelectorAll('[data-row]'));
+      rows.slice(1).forEach(function (row) { row.remove(); });
+      var first = lines.querySelector('[data-row]');
+      first.querySelector('select').value = '';
+      first.querySelector('select').dispatchEvent(new Event('change', { bubbles: true }));
+      first.querySelector('[name="qty"]').value = '1';
+    }
+
+    /**
+     * Fill a replacement row per line of the chosen order.
+     *
+     * What the customer ordered is what now has to be sent - that is the whole of a
+     * resend - so it is done on choosing rather than offered as a button to press. It
+     * never overwrites: a row somebody has already named a product in is a decision, and
+     * the only thing that may undo it is the button saying so in as many words.
+     */
     function useContents(card, button) {
       var pairs = (card.dataset.fill || '').split(',').filter(Boolean);
-      if (pairs.length === 0) return;
+      if (pairs.length === 0) return false;
       var rows = Array.prototype.slice.call(lines.querySelectorAll('[data-row]'));
       pairs.forEach(function (pair, i) {
         var bits = pair.split(':');
@@ -4309,10 +4332,13 @@ export function renderManual({
         row.querySelector('select').dispatchEvent(new Event('change', { bubbles: true }));
         row.querySelector('[name="qty"]').value = bits[1] || '1';
       });
-      button.textContent = pairs.length + ' baris pengganti terisi';
-      button.classList.add('is-done');
-      button.disabled = true;
+      if (button) {
+        button.textContent = pairs.length + ' baris pengganti terisi dari pesanan ini';
+        button.classList.add('is-done');
+        button.disabled = true;
+      }
       total();
+      return true;
     }
 
     function choose(row) {
@@ -4335,9 +4361,17 @@ export function renderManual({
           if (field && !field.value && card.dataset[pair[1]]) field.value = card.dataset[pair[1]];
         });
 
+      var use = preview.querySelector('[data-use]');
+      // Done, not offered. The button stays for the case this skipped - rows already
+      // filled in by hand, which are a decision and not an empty space to write into.
+      var filled = replacementEmpty() && useContents(card, use);
+
       var swap = preview.querySelector('[data-swap]');
       if (swap) {
         swap.addEventListener('click', function () {
+          // Whatever this filled in belongs to the order being swapped away, so it goes
+          // with it. Anything typed by hand is left exactly where it is.
+          if (filled) clearReplacement();
           preview.hidden = true;
           channelField.value = '';
           linked.value = '';
@@ -4346,8 +4380,7 @@ export function renderManual({
           total();
         });
       }
-      var use = preview.querySelector('[data-use]');
-      if (use) use.addEventListener('click', function () { useContents(card, use); });
+      if (use && !filled) use.addEventListener('click', function () { useContents(card, use); });
 
       closeList();
       total();
@@ -4945,7 +4978,7 @@ function orderPreview(order) {
       <span class="prev__sku mono">${escape(l.sku ?? '')}</span>
       <b class="mono">${escape(String(l.qty ?? 0))}</b>
     </li>`).join('')}</ul>
-    ${fill ? '<button class="prev__use" type="button" data-use>Pakai isi ini sebagai barang pengganti</button>' : ''}
+    ${fill ? '<button class="prev__use" type="button" data-use>Pakai isi pesanan ini sebagai barang pengganti</button>' : ''}
   </span>`;
 }
 

@@ -254,9 +254,19 @@ test('one match is chosen rather than offered, and the card can fill the replace
   assert.match(script, /if \(data\.count === 1\) \{ choose\(rows\[0\]\); return; \}/);
   // A click on a row must land before the blur that closes the list.
   assert.match(script, /addEventListener\('mousedown', function \(e\) \{ e\.preventDefault\(\); \}\)/);
-  // What they ordered is what has to be sent, so it is one press away.
+  /*
+   * What they ordered is what has to be sent, so it is done rather than offered - but
+   * never over a row somebody has already named a product in, which is a decision and
+   * not an empty space to write into.
+   */
   assert.match(script, /function useContents\(card, button\)/);
-  assert.match(script, /baris pengganti terisi/);
+  assert.match(script, /var filled = replacementEmpty\(\) && useContents\(card, use\);/);
+  assert.match(script, /function replacementEmpty\(\)/);
+  // Swapping the order takes what it filled in with it, so the next one fills cleanly.
+  assert.match(script, /if \(filled\) clearReplacement\(\);/);
+  assert.match(script, /baris pengganti terisi dari pesanan ini/);
+  // The button stays for the case the fill skipped.
+  assert.match(script, /if \(use && !filled\) use\.addEventListener/);
 });
 
 test('the order that went wrong is asked for before anything that is read off it', async () => {

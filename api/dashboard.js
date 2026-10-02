@@ -424,7 +424,10 @@ async function handleWrite(form, ip, user, csrf) {
   }
 
   if (action === 'mass_arrange') {
-    const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify):([A-Za-z0-9_#-]{1,64})$/;
+    // `manual` belongs here too: a WhatsApp parcel and a resend are arranged from this
+    // page like any other, and leaving the channel out of the pattern dropped their
+    // checkboxes silently - ticked, submitted, and never seen again.
+    const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify|manual):([A-Za-z0-9_#-]{1,64})$/;
     const wanted = [];
     for (const value of form.getAll('order')) {
       const match = SELECTION.exec(String(value));
@@ -435,9 +438,23 @@ async function handleWrite(form, ip, user, csrf) {
     // low enough that a malformed post cannot ask for ten thousand round trips.
     if (wanted.length > 1000) throw new Error('maksimal 1000 pesanan sekali atur');
 
-    // Orders are re-read from the platforms: the form carries ids, never package numbers,
-    // so a tampered field cannot ship a parcel that is not the seller's.
-    const { orders, errors: readErrors = {} } = await fetchOrdersByIds(wanted);
+    /*
+     * Orders are re-read before anything is booked: the form carries ids, never package
+     * numbers, so a tampered field cannot ship a parcel that is not the seller's.
+     *
+     * From the platform for the four that have one, and from our own table for the typed-in
+     * ones, which have none - asking TikTok about a code we invented returns nothing, and
+     * "nothing" would have read as "not the seller's". The guard is the same either way:
+     * an id that is not ours is simply not found.
+     */
+    const typed = wanted.filter((w) => w.channel === 'manual');
+    const online = wanted.filter((w) => w.channel !== 'manual');
+    const [fromPlatform, fromTable] = await Promise.all([
+      online.length > 0 ? fetchOrdersByIds(online) : Promise.resolve({ orders: [], errors: {} }),
+      typed.length > 0 ? ordersByIds(typed).catch(() => []) : Promise.resolve([]),
+    ]);
+    const { errors: readErrors = {} } = fromPlatform;
+    const orders = [...fromPlatform.orders, ...fromTable];
     const eligible = orders.filter((o) => wanted.some((w) => w.id === o.id && w.channel === o.channel));
 
     // A selection the platform would not hand back used to be dropped here without a

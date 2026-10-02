@@ -410,3 +410,22 @@ test('a resend offers no label until it has been arranged', async () => {
   };
   assert.deepEqual(labelReadiness(whatsapp, {}, {}), { state: 'needsPrint', note: 'siap dicetak' });
 });
+
+test('a typed-in parcel survives the selection pattern the arrange form posts', async () => {
+  // It was ticked, submitted, and dropped before anything happened: the pattern listed the
+  // four platform channels and not the one typed in here.
+  const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify|manual):([A-Za-z0-9_#-]{1,64})$/;
+  const fs = await import('node:fs');
+  const route = fs.readFileSync(new URL('../api/dashboard.js', import.meta.url), 'utf8');
+  const branch = route.slice(route.indexOf("action === 'mass_arrange'"), route.indexOf("action === 'fulfil'"));
+
+  assert.ok(branch.includes('shopify|manual'), 'pola pilihan harus memuat manual');
+  // Read from our own table, because asking a platform about a code we invented returns
+  // nothing, and "nothing" would have read as "not the seller's".
+  assert.ok(branch.includes("w.channel === 'manual'"));
+  assert.ok(branch.includes('ordersByIds(typed)'));
+
+  assert.ok(SELECTION.test('manual:RS-261002-00003V7'));
+  assert.ok(SELECTION.test('manual:DP-261001-000036F'));
+  assert.ok(!SELECTION.test('mystery:RS-1'));
+});

@@ -172,8 +172,15 @@ test('the filter bar is its own form, never nested inside the one that prints', 
 test('filtering to one day leaves that run grouped and drops the rest', () => {
   const html = page({ showReprints: true, printed: printedThree, people: staff, reprintFilter: { from: '2026-09-25', to: '2026-09-25' } });
   assert.match(html, /<span class="grp__by">Kemas Ghani<\/span>/);
-  assert.doesNotMatch(html, /<span class="grp__by">Vanya<\/span>/);
+  // Vanya's run is still sent, but hidden and unprintable: only a search may bring it back.
+  assert.match(html, /<tr class="grp" data-grp="[^"]*" data-out="1" hidden>(?:(?!<\/tr>)[\s\S])*<span class="grp__by">Vanya<\/span>/);
+  assert.doesNotMatch(html, /<tr class="grp" data-grp="[^"]*">(?:(?!<\/tr>)[\s\S])*<span class="grp__by">Vanya<\/span>/);
   assert.match(html, /1 batch &middot; 1 label <span class="dim">dari 2 batch<\/span>/);
+  // Out of the filter means out of the print and out of the count on the button.
+  const outside = html.match(/<tr data-id="[^"]*" data-out="1" hidden>\s*<td><input class="pick"[^>]*>/g) ?? [];
+  assert.equal(outside.length, 2, 'both of Vanya\'s parcels stay reachable by the search');
+  for (const pick of outside) assert.match(pick, / disabled/);
+  assert.match(html, /<span id="n">1<\/span> label/);
   assert.match(html, /Hapus filter/);
   // The date it was filtered on comes back in the field, so it can be adjusted not retyped.
   assert.match(html, /id="pfrom" name="pfrom" value="2026-09-25"/);
@@ -296,4 +303,30 @@ test('a search over the print list filters as it is typed, and takes hidden rows
   assert.match(script, /function visible\(\)/);
   // Every row carries the id the filter reads, rather than the filter reading markup.
   assert.match(html, /<tr data-id="260918aaa"/, 'id disimpan di baris, sudah huruf kecil');
+});
+
+test('a filtered day is never cut short by the hundred orders that came back first', () => {
+  // 120 older Shopee prints arrive ahead of yesterday's one Tokopedia print. Cutting to the
+  // print cap before grouping used to keep only Shopee, so "kemarin" showed Shopee alone.
+  const old = Array.from({ length: 120 }, (_, i) => order('shopee', `OLD${i}`));
+  const printed = Object.fromEntries(old.map((o) => [`shopee:${o.id}`, { at: 1790200000, by: 'vanya@treelogy.com', batch: 'old' }]));
+  printed['tiktok_shop:586NEW'] = { at: 1790300000, by: 'kemas@treelogy.com', batch: 'new' };
+  const html = page({
+    orders: [...old, order('tiktok_shop', '586NEW', { status: 'AWAITING_COLLECTION' })],
+    showReprints: true, printed, people: staff,
+    reprintFilter: { from: '2026-09-25', to: '2026-09-25' },
+  });
+  assert.match(html, /value="tiktok_shop:586NEW" checked/);
+  assert.match(html, /1 batch &middot; 1 label/);
+  assert.match(html, /<span id="n">1<\/span> label/);
+});
+
+test('the unfiltered reprint list keeps every row but ticks no more than one print run', () => {
+  const many = Array.from({ length: 130 }, (_, i) => order('shopee', `SN${i}`));
+  const printed = Object.fromEntries(many.map((o) => [`shopee:${o.id}`, { at: 1790200000, by: 'vanya@treelogy.com', batch: 'b' }]));
+  const html = page({ orders: many, showReprints: true, printed, people: staff });
+  const picks = html.match(/<input class="pick"[^>]*>/g) ?? [];
+  assert.equal(picks.length, 130);
+  assert.equal(picks.filter((p) => / checked/.test(p)).length, 100);
+  assert.match(html, /<span id="n">100<\/span> label/);
 });

@@ -4353,25 +4353,36 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   }
 
   const wanted = showReprints ? ['needsPrint', 'reprint'] : ['needsPrint'];
-  // Printing is capped server-side; showing past it would hand the operator a button
-  // that always errors.
-  const candidates = assessed
-    .filter(({ readiness }) => wanted.includes(readiness.state) && !readiness.unavailable)
-    .slice(0, MAX_PRESELECT);
+  const printable = assessed
+    .filter(({ readiness }) => wanted.includes(readiness.state) && !readiness.unavailable);
+  /*
+   * Printing is capped server-side; ticking past it would hand the operator a button that
+   * always errors.
+   *
+   * The daily list is cut at the cap. The reprint list is not: it is grouped and filtered
+   * by when it was printed, and cutting the first hundred orders before that - in
+   * whatever order the channels came back in - dropped whole days. Yesterday's filter
+   * showed Shopee and nothing else, because Shopee filled the hundred. There the cap is
+   * on what starts ticked instead.
+   */
+  const candidates = showReprints ? printable : printable.slice(0, MAX_PRESELECT);
 
   let ticked = 0;
 
   const READY_TONE = { needsPrint: 'ok', reprint: 'flag' };
 
-  const labelRow = ({ order: o, readiness, entry = null }, batchKey = null) => {
-    // Everything listed is printable, so everything listed starts ticked.
-    ticked += 1;
+  const labelRow = ({ order: o, readiness, entry = null }, batchKey = null, out = false) => {
+    // Everything listed is printable, so everything listed starts ticked - except a run
+    // the filter left out, which is only on the page so the search can reach it, and
+    // anything past what one print run accepts.
+    const on = !out && ticked < MAX_PRESELECT;
+    if (on) ticked += 1;
     // The stage pill is redundant here - every row on this page is printable by
     // definition, and the readiness note already says what matters.
     const times = Number(entry?.times ?? 0);
-    return `<tr data-id="${escape(String(o.id).toLowerCase())}">
-      <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
-        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''} aria-label="Cetak label ${escape(o.id)}"></td>
+    return `<tr data-id="${escape(String(o.id).toLowerCase())}"${out ? ' data-out="1" hidden' : ''}>
+      <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${on ? ' checked' : ''}
+        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''}${out ? ' disabled' : ''} aria-label="Cetak label ${escape(o.id)}"></td>
       <td>${channelTag(o)}</td>
       <td>
         <span class="mono nowrap">${escape(o.id)}</span>
@@ -4423,23 +4434,36 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   // off - Bali, the same clock a typed-in sale is entered on. Named on screen, because a
   // time sitting next to other times in other zones has to say whose it is.
   const printZone = printZoneLabel();
+  /*
+   * The runs the filter left out are still sent, hidden and disabled.
+   *
+   * An order ID is looked for because somebody is holding that parcel, and they rarely
+   * know which day its label came off the printer. A search that only sees "kemarin"
+   * answers "0 label" for a parcel printed the day before - which reads as "never
+   * printed". So the search reaches every run; the filter only decides what shows when
+   * nothing is being searched for.
+   */
+  const shownKeys = new Set(shownBatches.map((b) => b.key));
   const rows = showReprints
-    ? shownBatches.map((batch) => {
+    ? allBatches.map((batch) => {
+        const out = !shownKeys.has(batch.key);
         const when = batch.at ? `${dateTime(batch.at, BENCH_CHANNEL)} ${printZone}` : 'waktu tidak tercatat';
         const who = batch.by ? escape(personName(batch.by)) : 'pencetak tidak tercatat';
         // A checkbox on the heading, because reprinting one whole run is the reason this
         // list is open: "the batch Vanya printed at eleven, print it again".
-        return `<tr class="grp" data-grp="${escape(batch.key)}"><td colspan="5">
+        return `<tr class="grp" data-grp="${escape(batch.key)}"${out ? ' data-out="1" hidden' : ''}><td colspan="5">
           <label class="grp__sel">
             <input type="checkbox" class="grp__pick" data-batch="${escape(batch.key)}" checked
               aria-label="Pilih batch ${escape(when)} oleh ${who}">
             <span class="grp__t">${escape(when)}</span>
           </label>
           <span class="grp__by">${who}</span>
-          <span class="grp__n grp__n--batch">${batch.rows.length} label</span>
-        </td></tr>${batch.rows.map((r) => labelRow(r, batch.key)).join('')}`;
+          <span class="grp__n grp__n--batch">${batch.rows.length} label</span>${
+            out ? ' <span class="dim">&middot; di luar filter</span>' : ''}
+        </td></tr>${batch.rows.map((r) => labelRow(r, batch.key, out)).join('')}`;
       }).join('')
-    : candidates.map(labelRow).join('');
+    // Wrapped: map's index and array would land in batchKey and out.
+    : candidates.map((r) => labelRow(r)).join('');
 
 
 
@@ -4568,7 +4592,8 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
             <tbody>${rows}</tbody>
           </table></div>
           <div class="apply">
-            <button type="submit">Cetak <span id="n">${ticked}</span> label</button>
+            <button type="submit" id="go">Cetak <span id="n">${ticked}</span> label</button>
+            <span class="dim" id="over" hidden>Maksimal ${MAX_PRESELECT} label sekali cetak &mdash; bagi jadi beberapa batch.</span>
             ${candidates.length > 0 && !showReprints
               ? `<button class="chip" type="submit" formaction="/api/dashboard" formtarget="_self"
                    name="action" value="label_printed"
@@ -4593,6 +4618,11 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     var live = visible();
     var n = live.filter(function (p) { return p.checked; }).length;
     counter.textContent = n;
+    // The server refuses a run past the cap, so the button says so before it is pressed.
+    var go = document.getElementById('go');
+    var over = document.getElementById('over');
+    if (go) go.disabled = n > ${MAX_PRESELECT};
+    if (over) over.hidden = n <= ${MAX_PRESELECT};
     head.checked = live.length > 0 && n === live.length;
     head.indeterminate = n > 0 && n < live.length;
     // One control, and it says what pressing it will do rather than what is true now.
@@ -4646,13 +4676,19 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     function apply() {
       var needle = box.value.trim().toLowerCase();
       var shown = 0;
+      var outside = 0;
       rows.forEach(function (row) {
-        var hit = !needle || row.getAttribute('data-id').indexOf(needle) !== -1;
+        // A run outside the date or printer filter only shows when the search finds
+        // something in it; with the box empty the filter decides, as before.
+        var out = row.hasAttribute('data-out');
+        var hit = needle ? row.getAttribute('data-id').indexOf(needle) !== -1 : !out;
         row.hidden = !hit;
         var pick = row.querySelector('.pick');
         if (pick) pick.disabled = !hit;
-        if (hit) shown += 1;
+        if (hit && out) outside += 1;
+        else if (hit) shown += 1;
       });
+      var inFilter = rows.filter(function (row) { return !row.hasAttribute('data-out'); }).length;
       // A batch heading with nothing under it is a heading for nothing - and one that
       // still claims three labels above two rows reads as a list with something missing.
       groups.forEach(function (group) {
@@ -4673,7 +4709,8 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
       });
       clear.hidden = !needle;
       tally.hidden = !needle;
-      tally.textContent = shown + ' dari ' + rows.length + ' label';
+      tally.textContent = shown + ' dari ' + inFilter + ' label'
+        + (outside ? ' \u00b7 ' + outside + ' di luar filter' : '');
       syncBatches();
       sync();
     }

@@ -258,3 +258,23 @@ test('one match is chosen rather than offered, and the card can fill the replace
   assert.match(script, /function useContents\(card, button\)/);
   assert.match(script, /baris pengganti terisi/);
 });
+
+test('the order that went wrong is asked for before anything that is read off it', async () => {
+  const { renderManual } = await import('../src/dashboard-page.js');
+  const [body] = renderManual({
+    source: 'RS', code: 'RS-1', today: '2026-10-02', contacts: [], existingCodes: [], live: true,
+    prices: {}, csrf: 'tok', range: {}, errors: {}, generatedAt: 0,
+  }).split('<script>');
+
+  // The customer, the address and the replacement goods are all answered by that one
+  // question, and two of them fill themselves in the moment it is answered.
+  // Matched on the fieldset heading, not the word: "Produk" is also a column label.
+  const head = (name) => body.indexOf(`class="fset__h">${name}<`);
+  const at = (needle) => body.indexOf(needle);
+  assert.ok(at('id="rsref"') > head('Sumber'), 'sumber tetap yang pertama ditanya');
+  assert.ok(at('id="rsref"') < head('Detail'), 'referensi di atas detail');
+  assert.ok(at('id="rsref"') < head('Pelanggan'), 'referensi di atas pelanggan');
+  assert.ok(at('id="rsref"') < head('Produk'), 'referensi di atas produk');
+  // The goods that went out wrongly stay with the other product rows, where they belong.
+  assert.ok(at('id="rsfields"') > head('Produk'));
+});

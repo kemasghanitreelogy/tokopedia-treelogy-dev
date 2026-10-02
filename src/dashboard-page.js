@@ -3710,9 +3710,16 @@ export function renderManual({
       <button class="ln__x" type="button" data-remove-wrong aria-label="Hapus baris ${index + 1}">&times;</button>
     </div>`;
 
-  const resendFieldset = edit ? '' : `
-    <div class="fset" id="rsfields" hidden>
-      <h3 class="fset__h">Salah kirim</h3>
+  /*
+   * Which order went wrong comes first, because everything else is read off it.
+   *
+   * The customer, the address and the replacement goods are all answered by that one
+   * question, and two of them fill themselves in the moment it is answered. Asking it
+   * after the product rows had the operator typing things the form was about to know.
+   */
+  const resendRef = edit ? '' : `
+    <div class="fset" id="rsref" hidden>
+      <h3 class="fset__h">Pesanan yang salah kirim</h3>
       <div class="flds flds--one">
         <div class="fld rsf">
           <label for="resendFor">Order ID yang salah kirim</label>
@@ -3725,9 +3732,14 @@ export function renderManual({
           <div class="rsprev" id="rs-preview" hidden></div>
         </div>
       </div>
-      <p class="fld__hint rs__note">Barang di bawah ini yang terlanjur dikirim salah. Sesuai SOP tidak ditarik kembali - jadi
-        nilainya dibukukan ke Jurnal sebagai beban barang rusak, bukan sebagai penjualan. Yang di atas adalah penggantinya,
-        dan itu gratis.</p>
+    </div>`;
+
+  const resendFieldset = edit ? '' : `
+    <div class="fset" id="rsfields" hidden>
+      <h3 class="fset__h">Barang salah kirim</h3>
+      <p class="fld__hint rs__note">Barang di bawah ini yang terlanjur dikirim ke pelanggan. Sesuai SOP tidak ditarik kembali -
+        jadi nilainya dibukukan ke Jurnal sebagai beban barang rusak, bukan sebagai penjualan. Yang di bagian Produk di atas
+        adalah penggantinya, dan itu gratis.</p>
       <div class="lnh lnh--wrong"><span>Produk</span><span>Qty</span><span>Nilai</span><span>Subtotal</span><span></span></div>
       <div id="wlines">${wrongRow(0)}</div>
       <button class="addln" type="button" id="addwln">+ Tambah baris</button>
@@ -3761,6 +3773,8 @@ export function renderManual({
               <h3 class="fset__h">Sumber</h3>
               <div class="src">${sources}</div>
             </div>
+
+            ${resendRef}
 
             <div class="fset">
               <h3 class="fset__h">Detail</h3>
@@ -3904,6 +3918,7 @@ export function renderManual({
   var go = document.getElementById('mxgo');
   // Everything a resend adds. Absent while editing, which is why each use is guarded.
   var rsFields = document.getElementById('rsfields');
+  var rsRef = document.getElementById('rsref');
   var wlines = document.getElementById('wlines');
   var linked = document.getElementById('resendFor');
   var resending = function () { return source().value === 'RS'; };
@@ -3998,6 +4013,7 @@ export function renderManual({
     if (!rsFields) return;
     var on = resending();
     rsFields.hidden = !on;
+    if (rsRef) rsRef.hidden = !on;
     form.querySelector('[data-wrong-row]').hidden = !on;
     form.querySelector('[data-total-label]').textContent = on ? 'Ditagih' : 'Total';
     // "kirim ulang" never sends an invoice, and a button that says it does is the kind of
@@ -4905,7 +4921,9 @@ function orderPreview(order) {
       data-buyer="${escape(order.buyer ?? '')}" data-phone="${escape(order.buyerPhone ?? '')}"
       data-email="${escape(order.buyerEmail ?? '')}" data-shipto="${escape(order.shipTo ?? '')}">
     <span class="prev__top">
-      <span class="prev__eyebrow">Pesanan yang salah kirim</span>
+      <!-- The fieldset above already names this card; repeating it here would be the
+           same words twice in two inches. What is worth saying is that it is settled. -->
+      <span class="prev__eyebrow">Terpilih</span>
       <button class="prev__swap" type="button" data-swap>Ganti</button>
     </span>
     <span class="prev__h">

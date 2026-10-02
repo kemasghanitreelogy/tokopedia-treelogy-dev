@@ -2,7 +2,7 @@ import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, loadOutstanding, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
 import { saveOrders } from '../src/db/orders.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderLabelLookup, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderExpressLog, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderLabelLookup, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderExpressLog, renderLogin, dashboardError, renderOrderPicks, VALID_VIEWS } from '../src/dashboard-page.js';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
 import { can, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
@@ -26,7 +26,7 @@ import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/order
 import { discardManual } from '../src/mekari/discard.js';
 import { amendManualInvoice } from '../src/mekari/amend.js';
 import { postWasteEntry } from '../src/mekari/resend.js';
-import { orderById, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
+import { orderById, ordersByIds, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
 /**
  * Which typed-in sources can be corrected in place rather than deleted and re-entered.
@@ -839,7 +839,13 @@ async function handleWrite(form, ip, user, csrf) {
      * line and a row in the order list at zero.
      */
     const fragment = String(form.get('resendFor') ?? '').trim();
-    const matches = await ordersMatchingId(fragment).catch(() => []);
+    // The picker fills this in when an order was chosen from the list, which makes the
+    // lookup exact. Typed by hand it is empty, and then the fragment is searched - a
+    // resend must still be enterable by somebody who only has the number on a slip.
+    const pickedChannel = String(form.get('resendChannel') ?? '').trim();
+    const matches = pickedChannel
+      ? await ordersByIds([{ channel: pickedChannel, id: fragment }]).catch(() => [])
+      : await ordersMatchingId(fragment).catch(() => []);
     const exact = matches.filter((o) => String(o.id).toLowerCase() === fragment.toLowerCase());
     const found = exact.length > 0 ? exact : matches;
     if (found.length === 0) throw new Error(`pesanan "${fragment}" tidak ditemukan - periksa order ID-nya`);
@@ -1389,6 +1395,34 @@ export default async function handler(req, res) {
         prices: await cached('shopify-prices', 5 * 60_000, () => priceBySku().catch(() => ({})), SWR),
         live: process.env.MEKARI_SYNC_LIVE === '1',
       }));
+      return;
+    }
+
+    /*
+     * The order picker behind a resend, asked of every order rather than a window.
+     *
+     * Same shape as the label lookup: markup from the same server that drew the page, so
+     * the browser only inserts it and no second escaping routine ends up living inside a
+     * template literal. A mistake recorded against the wrong order is worse than the one
+     * being recorded, which is why the rows carry the buyer and the contents.
+     */
+    if (view === 'jurnal' && url.searchParams.has('lookup')) {
+      const fragment = String(url.searchParams.get('lookup') ?? '').slice(0, 64);
+      const json = (status, body) => send(status, JSON.stringify(body), { 'Content-Type': 'application/json; charset=utf-8' });
+      if (fragment.replace(/[^A-Za-z0-9-]/g, '').length < ID_SEARCH_MIN) {
+        json(200, { rows: '', count: 0, min: ID_SEARCH_MIN });
+        return;
+      }
+      try {
+        const found = (await ordersMatchingId(fragment, { limit: 8 }))
+          // A resend cannot be put right by another resend, so they are not offered.
+          .filter((o) => !(o.channel === 'manual' && String(o.id).startsWith('RS-')));
+        console.log(`dashboard/jurnal lookup: ${found.length} match(es)`);
+        json(200, { rows: renderOrderPicks({ orders: found }), count: found.length });
+      } catch (error) {
+        console.error('dashboard/jurnal lookup failed:', error.message);
+        json(502, { error: 'Pencarian ke database gagal, coba lagi sebentar.' });
+      }
       return;
     }
 

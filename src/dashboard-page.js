@@ -1434,6 +1434,42 @@ a.rv__product:hover{color:var(--accent)}
 /* One column narrower than a sale line: a wrong parcel has no discount to give. */
 .ln--wrong,.lnh--wrong{grid-template-columns:minmax(0,1fr) 68px 116px 92px 36px}
 .rs__note{margin:.1rem 0 .9rem; max-width:58rem}
+
+/* ---- picking the order a mistake belongs to ----
+   The list sits under the field rather than over the page: it never covers the rows the
+   operator is about to fill in, and at z-20 it stays below the sticky nav at z-40. */
+.rsf{position:relative}
+.pick0s{list-style:none; margin:.35rem 0 0; padding:.25rem; max-height:19rem; overflow-y:auto;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:11px; z-index:20;
+  box-shadow:var(--shadow)}
+.pick0s[hidden]{display:none}
+.pick0{display:grid; grid-template-columns:auto 1fr auto; gap:.2rem .6rem; align-items:center;
+  padding:.5rem .6rem; min-height:46px; border-radius:8px; cursor:pointer;
+  transition:background var(--t-fast) var(--ease-out)}
+.pick0:hover,.pick0.is-on{background:var(--glass-2)}
+.pick0.is-on{outline:1px solid var(--brand); outline-offset:-1px}
+.pick0__head{grid-column:1/-1; display:flex; align-items:center; gap:.45rem; flex-wrap:wrap}
+.pick0__id{font-size:.86rem; font-weight:600}
+.pick0__when,.pick0__who{font-size:.78rem; color:var(--muted)}
+.pick0__what{grid-column:1/-1; font-size:.78rem; color:var(--dim);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.pick0__none{margin:.45rem 0 0; font-size:.82rem; color:var(--muted)}
+
+/* The chosen one, shown in full so a mistake is recorded against the right order. */
+.rsprev{margin:.6rem 0 0; padding:.75rem .85rem; border-radius:11px;
+  background:var(--glass); border:1px solid var(--glass-line);
+  animation:rise var(--t-base) var(--ease-out) both}
+.rsprev[hidden]{display:none}
+.prev__h{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; font-size:.86rem}
+.prev__t{margin-left:auto; font-weight:600}
+.prev__g{display:flex; flex-wrap:wrap; gap:.2rem 1.4rem; margin:.5rem 0 0}
+.prev__f dt{font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+.prev__f dd{margin:0; font-size:.84rem}
+.prev__a{margin:.5rem 0 0; font-size:.82rem; color:var(--muted); max-width:52rem}
+.prev__l{list-style:none; margin:.55rem 0 0; padding:.5rem 0 0; border-top:1px solid var(--glass-line);
+  font-size:.82rem; display:grid; gap:.2rem}
+.prev__l li{display:flex; gap:.6rem}
+.prev__l b{margin-left:auto}
 .sum__r--wrong b{color:var(--warn)}
 .lnh{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 116px 92px 36px; gap:.4rem;
   font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); padding-bottom:.35rem;
@@ -1443,6 +1479,42 @@ a.rv__product:hover{color:var(--accent)}
   /* One column narrower than a sale line: a wrong parcel has no discount to give. */
 .ln--wrong,.lnh--wrong{grid-template-columns:minmax(0,1fr) 68px 116px 92px 36px}
 .rs__note{margin:.1rem 0 .9rem; max-width:58rem}
+
+/* ---- picking the order a mistake belongs to ----
+   The list sits under the field rather than over the page: it never covers the rows the
+   operator is about to fill in, and at z-20 it stays below the sticky nav at z-40. */
+.rsf{position:relative}
+.pick0s{list-style:none; margin:.35rem 0 0; padding:.25rem; max-height:19rem; overflow-y:auto;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:11px; z-index:20;
+  box-shadow:var(--shadow)}
+.pick0s[hidden]{display:none}
+.pick0{display:grid; grid-template-columns:auto 1fr auto; gap:.2rem .6rem; align-items:center;
+  padding:.5rem .6rem; min-height:46px; border-radius:8px; cursor:pointer;
+  transition:background var(--t-fast) var(--ease-out)}
+.pick0:hover,.pick0.is-on{background:var(--glass-2)}
+.pick0.is-on{outline:1px solid var(--brand); outline-offset:-1px}
+.pick0__head{grid-column:1/-1; display:flex; align-items:center; gap:.45rem; flex-wrap:wrap}
+.pick0__id{font-size:.86rem; font-weight:600}
+.pick0__when,.pick0__who{font-size:.78rem; color:var(--muted)}
+.pick0__what{grid-column:1/-1; font-size:.78rem; color:var(--dim);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.pick0__none{margin:.45rem 0 0; font-size:.82rem; color:var(--muted)}
+
+/* The chosen one, shown in full so a mistake is recorded against the right order. */
+.rsprev{margin:.6rem 0 0; padding:.75rem .85rem; border-radius:11px;
+  background:var(--glass); border:1px solid var(--glass-line);
+  animation:rise var(--t-base) var(--ease-out) both}
+.rsprev[hidden]{display:none}
+.prev__h{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; font-size:.86rem}
+.prev__t{margin-left:auto; font-weight:600}
+.prev__g{display:flex; flex-wrap:wrap; gap:.2rem 1.4rem; margin:.5rem 0 0}
+.prev__f dt{font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+.prev__f dd{margin:0; font-size:.84rem}
+.prev__a{margin:.5rem 0 0; font-size:.82rem; color:var(--muted); max-width:52rem}
+.prev__l{list-style:none; margin:.55rem 0 0; padding:.5rem 0 0; border-top:1px solid var(--glass-line);
+  font-size:.82rem; display:grid; gap:.2rem}
+.prev__l li{display:flex; gap:.6rem}
+.prev__l b{margin-left:auto}
 .sum__r--wrong b{color:var(--warn)}
 .lnh{display:none}
   .ln{grid-template-columns:minmax(0,1fr) 36px; grid-auto-rows:auto; gap:.35rem;
@@ -3600,11 +3672,15 @@ export function renderManual({
     <div class="fset" id="rsfields" hidden>
       <h3 class="fset__h">Salah kirim</h3>
       <div class="flds flds--one">
-        <div class="fld">
+        <div class="fld rsf">
           <label for="resendFor">Order ID yang salah kirim</label>
           <input id="resendFor" name="resendFor" maxlength="64" autocomplete="off" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-controls="rs-picks" aria-autocomplete="list"
                  placeholder="mis. 2609ABCDE atau #11143">
-          <span class="fld__hint">Dicari di seluruh pesanan, kanal apa pun. Nama dan alamat pelanggan ikut terisi dari sana.</span>
+          <input type="hidden" name="resendChannel" id="resendChannel">
+          <ul class="pick0s" id="rs-picks" role="listbox" aria-label="Pesanan yang cocok" hidden></ul>
+          <span class="fld__hint" id="rs-status" role="status" aria-live="polite">Ketik sebagian order ID &mdash; pilihan muncul sambil mengetik.</span>
+          <div class="rsprev" id="rs-preview" hidden></div>
         </div>
       </div>
       <p class="fld__hint rs__note">Barang di bawah ini yang terlanjur dikirim salah. Sesuai SOP tidak ditarik kembali - jadi
@@ -4105,6 +4181,114 @@ export function renderManual({
     });
   }
 
+  /*
+   * Choosing the order a mistake belongs to, while it is being typed.
+   *
+   * Recording a resend against the wrong order is a worse mistake than the one being
+   * recorded, so this never asks anybody to remember an order number exactly. Four
+   * characters is enough to ask the server - fewer matches everything and is a scan of the
+   * whole table for nothing - and what comes back is shown with the buyer and the contents,
+   * which is what a person actually recognises an order by.
+   *
+   * Keyboard throughout: a combobox that can only be used with a mouse is one half the
+   * bench cannot use at all.
+   */
+  if (linked) {
+    var picks = document.getElementById('rs-picks');
+    var status = document.getElementById('rs-status');
+    var preview = document.getElementById('rs-preview');
+    var channelField = document.getElementById('resendChannel');
+    var pickTimer = null;
+    var pickSeq = 0;
+    var active = -1;
+
+    var options = function () { return Array.prototype.slice.call(picks.querySelectorAll('.pick0')); };
+
+    function closeList() {
+      picks.hidden = true;
+      linked.setAttribute('aria-expanded', 'false');
+      linked.removeAttribute('aria-activedescendant');
+      active = -1;
+    }
+
+    function highlight(next) {
+      var rows = options();
+      if (rows.length === 0) return;
+      active = (next + rows.length) % rows.length;
+      rows.forEach(function (row, i) {
+        var on = i === active;
+        row.classList.toggle('is-on', on);
+        row.setAttribute('aria-selected', on ? 'true' : 'false');
+        if (on) {
+          linked.setAttribute('aria-activedescendant', row.id);
+          row.scrollIntoView({ block: 'nearest' });
+        }
+      });
+    }
+
+    function choose(row) {
+      linked.value = row.dataset.id;
+      channelField.value = row.dataset.channel;
+      preview.innerHTML = row.querySelector('.pick0__prev').innerHTML;
+      preview.hidden = false;
+      status.textContent = 'Terpilih: ' + row.dataset.channel + ' ' + row.dataset.id;
+      closeList();
+      total();
+    }
+
+    function lookup(fragment) {
+      var mine = ++pickSeq;
+      status.textContent = 'Mencari\u2026';
+      fetch('?view=jurnal&add=1&lookup=' + encodeURIComponent(fragment), { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          // An answer to a fragment the operator has already typed past is not an answer.
+          if (mine !== pickSeq) return;
+          picks.innerHTML = data.rows || '';
+          picks.hidden = false;
+          linked.setAttribute('aria-expanded', 'true');
+          active = -1;
+          status.textContent = data.count === 1 ? '1 pesanan cocok'
+            : data.count > 0 ? data.count + ' pesanan cocok - pilih satu'
+            : 'Tidak ada pesanan dengan order ID itu';
+          options().forEach(function (row) {
+            row.addEventListener('click', function () { choose(row); });
+          });
+        })
+        .catch(function () {
+          if (mine !== pickSeq) return;
+          status.textContent = 'Pencarian gagal - coba lagi sebentar';
+        });
+    }
+
+    linked.addEventListener('input', function () {
+      channelField.value = '';
+      preview.hidden = true;
+      window.clearTimeout(pickTimer);
+      var bare = linked.value.replace(/[^A-Za-z0-9-]/g, '');
+      if (bare.length < 4) {
+        closeList();
+        status.textContent = 'Ketik minimal 4 karakter dari order ID';
+        total();
+        return;
+      }
+      // Long enough to not chase every keystroke, short enough that it still feels typed.
+      pickTimer = window.setTimeout(function () { lookup(bare); }, 250);
+      total();
+    });
+
+    linked.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { closeList(); return; }
+      if (picks.hidden) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); highlight(active + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); highlight(active - 1); }
+      else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(options()[active]); }
+    });
+
+    // Leaving the field closes the list, but not before a click on it has landed.
+    linked.addEventListener('blur', function () { window.setTimeout(closeList, 150); });
+  }
+
   shape();
 
   total();
@@ -4538,6 +4722,62 @@ function labelRowHtml({ order: o, readiness, entry = null }, { batchKey = null, 
  * ticked checkbox, everything else is listed without one and says why - and when it was
  * last printed, by whom, which is usually the question.
  */
+/**
+ * The orders a typed fragment matched, as a list somebody can choose from.
+ *
+ * Recording a mistake against the wrong order is a worse mistake than the one being
+ * recorded, so each row carries enough to be recognised without opening anything: the
+ * channel it came from, when it was placed, who it went to, and what was in it. The
+ * preview that appears after choosing is folded into the row, so picking costs no second
+ * request and works at the speed of a click.
+ *
+ * Markup rather than data, answered by the same server that drew the page, because the
+ * alternative is a second escaping routine living in a template literal.
+ */
+export function renderOrderPicks({ orders }) {
+  if (orders.length === 0) {
+    return '<p class="pick0__none" role="status">Tidak ada pesanan dengan order ID itu.</p>';
+  }
+  return orders.map((order, index) => {
+    const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
+    const what = lines.map((l) => `${l.name || l.sku}${Number(l.qty) > 1 ? ` ×${l.qty}` : ''}`).join(', ');
+    return `<li class="pick0" role="option" id="pick0-${index}" tabindex="-1"
+        data-channel="${escape(order.channel)}" data-id="${escape(order.id)}" aria-selected="false">
+      <span class="pick0__head">
+        ${channelTag(order)}
+        <span class="pick0__id mono">${escape(order.id)}</span>
+        <span class="pick0__when">${escape(dateTime(order.createdAt, order.channel))}</span>
+      </span>
+      <span class="pick0__who">${escape(order.buyer) || '<span class="dim">tanpa nama</span>'}</span>
+      <span class="pick0__what">${escape(what) || '<span class="dim">tanpa rincian</span>'}</span>
+      <span class="pick0__prev" hidden>${orderPreview(order)}</span>
+    </li>`;
+  }).join('');
+}
+
+/** The card that confirms which order a mistake is being recorded against. */
+function orderPreview(order) {
+  const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
+  const field = (label, value) => (value
+    ? `<div class="prev__f"><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>` : '');
+  return `<span class="prev">
+    <span class="prev__h">
+      ${channelTag(order)}
+      <b class="mono">${escape(order.id)}</b>
+      <span class="dim">${escape(dateTime(order.createdAt, order.channel))}</span>
+      <span class="prev__t mono">${escape(rupiah(order.total))}</span>
+    </span>
+    <dl class="prev__g">
+      ${field('Pembeli', order.buyer)}
+      ${field('Telepon', order.buyerPhone)}
+      ${field('Kurir', order.carrier)}
+      ${field('Resi', order.tracking)}
+    </dl>
+    ${order.shipTo ? `<p class="prev__a">${escape(order.shipTo)}</p>` : ''}
+    <ul class="prev__l">${lines.map((l) => `<li><span>${escape(l.name || l.sku)}</span><b class="mono">${escape(String(l.qty ?? 0))}</b></li>`).join('')}</ul>
+  </span>`;
+}
+
 export function renderLabelLookup({ orders, printed = {}, arranged = {}, people = {} }) {
   const personName = (email) => people[email] || String(email || '').split('@')[0] || 'tidak diketahui';
   return orders.map((o) => {

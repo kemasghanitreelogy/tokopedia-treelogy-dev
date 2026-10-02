@@ -162,3 +162,67 @@ test('an edit form carries no resend half at all', async () => {
   });
   assert.ok(!/id="rsfields"/.test(html), 'mengubah transaksi lama tidak menawarkan kirim ulang');
 });
+
+/* ------------------------------------------------------------------ the picker */
+
+test('a match is shown with enough to recognise it by, not just its number', async () => {
+  const { renderOrderPicks } = await import('../src/dashboard-page.js');
+  const html = renderOrderPicks({
+    orders: [{
+      channel: 'shopify', id: '#11123', buyer: 'Dewi Lestari', buyerPhone: '0812', carrier: 'JNE',
+      tracking: 'JX1', createdAt: 1790000000, total: 1145000, shipTo: 'Jl. Mawar 1, Jakarta',
+      finance: { lines: [{ sku: 'OMP-180-001', name: 'Moringa Powder - 180 gram', qty: 2 }] },
+    }],
+  });
+
+  // Nobody recognises an order by its number alone, and recording a mistake against the
+  // wrong one is worse than the mistake being recorded.
+  assert.match(html, /role="option"/);
+  assert.match(html, /data-channel="shopify"/);
+  assert.match(html, /data-id="#11123"/);
+  assert.match(html, /Dewi Lestari/);
+  assert.match(html, /Moringa Powder - 180 gram ×2/);
+  // The preview travels with the row, so choosing costs no second request.
+  assert.match(html, /class="pick0__prev" hidden/);
+  assert.match(html, /Jl\. Mawar 1, Jakarta/);
+  assert.match(html, /Rp1\.145\.000/);
+});
+
+test('an empty answer says so rather than leaving a blank box', async () => {
+  const { renderOrderPicks } = await import('../src/dashboard-page.js');
+  assert.match(renderOrderPicks({ orders: [] }), /role="status"[^>]*>Tidak ada pesanan/);
+});
+
+test('a buyer name cannot smuggle markup into the picker', async () => {
+  const { renderOrderPicks } = await import('../src/dashboard-page.js');
+  const html = renderOrderPicks({
+    orders: [{ channel: 'shopee', id: 'A', buyer: '<img src=x onerror=alert(1)>', createdAt: 1, total: 0, lines: [] }],
+  });
+  assert.ok(!html.includes('<img src=x'));
+  assert.match(html, /&lt;img src=x/);
+});
+
+test('the picker is a combobox people can use without a mouse', async () => {
+  const { renderManual } = await import('../src/dashboard-page.js');
+  const html = renderManual({
+    source: 'RS', code: 'RS-1', today: '2026-10-02', contacts: [], existingCodes: [], live: true,
+    prices: {}, csrf: 'tok', range: {}, errors: {}, generatedAt: 0,
+  });
+  const [body] = html.split('<script>');
+  const script = html.split('<script>').pop().split('</script>')[0];
+
+  assert.match(body, /role="combobox"/);
+  assert.match(body, /aria-controls="rs-picks"/);
+  assert.match(body, /id="rs-picks" role="listbox"/);
+  // Async answers have to be announced, not silently swapped in.
+  assert.match(body, /id="rs-status" role="status" aria-live="polite"/);
+
+  assert.match(script, /e\.key === 'ArrowDown'/);
+  assert.match(script, /e\.key === 'ArrowUp'/);
+  assert.match(script, /e\.key === 'Enter' && active >= 0/);
+  assert.match(script, /e\.key === 'Escape'/);
+  assert.match(script, /aria-activedescendant/);
+  // A stale answer to a fragment already typed past is not an answer.
+  assert.match(script, /if \(mine !== pickSeq\) return;/);
+  assert.match(script, /status\.textContent = 'Mencari/);
+});

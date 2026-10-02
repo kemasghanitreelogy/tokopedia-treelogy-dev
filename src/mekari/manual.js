@@ -1,5 +1,5 @@
 import { SOURCES } from './sources.js';
-import { MANUAL_SOURCES, PREFIXES, isManualSource } from './prefix.js';
+import { MANUAL_SOURCES, PREFIXES, isManualSource, sourceShips } from './prefix.js';
 import { findProduct, PRODUCTS } from '../master.js';
 import { InvoiceError } from './invoice.js';
 import { channelDayStart, channelDate, channelToday } from '../clock.js';
@@ -296,8 +296,22 @@ export function buildManualOrder(input) {
   return {
     channel: 'manual',
     id: code,
-    // A typed transaction is money already earned, so it enters at the stage that posts.
-    stage: 'completed',
+    /*
+     * Money already earned, but not always work already done.
+     *
+     * A consignment slip, a walk-in and a wholesale order are written down after the fact:
+     * the goods have gone, and there is nothing left for anybody to do, so they enter at
+     * the stage that posts and never appear on a worklist.
+     *
+     * The two that leave in a parcel - WhatsApp and a resend - have the whole of the
+     * packing still ahead of them. Entered as done they were invisible to Proses and to
+     * the Picklist, which are the two screens that exist to make sure a parcel actually
+     * leaves, and the goods were picked off whatever the label happened to say.
+     *
+     * Both stages post: POSTABLE_STAGES holds to_ship as well, so the invoice is raised
+     * exactly as before.
+     */
+    stage: sourceShips(source) ? 'to_ship' : 'completed',
     status: 'MANUAL',
     createdAt,
     source,
@@ -388,16 +402,6 @@ export function buildResend(input) {
 
   return {
     ...order,
-    /*
-     * A parcel waiting to go out, not a transaction already closed.
-     *
-     * Every other typed-in source enters at 'completed' because the money is already
-     * earned and there is nothing left to do. A resend is the opposite: nothing is earned
-     * and the whole of it is still to do - picked, labelled, handed to a courier. Entered
-     * as done it was invisible to Proses and to the Picklist, which are the two screens
-     * that exist to make sure a parcel actually leaves.
-     */
-    stage: 'to_ship',
     // Never revenue. The orders list adds this up, and a resend that counted would make a
     // month of mistakes look like a month of trade.
     total: 0,

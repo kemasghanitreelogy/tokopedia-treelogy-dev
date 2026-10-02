@@ -203,3 +203,41 @@ test('an order that has been edited says so, and by whom', () => {
   // every page, so only the markup after it counts.
   assert.ok(!/class="od__edited"/.test(page([whatsapp])));
 });
+
+/* ---------------------------------------------- the ones that leave in a parcel */
+
+test('a typed-in sale that ships enters as work, one that does not enters as done', async () => {
+  const { buildManualOrder } = await import('../src/mekari/manual.js');
+  const { nextAction } = await import('../src/fulfillment.js');
+  const { labelReadiness, PRINTABLE_STAGES } = await import('../src/labels.js');
+  const { PICKABLE_STAGES } = await import('../src/picklist.js');
+
+  const base = {
+    date: '2026-10-02', buyer: 'A', shipTo: 'Jl. Mawar 1', note: '', addedBy: 'K',
+    lines: [{ sku: 'OMC-270-001', qty: 1, unitPrice: 100000, unitDiscount: 0 }],
+  };
+  const of = (source) => buildManualOrder({ ...base, source, code: `${source}-261002-001` });
+
+  /*
+   * A consignment slip, a walk-in and a wholesale order are written down after the fact -
+   * the goods have gone and nothing is left to do. The two that leave in a parcel have
+   * the whole of the packing still ahead of them, and entered as done they were invisible
+   * to the two screens that exist to make sure a parcel leaves.
+   */
+  assert.equal(of('DP').stage, 'to_ship');
+  for (const source of ['CS', 'DW', 'WS', 'LB']) assert.equal(of(source).stage, 'completed', source);
+
+  const whatsapp = of('DP');
+  assert.deepEqual(nextAction(whatsapp, {}), { action: 'arrange_local', label: 'Atur pengiriman', needs: [] });
+  assert.ok(PICKABLE_STAGES.has(whatsapp.stage), 'ikut dipetik');
+  assert.deepEqual(labelReadiness(whatsapp, {}, {}), { state: 'arrange', note: 'atur pengiriman dulu' });
+  assert.deepEqual(labelReadiness(whatsapp, {}, { [whatsapp.id]: { at: 1 } }), { state: 'needsPrint', note: 'siap dicetak' });
+
+  // A walk-in is never offered a courier and never asks for a label.
+  assert.equal(nextAction(of('DW'), {}), null);
+
+  // Both stages post, so the invoice is raised exactly as before.
+  const { POSTABLE_STAGES } = await import('../src/mekari/sync.js');
+  assert.ok(POSTABLE_STAGES.has('to_ship') && POSTABLE_STAGES.has('completed'));
+  assert.ok(PRINTABLE_STAGES.has('to_ship'));
+});

@@ -745,6 +745,22 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     // A sheet that was printed and then invalidated by an edit is worth naming: "siap
     // dicetak" alone would read as a label nobody has got round to.
     if (printedEntry(printed, order)) return { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' };
+    /*
+     * The house rule, which the typed-in branch was never held to: a label comes after
+     * the parcel has been arranged, not before.
+     *
+     * Shopee waits for PROCESSED, Tokopedia for AWAITING_COLLECTION, Shopify for the
+     * `arranged` ledger - and a resend, which is the first typed-in source to pass
+     * through Proses at all, waits on the same ledger. It is the same hole that put
+     * Shopify order #11087 in the print queue while it still said "perlu diatur".
+     *
+     * The sources that never reach Proses are untouched. A consignment or a WhatsApp sale
+     * is entered as done, so there is no arranging step for its label to wait on, and
+     * gating it here would be a label that never came.
+     */
+    if (order.stage === 'to_ship' && !arranged[order.id]) {
+      return { state: 'arrange', note: 'atur pengiriman dulu' };
+    }
     return { state: 'needsPrint', note: 'siap dicetak' };
   }
 

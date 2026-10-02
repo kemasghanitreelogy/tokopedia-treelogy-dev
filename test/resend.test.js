@@ -388,3 +388,25 @@ test('arranging a typed-in parcel is recorded here, never sent to a platform', a
   assert.ok(!out.error, out.error);
   assert.equal(out.succeeded, 1);
 });
+
+test('a resend offers no label until it has been arranged', async () => {
+  const { labelReadiness } = await import('../src/labels.js');
+  const resend = { ...buildResend(input()), shipTo: 'Jl. Mawar 1, Jakarta' };
+
+  /*
+   * The house rule every other channel is already held to: a label comes after the parcel
+   * is arranged, not before. Shopee waits for PROCESSED, Tokopedia for
+   * AWAITING_COLLECTION, Shopify for this same ledger - and the typed-in branch was never
+   * held to it, which is the hole that put Shopify #11087 in the print queue while it
+   * still said "perlu diatur".
+   */
+  assert.deepEqual(labelReadiness(resend, {}, {}), { state: 'arrange', note: 'atur pengiriman dulu' });
+  assert.deepEqual(labelReadiness(resend, {}, { [resend.id]: { at: 1 } }), { state: 'needsPrint', note: 'siap dicetak' });
+
+  // A typed-in sale that never reaches Proses has no arranging step to wait on, so gating
+  // it would be a label that never came.
+  const whatsapp = {
+    channel: 'manual', id: 'DP-1', source: 'DP', stage: 'completed', shipTo: 'Jl. Mawar 1', lines: [],
+  };
+  assert.deepEqual(labelReadiness(whatsapp, {}, {}), { state: 'needsPrint', note: 'siap dicetak' });
+});

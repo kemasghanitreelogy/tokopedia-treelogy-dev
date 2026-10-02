@@ -14,7 +14,13 @@ import { SOURCES } from '../src/mekari/sources.js';
  * the goods that went out by mistake and, by house rule, stay with the customer.
  */
 
-const accounts = { [WASTE_ACCOUNT]: 'Waste Goods Expense', [INVENTORY_ACCOUNT]: 'Inventory' };
+// The shape accountMap actually answers with, read off the live account on 2 Oct: the
+// whole account, not its name. An earlier version of this file took the name for granted
+// and would have sent "[object Object]" to Jurnal.
+const accounts = {
+  [WASTE_ACCOUNT]: { id: 112195862, number: WASTE_ACCOUNT, name: 'Waste Goods Expense' },
+  [INVENTORY_ACCOUNT]: { id: 112195990, number: INVENTORY_ACCOUNT, name: 'Inventory' },
+};
 
 const input = (over = {}) => ({
   source: 'RS',
@@ -106,8 +112,10 @@ test('the entry says the whole story, because the ledger is read without an orde
 
 test('a missing account is caught here, not by a validation error that names none', () => {
   const order = buildResend(input());
-  assert.throws(() => buildWasteEntry(order, { [INVENTORY_ACCOUNT]: 'Inventory' }), ResendError);
-  assert.throws(() => buildWasteEntry(order, { [WASTE_ACCOUNT]: 'Waste Goods Expense' }), /persediaan/);
+  assert.throws(() => buildWasteEntry(order, { [INVENTORY_ACCOUNT]: accounts[INVENTORY_ACCOUNT] }), ResendError);
+  assert.throws(() => buildWasteEntry(order, { [WASTE_ACCOUNT]: accounts[WASTE_ACCOUNT] }), /persediaan/);
+  // A plain string is still accepted, which is what keeps the rest of these readable.
+  assert.doesNotThrow(() => buildWasteEntry(order, { [WASTE_ACCOUNT]: 'Waste Goods Expense', [INVENTORY_ACCOUNT]: 'Inventory' }));
 });
 
 /* ------------------------------------------------------------------ the parcel */

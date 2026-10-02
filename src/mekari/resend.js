@@ -53,8 +53,17 @@ export function buildWasteEntry(order, accounts) {
   const value = lines.reduce((sum, line) => sum + Math.round(Number(line.unitPrice) || 0) * (Number(line.qty) || 0), 0);
   if (value <= 0) throw new ResendError(`${order.id}: nilai barang salah kirim nol - tidak ada yang dibukukan`);
 
-  const waste = accounts?.[WASTE_ACCOUNT];
-  const inventory = accounts?.[INVENTORY_ACCOUNT];
+  /*
+   * accountMap answers with the whole account, not its name.
+   *
+   * `{ id, number, name }` - and `account_name` on the wire wants the name alone. Sending
+   * the object would have reached Jurnal as "[object Object]" and been refused for an
+   * account nobody could find, which is a confusing way to learn this. Plain strings are
+   * accepted too, because that is what a test hands it.
+   */
+  const named = (account) => (typeof account === 'string' ? account : account?.name) || '';
+  const waste = named(accounts?.[WASTE_ACCOUNT]);
+  const inventory = named(accounts?.[INVENTORY_ACCOUNT]);
   // Named rather than numbered on the wire, so a missing one has to be caught here: Jurnal
   // answers a name it does not know with a validation error that names no account at all.
   if (!waste) throw new ResendError(`akun ${WASTE_ACCOUNT} (beban barang rusak) tidak ada di Jurnal`);

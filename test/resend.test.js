@@ -182,8 +182,9 @@ test('a match is shown with enough to recognise it by, not just its number', asy
   assert.match(html, /data-id="#11123"/);
   assert.match(html, /Dewi Lestari/);
   assert.match(html, /Moringa Powder - 180 gram ×2/);
-  // The preview travels with the row, so choosing costs no second request.
-  assert.match(html, /class="pick0__prev" hidden/);
+  // The preview travels with the row, so choosing costs no second request - in a template,
+  // whose contents are inert, so the card's buttons exist exactly once in the document.
+  assert.match(html, /<template class="pick0__prev">/);
   assert.match(html, /Jl\. Mawar 1, Jakarta/);
   assert.match(html, /Rp1\.145\.000/);
 });
@@ -225,4 +226,35 @@ test('the picker is a combobox people can use without a mouse', async () => {
   // A stale answer to a fragment already typed past is not an answer.
   assert.match(script, /if \(mine !== pickSeq\) return;/);
   assert.match(script, /status\.textContent = 'Mencari/);
+});
+
+test('the panel never shows a resend charging anybody', async () => {
+  const { renderManual } = await import('../src/dashboard-page.js');
+  const script = renderManual({
+    source: 'RS', code: 'RS-1', today: '2026-10-02', contacts: [], existingCodes: [], live: true,
+    prices: {}, csrf: 'tok', range: {}, errors: {}, generatedAt: 0,
+  }).split('<script>').pop().split('</script>')[0];
+
+  // The replacement lines carry prices - what is being sent is worth knowing - and the
+  // server zeroes every one of them. The running total has to agree with the record.
+  assert.match(script, /form\.querySelector\('\[data-sum-total\]'\)\.textContent = rupiah\(0\)/);
+  assert.match(script, /form\.querySelector\('\[data-total-field\]'\)\.value = '0'/);
+});
+
+test('one match is chosen rather than offered, and the card can fill the replacement', async () => {
+  const { renderManual } = await import('../src/dashboard-page.js');
+  const script = renderManual({
+    source: 'RS', code: 'RS-1', today: '2026-10-02', contacts: [], existingCodes: [], live: true,
+    prices: {}, csrf: 'tok', range: {}, errors: {}, generatedAt: 0,
+  }).split('<script>').pop().split('</script>')[0];
+
+  // Leaving a single row to be clicked is asking somebody to confirm the only possible
+  // answer - and the list closes on blur, which is how a typed-in order number showed
+  // "1 pesanan cocok" and then nothing at all.
+  assert.match(script, /if \(data\.count === 1\) \{ choose\(rows\[0\]\); return; \}/);
+  // A click on a row must land before the blur that closes the list.
+  assert.match(script, /addEventListener\('mousedown', function \(e\) \{ e\.preventDefault\(\); \}\)/);
+  // What they ordered is what has to be sent, so it is one press away.
+  assert.match(script, /function useContents\(card, button\)/);
+  assert.match(script, /baris pengganti terisi/);
 });

@@ -1455,21 +1455,42 @@ a.rv__product:hover{color:var(--accent)}
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .pick0__none{margin:.45rem 0 0; font-size:.82rem; color:var(--muted)}
 
-/* The chosen one, shown in full so a mistake is recorded against the right order. */
-.rsprev{margin:.6rem 0 0; padding:.75rem .85rem; border-radius:11px;
-  background:var(--glass); border:1px solid var(--glass-line);
+/* The chosen one, shown in full so a mistake is recorded against the right order.
+   A left edge in the brand colour rather than a border all round: it reads as attached to
+   the field above it, which is what it is. */
+.rsprev{margin:.7rem 0 0; padding:.85rem 1rem; border-radius:12px;
+  background:var(--glass); border:1px solid var(--glass-line); border-left:3px solid var(--brand);
   animation:rise var(--t-base) var(--ease-out) both}
 .rsprev[hidden]{display:none}
+.prev{display:block}
+.prev__top{display:flex; align-items:center; gap:.6rem; margin-bottom:.45rem}
+.prev__eyebrow{font-size:.68rem; letter-spacing:.07em; text-transform:uppercase; color:var(--brand); font-weight:600}
+.prev__swap{margin-left:auto; font:inherit; font-size:.76rem; padding:.3rem .7rem; min-height:32px;
+  border-radius:999px; cursor:pointer; color:var(--muted);
+  background:transparent; border:1px solid var(--line);
+  transition:color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
+.prev__swap:hover{color:var(--fg); border-color:var(--brand)}
 .prev__h{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; font-size:.86rem}
-.prev__t{margin-left:auto; font-weight:600}
-.prev__g{display:flex; flex-wrap:wrap; gap:.2rem 1.4rem; margin:.5rem 0 0}
-.prev__f dt{font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
-.prev__f dd{margin:0; font-size:.84rem}
-.prev__a{margin:.5rem 0 0; font-size:.82rem; color:var(--muted); max-width:52rem}
-.prev__l{list-style:none; margin:.55rem 0 0; padding:.5rem 0 0; border-top:1px solid var(--glass-line);
-  font-size:.82rem; display:grid; gap:.2rem}
-.prev__l li{display:flex; gap:.6rem}
-.prev__l b{margin-left:auto}
+.prev__id{font-size:.98rem; font-weight:600}
+.prev__t{margin-left:auto; font-weight:600; font-size:.98rem}
+.prev__g{display:flex; flex-wrap:wrap; gap:.35rem 1.6rem; margin:.6rem 0 0}
+.prev__f dt{font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+.prev__f dd{margin:0; font-size:.86rem}
+.prev__a{margin:.55rem 0 0; font-size:.82rem; color:var(--muted); max-width:52rem; line-height:1.55}
+.prev__lh{display:block; margin:.75rem 0 .3rem; font-size:.7rem; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted)}
+.prev__l{list-style:none; margin:0; padding:.45rem 0 0; border-top:1px solid var(--glass-line);
+  font-size:.84rem; display:grid; gap:.3rem}
+.prev__l li{display:grid; grid-template-columns:1fr auto auto; gap:.3rem .8rem; align-items:baseline}
+.prev__sku{font-size:.72rem; color:var(--dim)}
+.prev__l b{text-align:right; min-width:2rem}
+/* The shortcut that makes the card worth reading: what they ordered is what to send. */
+.prev__use{margin:.75rem 0 0; font:inherit; font-size:.82rem; font-weight:500; width:100%;
+  padding:.55rem .9rem; min-height:42px; border-radius:9px; cursor:pointer;
+  color:var(--fg); background:var(--panel-2); border:1px dashed var(--line);
+  transition:border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out)}
+.prev__use:hover{border-color:var(--brand); border-style:solid; color:var(--brand)}
+.prev__use.is-done{border-style:solid; border-color:var(--good); color:var(--good); cursor:default}
 .sum__r--wrong b{color:var(--warn)}
 .lnh{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 116px 92px 36px; gap:.4rem;
   font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); padding-bottom:.35rem;
@@ -1500,21 +1521,42 @@ a.rv__product:hover{color:var(--accent)}
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .pick0__none{margin:.45rem 0 0; font-size:.82rem; color:var(--muted)}
 
-/* The chosen one, shown in full so a mistake is recorded against the right order. */
-.rsprev{margin:.6rem 0 0; padding:.75rem .85rem; border-radius:11px;
-  background:var(--glass); border:1px solid var(--glass-line);
+/* The chosen one, shown in full so a mistake is recorded against the right order.
+   A left edge in the brand colour rather than a border all round: it reads as attached to
+   the field above it, which is what it is. */
+.rsprev{margin:.7rem 0 0; padding:.85rem 1rem; border-radius:12px;
+  background:var(--glass); border:1px solid var(--glass-line); border-left:3px solid var(--brand);
   animation:rise var(--t-base) var(--ease-out) both}
 .rsprev[hidden]{display:none}
+.prev{display:block}
+.prev__top{display:flex; align-items:center; gap:.6rem; margin-bottom:.45rem}
+.prev__eyebrow{font-size:.68rem; letter-spacing:.07em; text-transform:uppercase; color:var(--brand); font-weight:600}
+.prev__swap{margin-left:auto; font:inherit; font-size:.76rem; padding:.3rem .7rem; min-height:32px;
+  border-radius:999px; cursor:pointer; color:var(--muted);
+  background:transparent; border:1px solid var(--line);
+  transition:color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
+.prev__swap:hover{color:var(--fg); border-color:var(--brand)}
 .prev__h{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; font-size:.86rem}
-.prev__t{margin-left:auto; font-weight:600}
-.prev__g{display:flex; flex-wrap:wrap; gap:.2rem 1.4rem; margin:.5rem 0 0}
-.prev__f dt{font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
-.prev__f dd{margin:0; font-size:.84rem}
-.prev__a{margin:.5rem 0 0; font-size:.82rem; color:var(--muted); max-width:52rem}
-.prev__l{list-style:none; margin:.55rem 0 0; padding:.5rem 0 0; border-top:1px solid var(--glass-line);
-  font-size:.82rem; display:grid; gap:.2rem}
-.prev__l li{display:flex; gap:.6rem}
-.prev__l b{margin-left:auto}
+.prev__id{font-size:.98rem; font-weight:600}
+.prev__t{margin-left:auto; font-weight:600; font-size:.98rem}
+.prev__g{display:flex; flex-wrap:wrap; gap:.35rem 1.6rem; margin:.6rem 0 0}
+.prev__f dt{font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+.prev__f dd{margin:0; font-size:.86rem}
+.prev__a{margin:.55rem 0 0; font-size:.82rem; color:var(--muted); max-width:52rem; line-height:1.55}
+.prev__lh{display:block; margin:.75rem 0 .3rem; font-size:.7rem; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted)}
+.prev__l{list-style:none; margin:0; padding:.45rem 0 0; border-top:1px solid var(--glass-line);
+  font-size:.84rem; display:grid; gap:.3rem}
+.prev__l li{display:grid; grid-template-columns:1fr auto auto; gap:.3rem .8rem; align-items:baseline}
+.prev__sku{font-size:.72rem; color:var(--dim)}
+.prev__l b{text-align:right; min-width:2rem}
+/* The shortcut that makes the card worth reading: what they ordered is what to send. */
+.prev__use{margin:.75rem 0 0; font:inherit; font-size:.82rem; font-weight:500; width:100%;
+  padding:.55rem .9rem; min-height:42px; border-radius:9px; cursor:pointer;
+  color:var(--fg); background:var(--panel-2); border:1px dashed var(--line);
+  transition:border-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out)}
+.prev__use:hover{border-color:var(--brand); border-style:solid; color:var(--brand)}
+.prev__use.is-done{border-style:solid; border-color:var(--good); color:var(--good); cursor:default}
 .sum__r--wrong b{color:var(--warn)}
 .lnh{display:none}
   .ln{grid-template-columns:minmax(0,1fr) 36px; grid-auto-rows:auto; gap:.35rem;
@@ -4016,6 +4058,17 @@ export function renderManual({
     if (resending()) {
       var wrongValue = wrongTotal();
       form.querySelector('[data-sum-wrong]').textContent = rupiah(wrongValue);
+      /*
+       * Nobody is charged for a resend, and the panel must not say otherwise.
+       *
+       * The replacement lines carry prices - what is being sent is worth knowing, and the
+       * figures arrive by themselves when the contents are copied over - but the server
+       * zeroes every one of them on save. Leaving the running total showing Rp1.940.000
+       * beside the word "Ditagih" would be the screen disagreeing with the record it is
+       * about to write, which is the one thing a form like this cannot do.
+       */
+      form.querySelector('[data-sum-total]').textContent = rupiah(0);
+      form.querySelector('[data-total-field]').value = '0';
       go.disabled = !(hasReplacement() && wrongValue > 0 && linked.value.trim().length > 0);
     } else {
       go.disabled = goods <= 0;
@@ -4226,12 +4279,60 @@ export function renderManual({
       });
     }
 
+    /** Fill a replacement row per line of the chosen order, which is almost always right. */
+    function useContents(card, button) {
+      var pairs = (card.dataset.fill || '').split(',').filter(Boolean);
+      if (pairs.length === 0) return;
+      var rows = Array.prototype.slice.call(lines.querySelectorAll('[data-row]'));
+      pairs.forEach(function (pair, i) {
+        var bits = pair.split(':');
+        // The first line reuses the row already on screen; the rest add their own.
+        if (i >= rows.length) document.getElementById('addln').click();
+        var row = lines.querySelectorAll('[data-row]')[i];
+        row.querySelector('select').value = bits[0];
+        row.querySelector('select').dispatchEvent(new Event('change', { bubbles: true }));
+        row.querySelector('[name="qty"]').value = bits[1] || '1';
+      });
+      button.textContent = pairs.length + ' baris pengganti terisi';
+      button.classList.add('is-done');
+      button.disabled = true;
+      total();
+    }
+
     function choose(row) {
       linked.value = row.dataset.id;
       channelField.value = row.dataset.channel;
-      preview.innerHTML = row.querySelector('.pick0__prev').innerHTML;
+      // A template's children live in a document fragment, so they are cloned out of
+      // .content - innerHTML on the element itself hands back markup, not nodes.
+      var card0 = row.querySelector('.pick0__prev');
+      preview.innerHTML = '';
+      preview.appendChild(card0.content.cloneNode(true));
       preview.hidden = false;
       status.textContent = 'Terpilih: ' + row.dataset.channel + ' ' + row.dataset.id;
+
+      var card = preview.querySelector('.prev');
+      // The parcel goes to the same person at the same address as the one that went wrong.
+      // Filled in rather than left for the server, so the operator can see and correct it.
+      [['buyer', 'buyer'], ['buyerPhone', 'phone'], ['buyerEmail', 'email'], ['shipTo', 'shipto']]
+        .forEach(function (pair) {
+          var field = form.querySelector('[name="' + pair[0] + '"]');
+          if (field && !field.value && card.dataset[pair[1]]) field.value = card.dataset[pair[1]];
+        });
+
+      var swap = preview.querySelector('[data-swap]');
+      if (swap) {
+        swap.addEventListener('click', function () {
+          preview.hidden = true;
+          channelField.value = '';
+          linked.value = '';
+          linked.focus();
+          status.textContent = 'Ketik minimal 4 karakter dari order ID';
+          total();
+        });
+      }
+      var use = preview.querySelector('[data-use]');
+      if (use) use.addEventListener('click', function () { useContents(card, use); });
+
       closeList();
       total();
     }
@@ -4248,12 +4349,23 @@ export function renderManual({
           picks.hidden = false;
           linked.setAttribute('aria-expanded', 'true');
           active = -1;
-          status.textContent = data.count === 1 ? '1 pesanan cocok'
-            : data.count > 0 ? data.count + ' pesanan cocok - pilih satu'
-            : 'Tidak ada pesanan dengan order ID itu';
-          options().forEach(function (row) {
+          var rows = options();
+          rows.forEach(function (row) {
+            row.addEventListener('mousedown', function (e) { e.preventDefault(); });
             row.addEventListener('click', function () { choose(row); });
           });
+          /*
+           * One match is not a choice.
+           *
+           * Leaving a single row to be clicked is asking somebody to confirm the only
+           * possible answer, and the list closes the moment the field loses focus - which
+           * is how an operator typed a whole order number, read "1 pesanan cocok", and was
+           * shown nothing at all.
+           */
+          if (data.count === 1) { choose(rows[0]); return; }
+          status.textContent = data.count > 0
+            ? data.count + ' pesanan cocok - pilih satu'
+            : 'Tidak ada pesanan dengan order ID itu';
         })
         .catch(function () {
           if (mine !== pickSeq) return;
@@ -4285,8 +4397,17 @@ export function renderManual({
       else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(options()[active]); }
     });
 
-    // Leaving the field closes the list, but not before a click on it has landed.
+    // Leaving the field closes the list; mousedown on a row is prevented above, so a click
+    // on one lands before this ever runs.
     linked.addEventListener('blur', function () { window.setTimeout(closeList, 150); });
+    // And coming back to a field with results still in it reopens them, rather than
+    // leaving a status line describing a list that is no longer there.
+    linked.addEventListener('focus', function () {
+      if (preview.hidden && options().length > 0) {
+        picks.hidden = false;
+        linked.setAttribute('aria-expanded', 'true');
+      }
+    });
   }
 
   shape();
@@ -4750,20 +4871,46 @@ export function renderOrderPicks({ orders }) {
       </span>
       <span class="pick0__who">${escape(order.buyer) || '<span class="dim">tanpa nama</span>'}</span>
       <span class="pick0__what">${escape(what) || '<span class="dim">tanpa rincian</span>'}</span>
-      <span class="pick0__prev" hidden>${orderPreview(order)}</span>
+      <!-- A template, not a hidden span: its contents are inert and invisible to any
+           querySelector on the document, so the card's buttons exist exactly once - the
+           copy that was chosen. It still travels with the row, so choosing costs no
+           second request. -->
+      <template class="pick0__prev">${orderPreview(order)}</template>
     </li>`;
   }).join('');
 }
 
-/** The card that confirms which order a mistake is being recorded against. */
+/**
+ * The order a mistake is being recorded against, once it has been chosen.
+ *
+ * The one card on this form that exists purely to be read before a decision, so it is
+ * written to be read: who the parcel went to, where, and what was supposed to be in it.
+ * The last of those is the point - "they ordered capsules" is the fact that makes the row
+ * above it obviously wrong, and it is one click away from filling the replacement lines,
+ * because what the customer ordered is almost always exactly what now has to be sent.
+ *
+ * `data-fill` carries the SKU and quantity of each line, so that click needs nothing from
+ * the server and nothing parsed back out of the markup.
+ */
 function orderPreview(order) {
   const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
   const field = (label, value) => (value
     ? `<div class="prev__f"><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>` : '');
-  return `<span class="prev">
+  const fill = lines
+    .map((l) => `${String(l.sku ?? '').trim()}:${Number(l.qty) || 0}`)
+    .filter((pair) => !pair.startsWith(':'))
+    .join(',');
+
+  return `<span class="prev" data-fill="${escape(fill)}"
+      data-buyer="${escape(order.buyer ?? '')}" data-phone="${escape(order.buyerPhone ?? '')}"
+      data-email="${escape(order.buyerEmail ?? '')}" data-shipto="${escape(order.shipTo ?? '')}">
+    <span class="prev__top">
+      <span class="prev__eyebrow">Pesanan yang salah kirim</span>
+      <button class="prev__swap" type="button" data-swap>Ganti</button>
+    </span>
     <span class="prev__h">
       ${channelTag(order)}
-      <b class="mono">${escape(order.id)}</b>
+      <b class="mono prev__id">${escape(order.id)}</b>
       <span class="dim">${escape(dateTime(order.createdAt, order.channel))}</span>
       <span class="prev__t mono">${escape(rupiah(order.total))}</span>
     </span>
@@ -4774,7 +4921,13 @@ function orderPreview(order) {
       ${field('Resi', order.tracking)}
     </dl>
     ${order.shipTo ? `<p class="prev__a">${escape(order.shipTo)}</p>` : ''}
-    <ul class="prev__l">${lines.map((l) => `<li><span>${escape(l.name || l.sku)}</span><b class="mono">${escape(String(l.qty ?? 0))}</b></li>`).join('')}</ul>
+    <span class="prev__lh">Yang dipesan <span class="dim">&mdash; ini yang seharusnya diterima</span></span>
+    <ul class="prev__l">${lines.map((l) => `<li>
+      <span>${escape(l.name || l.sku)}</span>
+      <span class="prev__sku mono">${escape(l.sku ?? '')}</span>
+      <b class="mono">${escape(String(l.qty ?? 0))}</b>
+    </li>`).join('')}</ul>
+    ${fill ? '<button class="prev__use" type="button" data-use>Pakai isi ini sebagai barang pengganti</button>' : ''}
   </span>`;
 }
 

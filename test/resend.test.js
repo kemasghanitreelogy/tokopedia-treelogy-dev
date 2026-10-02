@@ -288,3 +288,40 @@ test('the order that went wrong is asked for before anything that is read off it
   // The goods that went out wrongly stay with the other product rows, where they belong.
   assert.ok(at('id="rsfields"') > head('Produk'));
 });
+
+/* ------------------------------------------------- never posted as a sale */
+
+test('a resend is never queued as an invoice, however complete it looks', async () => {
+  const { postable, waiting, syncOverview, earnsRevenue } = await import('../src/mekari/sync.js');
+  const resend = buildResend(input());
+  const sale = {
+    channel: 'manual', id: 'DP-261002-0001', source: 'DP', stage: 'completed', status: 'MANUAL',
+    createdAt: 1790000000, customer: 'Toko A', total: 100000,
+    finance: { lines: [{ sku: 'OMC-270-001', name: 'x', qty: 1, unitPrice: 100000, unitDiscount: 0 }], shipping: 0 },
+  };
+
+  /*
+   * It passed every other test: stage 'completed', product lines, nothing in the ledger.
+   * The sweep would have raised a Rp0 invoice for it every fifteen minutes.
+   */
+  assert.equal(earnsRevenue(resend), false);
+  assert.equal(earnsRevenue(sale), true);
+  assert.equal(earnsRevenue({ channel: 'shopee', id: 'x' }), true, 'kanal online tidak punya source');
+
+  const ledger = { orders: {} };
+  assert.deepEqual(postable([resend, sale], ledger).map((o) => o.id), ['DP-261002-0001']);
+  // Held back by a backoff, which is a list a resend must never appear on either: it is
+  // not waiting for anything, it was never going to be posted.
+  const later = Date.now() + 60_000;
+  const held = { orders: { 'TRL-manual-DP-261002-0001': { next_at: later }, 'TRL-manual-RS-261002-00001AB': { next_at: later } } };
+  assert.deepEqual(
+    waiting([resend, sale], ledger, { retry: held, now: Date.now() }).map((w) => w.id),
+    ['DP-261002-0001'],
+  );
+
+  // And the dashboard never shows it as waiting to be booked, because it is not.
+  const row = syncOverview({ orders: [resend], ledger, accounts: {} }).rows[0];
+  assert.equal(row.state, 'skipped');
+  assert.equal(row.total, 0);
+  assert.match(row.reason, /dibukukan sebagai beban, bukan penjualan/);
+});

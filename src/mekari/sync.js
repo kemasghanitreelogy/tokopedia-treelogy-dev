@@ -7,6 +7,7 @@ import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
 import { accountMap } from './accounts.js';
 import { receivableFor } from './sources.js';
+import { isSellingSource } from './prefix.js';
 /**
  * The Jurnal account id this order's buyer should be created against.
  *
@@ -277,8 +278,24 @@ export function drained(results, { dryRun = false } = {}) {
  * of a monthly package against a fact that had not changed. Without a book, every caller
  * behaves exactly as it did before - the dashboard's overview passes none, and should not.
  */
+/**
+ * Whether this order is the kind that ever becomes a sales invoice.
+ *
+ * A resend is not. The customer paid once, on the order it is attached to, and that
+ * invoice already records it - so posting a second one would count a single sale twice.
+ * It passed every other test here: its stage is 'completed', it carries product lines,
+ * and nothing had written it into the ledger, so the next sweep would have raised a Rp0
+ * invoice for it, every fifteen minutes, until somebody noticed.
+ *
+ * What a resend owes the books is a journal entry, and resend.js writes that the moment
+ * it is saved.
+ */
+export const earnsRevenue = (order) => order.channel !== 'manual'
+  || isSellingSource(String(order.source ?? '').toUpperCase());
+
 export function postable(orders, ledger, { retry = null, now = Date.now() } = {}) {
   return orders
+    .filter(earnsRevenue)
     .filter((o) => POSTABLE_STAGES.has(o.stage))
     .filter((o) => o.finance?.lines?.length > 0)
     .filter((o) => !ledger.orders[customIdFor(o)])
@@ -290,6 +307,7 @@ export function postable(orders, ledger, { retry = null, now = Date.now() } = {}
 export function waiting(orders, ledger, { retry = null, now = Date.now() } = {}) {
   if (!retry) return [];
   return orders
+    .filter(earnsRevenue)
     .filter((o) => POSTABLE_STAGES.has(o.stage))
     .filter((o) => o.finance?.lines?.length > 0)
     .filter((o) => !ledger.orders[customIdFor(o)])
@@ -322,6 +340,11 @@ export function syncOverview({ orders, ledger, accounts = null }) {
     }
     if (recorded) {
       return { order, customId, state: 'synced', total: recorded.total ?? 0, invoiceId: recorded.invoice_id ?? null, at: recorded.at ?? null };
+    }
+    if (!earnsRevenue(order)) {
+      // Never queued, never broken, never chased: it is simply not an invoice. Its own
+      // entry in the books was written when it was saved.
+      return { order, customId, state: 'skipped', total: 0, reason: 'kirim ulang - dibukukan sebagai beban, bukan penjualan' };
     }
     if (!POSTABLE_STAGES.has(order.stage)) {
       return { order, customId, state: 'skipped', total: 0, reason: 'belum dibayar atau dibatalkan' };

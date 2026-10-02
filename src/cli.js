@@ -38,6 +38,7 @@ import { reconcileLedger } from './mekari/reconcile.js';
 import { settleOpenInvoices } from './mekari/settle.js';
 import { dailyRecap } from './mekari/recap.js';
 import { syncShopifyPrices } from './shopify/prices.js';
+import { sweepUndone } from './mekari/undone.js';
 import { redateInvoices } from './mekari/redate.js';
 import { repoolPayments } from './mekari/repool.js';
 import { webhookStatus, registerShopee, registerTikTok, registerShopify, webhookUrl, baseUrl } from './webhooks/register.js';
@@ -959,6 +960,25 @@ async function cmdMekariSync(config, args = []) {
     // Customers and products both have to exist before an invoice can name them; Jurnal
     // rejects the whole invoice otherwise.
     await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
+
+    /*
+     * Cancellations that fell outside the posting window, before anything else is sent.
+     *
+     * The seven days this sync reads from is the right window for posting - anything older
+     * is either booked or deliberately not - and it was the wrong window for taking an
+     * invoice back out. A sale cancelled a fortnight after it was raised had nothing left
+     * looking at it. Which orders those are is answered from our own database and ledger,
+     * so this costs nothing at all until there is genuinely an invoice to remove.
+     */
+    const undone = await sweepUndone({ dryRun: false }).catch((error) => {
+      console.log(warn(`sapuan pembatalan gagal: ${error.message}`));
+      return null;
+    });
+    if (undone && (undone.voided > 0 || undone.review > 0 || undone.failed > 0)) {
+      console.log(`  ${undone.voided > 0 ? ok(`${undone.voided} faktur pembatalan lama dihapus`) : ''}${
+        undone.review > 0 ? ` ${warn(`${undone.review} perlu ditangani orang`)}` : ''}${
+        undone.failed > 0 ? ` ${warn(`${undone.failed} gagal`)}` : ''}`);
+    }
 
     const limit = Number(args.find((a) => a.startsWith('--limit='))?.slice('--limit='.length)) || 1000;
     const result = await runSync({ orders, accounts, dryRun: false, limit });

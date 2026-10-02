@@ -388,6 +388,16 @@ export function buildResend(input) {
 
   return {
     ...order,
+    /*
+     * A parcel waiting to go out, not a transaction already closed.
+     *
+     * Every other typed-in source enters at 'completed' because the money is already
+     * earned and there is nothing left to do. A resend is the opposite: nothing is earned
+     * and the whole of it is still to do - picked, labelled, handed to a courier. Entered
+     * as done it was invisible to Proses and to the Picklist, which are the two screens
+     * that exist to make sure a parcel actually leaves.
+     */
+    stage: 'to_ship',
     // Never revenue. The orders list adds this up, and a resend that counted would make a
     // month of mistakes look like a month of trade.
     total: 0,

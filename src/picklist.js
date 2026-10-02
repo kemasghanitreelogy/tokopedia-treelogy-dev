@@ -1,4 +1,4 @@
-import { CHANNELS } from './omni.js';
+import { CHANNELS , MANUAL_CHANNEL } from './omni.js';
 
 /**
  * What the warehouse actually has to pick.
@@ -22,7 +22,10 @@ export function buildPicklist(orders, { stages = PICKABLE_STAGES } = {}) {
         variant: line.variant,
         qty: 0,
         orders: 0,
-        byChannel: Object.fromEntries(Object.keys(CHANNELS).map((id) => [id, 0])),
+        // Typed-in parcels pick off the same shelf as every other order, so they get a
+        // bucket too. Without one the count went to NaN the first time a resend reached
+        // this list - invisible today, because the page only prints three of the columns.
+        byChannel: Object.fromEntries([...Object.keys(CHANNELS), MANUAL_CHANNEL.id].map((id) => [id, 0])),
       };
       entry.qty += line.qty;
       entry.orders += 1;

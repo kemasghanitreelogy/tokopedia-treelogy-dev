@@ -1,4 +1,5 @@
 import { loadConfig } from './config.js';
+import { sourceShips } from './mekari/prefix.js';
 import { callApi } from './client.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
@@ -38,12 +39,19 @@ import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
  *   queue. Arranging one calls nothing, so nothing on Shopify's side can say it happened.
  */
 export function nextAction(order, arranged = {}) {
-  // Shopify is arranged the same way from the operator's side, but nothing is called:
-  // its couriers are booked outside Shopify and the order is closed there by hand. So
-  // the move is recorded here, and the parcel joins the same day's picking and printing.
-  if (order.channel === 'shopify') {
+  /*
+   * Shopify is arranged the same way from the operator's side, but nothing is called:
+   * its couriers are booked outside Shopify and the order is closed there by hand. So
+   * the move is recorded here, and the parcel joins the same day's picking and printing.
+   *
+   * A resend is the same shape of job with even less behind it - there is no platform at
+   * all, just a parcel somebody has to book a courier for - so it takes the same route.
+   * Typed-in sources that do not ship never get here: a walk-in carries its goods out of
+   * the shop, and offering to arrange a courier for it is offering nothing.
+   */
+  if (order.channel === 'shopify' || (order.channel === 'manual' && sourceShips(order.source))) {
     return order.stage === 'to_ship' && !arranged[order.id]
-      ? { action: 'shopify_arrange', label: 'Atur pengiriman', needs: [] }
+      ? { action: 'arrange_local', label: 'Atur pengiriman', needs: [] }
       : null;
   }
 
@@ -516,21 +524,24 @@ export async function massArrange(orders, {
 } = {}) {
   guard(`pengiriman ${orders.length} pesanan`);
 
-  const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify');
   const shopee = orders.filter((o) => o.channel === 'shopee');
-  const shopify = orders.filter((o) => o.channel === 'shopify');
+  // Booked outside this system and recorded here: Shopify, and the typed-in parcels that
+  // ship. Neither has an API to call, and a manual order sent to TikTok's would have been
+  // an order id that platform has never heard of.
+  const local = orders.filter((o) => o.channel === 'shopify' || o.channel === 'manual');
+  const tiktok = orders.filter((o) => o.channel !== 'shopee' && o.channel !== 'shopify' && o.channel !== 'manual');
 
-  const [tiktokResults, shopeeResults, shopifyResults] = await Promise.all([
+  const [tiktokResults, shopeeResults, localResults] = await Promise.all([
     arrangeTikTok(tiktok, tiktokDeps).catch((error) => tiktok.map((o) => failed(o, error.message))),
     arrangeShopee(shopee, { pickupTimes, methods, ...shopeeDeps }).catch((error) => shopee.map((o) => failed(o, error.message))),
-    shopify.length === 0
+    local.length === 0
       ? Promise.resolve([])
-      : markArranged(shopify.map((o) => o.id), { by: 'dashboard' })
-        .then(() => shopify.map(ok))
-        .catch((error) => shopify.map((o) => failed(o, error.message))),
+      : markArranged(local.map((o) => o.id), { by: 'dashboard' })
+        .then(() => local.map(ok))
+        .catch((error) => local.map((o) => failed(o, error.message))),
   ]);
 
-  const results = [...tiktokResults, ...shopeeResults, ...shopifyResults];
+  const results = [...tiktokResults, ...shopeeResults, ...localResults];
   await writeAudit({ results }, { guards: { action: 'mass_arrange' } }).catch(() => {});
   await refresh(results.filter((r) => r.status === 'ok').map((r) => ({ channel: r.channel, id: r.id })));
   return {

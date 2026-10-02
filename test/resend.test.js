@@ -334,3 +334,57 @@ test('nothing in the resend path reaches Mekari Jurnal', async () => {
     assert.ok(!branch.includes(forbidden), `jalur kirim ulang masih menyentuh ${forbidden}`);
   }
 });
+
+/* ------------------------------------------------------------- it has to ship */
+
+test('a resend enters as a parcel still to go out, not as a transaction already closed', () => {
+  const resend = buildResend(input());
+  // Every other typed-in source enters at 'completed' because the money is already earned
+  // and nothing is left to do. A resend is the opposite, and entered as done it was
+  // invisible to the two screens that exist to make sure a parcel actually leaves.
+  assert.equal(resend.stage, 'to_ship');
+});
+
+test('it appears on the worklist with the one move it needs, and leaves once made', async () => {
+  const { nextAction, pending } = await import('../src/fulfillment.js');
+  const { buildPicklist } = await import('../src/picklist.js');
+  const resend = buildResend(input());
+
+  assert.deepEqual(nextAction(resend, {}), { action: 'arrange_local', label: 'Atur pengiriman', needs: [] });
+  assert.equal(nextAction(resend, { [resend.id]: { at: 1 } }), null, 'sudah diatur, bukan tugas lagi');
+  assert.deepEqual(pending([resend], {}).map((r) => r.order.id), [resend.id]);
+
+  // And it is on the picklist, because somebody has to fetch the goods off a shelf.
+  const picklist = buildPicklist([resend]);
+  assert.ok(picklist.items.some((row) => row.sku === 'OMC-270-001'));
+  // Counted under its own channel rather than into a bucket that does not exist, which
+  // is what turned the tally into NaN.
+  assert.equal(picklist.items[0].byChannel.manual, 1);
+});
+
+test('a typed-in sale that never ships is not offered a courier', async () => {
+  const { nextAction } = await import('../src/fulfillment.js');
+  // A walk-in carries its goods out of the shop; offering to arrange one is offering
+  // nothing. Asked of the source, never guessed from whether an address was filled in.
+  assert.equal(nextAction({ channel: 'manual', id: 'DW-1', source: 'DW', stage: 'to_ship' }, {}), null);
+  assert.equal(nextAction({ channel: 'manual', id: 'CS-1', source: 'CS', stage: 'to_ship' }, {}), null);
+});
+
+test('arranging a typed-in parcel is recorded here, never sent to a platform', async () => {
+  const { massArrange } = await import('../src/fulfillment.js');
+  const resend = buildResend(input());
+  let marked = null;
+  let platformCalls = 0;
+
+  const out = await massArrange([resend], {
+    refresh: async () => {},
+    tiktok: { call: async () => { platformCalls += 1; return {}; } },
+    shopee: { call: async () => { platformCalls += 1; return {}; } },
+  }).catch((error) => ({ error: error.message }));
+
+  // A manual order used to fall into the TikTok bucket, which would have sent an order id
+  // that platform has never heard of.
+  assert.equal(platformCalls, 0);
+  assert.ok(!out.error, out.error);
+  assert.equal(out.succeeded, 1);
+});

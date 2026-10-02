@@ -9,7 +9,9 @@ const order = (channel, status, stage, extra = {}) => ({
 test('a Shopify order is arranged like any other, and the record of it lives here', () => {
   // Nothing is called for it, so nothing on Shopify's side could say it was handled.
   const waiting = order('shopify', 'PAID/UNFULFILLED', 'to_ship', { id: '#10926' });
-  assert.equal(nextAction(waiting).action, 'shopify_arrange');
+  // Not 'shopify_arrange' any more: a typed-in parcel takes the same route, and the name
+  // described the one channel rather than what the move is.
+  assert.equal(nextAction(waiting).action, 'arrange_local');
   assert.equal(nextAction(waiting).label, 'Atur pengiriman', 'kata kerjanya sama dengan kanal lain');
   assert.equal(nextAction(waiting, { '#10926': { at: 1 } }), null, 'sudah diproses, keluar dari antrean');
   assert.equal(nextAction(order('shopify', 'PAID/FULFILLED', 'completed')), null);

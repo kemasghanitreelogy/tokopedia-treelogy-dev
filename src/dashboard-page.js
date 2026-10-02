@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omn
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { labelReadiness, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
+import { labelReadiness, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
@@ -4353,8 +4353,17 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   }
 
   const wanted = showReprints ? ['needsPrint', 'reprint'] : ['needsPrint'];
+  /*
+   * A TikTok or Tokopedia parcel the courier has taken can no longer be printed - the
+   * platform refuses the document after pickup. It used to be left off the reprint list
+   * altogether, so searching for one printed on Tuesday answered "0 label", which reads as
+   * "never printed". It is listed now, in the run that printed it, without a checkbox and
+   * saying why. Only when our own ledger printed it: one printed in Seller Center has no
+   * run to sit in and nothing to find.
+   */
   const printable = assessed
-    .filter(({ readiness }) => wanted.includes(readiness.state) && !readiness.unavailable);
+    .filter(({ order, readiness }) => wanted.includes(readiness.state)
+      && (!readiness.unavailable || (showReprints && printedEntry(printed, order))));
   /*
    * Printing is capped server-side; ticking past it would hand the operator a button that
    * always errors.
@@ -4372,17 +4381,18 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   const READY_TONE = { needsPrint: 'ok', reprint: 'flag' };
 
   const labelRow = ({ order: o, readiness, entry = null }, batchKey = null, out = false) => {
-    // Everything listed is printable, so everything listed starts ticked - except a run
-    // the filter left out, which is only on the page so the search can reach it, and
-    // anything past what one print run accepts.
-    const on = !out && ticked < MAX_PRESELECT;
+    // Everything printable starts ticked - except a run the filter left out, which is
+    // only on the page so the search can reach it, and anything past what one print run
+    // accepts.
+    const gone = Boolean(readiness.unavailable);
+    const on = !gone && !out && ticked < MAX_PRESELECT;
     if (on) ticked += 1;
     // The stage pill is redundant here - every row on this page is printable by
     // definition, and the readiness note already says what matters.
     const times = Number(entry?.times ?? 0);
-    return `<tr data-id="${escape(String(o.id).toLowerCase())}"${out ? ' data-out="1" hidden' : ''}>
-      <td><input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${on ? ' checked' : ''}
-        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''}${out ? ' disabled' : ''} aria-label="Cetak label ${escape(o.id)}"></td>
+    return `<tr data-id="${escape(String(o.id).toLowerCase())}"${batchKey ? ` data-batch="${escape(batchKey)}"` : ''}${out ? ' data-out="1" hidden' : ''}>
+      <td>${gone ? '' : `<input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${on ? ' checked' : ''}
+        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''}${out ? ' disabled' : ''} aria-label="Cetak label ${escape(o.id)}">`}</td>
       <td>${channelTag(o)}</td>
       <td>
         <span class="mono nowrap">${escape(o.id)}</span>
@@ -4390,7 +4400,8 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
       </td>
       <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
       <td class="nowrap"><span class="${READY_TONE[readiness.state]}">${escape(readiness.note)}</span>${
-        times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}</td>
+        times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}${
+        gone ? '<br><span class="dim">label tidak bisa dicetak ulang setelah pickup</span>' : ''}</td>
     </tr>`;
   };
 
@@ -4640,6 +4651,8 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
   }
   function syncBatches() {
     batchPicks.forEach(function (b) {
+      // A run made only of parcels the courier has taken has nothing left to print.
+      b.disabled = rowsOf(b.getAttribute('data-batch')).length === 0;
       var mine = rowsOf(b.getAttribute('data-batch')).filter(function (p) { return !p.disabled; });
       var on = mine.filter(function (p) { return p.checked; }).length;
       b.checked = mine.length > 0 && on === mine.length;
@@ -4693,10 +4706,9 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
       // still claims three labels above two rows reads as a list with something missing.
       groups.forEach(function (group) {
         var key = group.getAttribute('data-grp');
-        var mine = rows.filter(function (row) {
-          var pick = row.querySelector('.pick');
-          return pick && pick.getAttribute('data-batch') === key;
-        });
+        // By the row, not its checkbox: a parcel the courier has taken has no checkbox
+        // and still belongs to its run.
+        var mine = rows.filter(function (row) { return row.getAttribute('data-batch') === key; });
         var left = mine.filter(function (row) { return !row.hidden; }).length;
         group.hidden = left === 0;
         var count = group.querySelector('.grp__n');

@@ -177,7 +177,7 @@ test('filtering to one day leaves that run grouped and drops the rest', () => {
   assert.doesNotMatch(html, /<tr class="grp" data-grp="[^"]*">(?:(?!<\/tr>)[\s\S])*<span class="grp__by">Vanya<\/span>/);
   assert.match(html, /1 batch &middot; 1 label <span class="dim">dari 2 batch<\/span>/);
   // Out of the filter means out of the print and out of the count on the button.
-  const outside = html.match(/<tr data-id="[^"]*" data-out="1" hidden>\s*<td><input class="pick"[^>]*>/g) ?? [];
+  const outside = html.match(/<tr data-id="[^"]*" data-batch="[^"]*" data-out="1" hidden>\s*<td><input class="pick"[^>]*>/g) ?? [];
   assert.equal(outside.length, 2, 'both of Vanya\'s parcels stay reachable by the search');
   for (const pick of outside) assert.match(pick, / disabled/);
   assert.match(html, /<span id="n">1<\/span> label/);
@@ -329,4 +329,20 @@ test('the unfiltered reprint list keeps every row but ticks no more than one pri
   assert.equal(picks.length, 130);
   assert.equal(picks.filter((p) => / checked/.test(p)).length, 100);
   assert.match(html, /<span id="n">100<\/span> label/);
+});
+
+test('a parcel the courier took is still found in its run, with no way to print it', () => {
+  // TikTok refuses the document after pickup, so it cannot be offered - but a search for it
+  // answering "0 label" read as "never printed".
+  const printed = { 'tokopedia:586GONE': { at: 1790300000, by: 'kemas@treelogy.com', batch: 'b1' } };
+  const html = page({
+    orders: [order('tokopedia', '586GONE', { status: 'DELIVERED' }), order('tokopedia', '586SELLERCENTER', { status: 'DELIVERED' })],
+    showReprints: true, printed, people: staff,
+  });
+  assert.match(html, /<tr data-id="586gone" data-batch="b1">/);
+  assert.match(html, /label tidak bisa dicetak ulang setelah pickup/);
+  assert.doesNotMatch(html, /value="tokopedia:586GONE"/);
+  // Printed outside the dashboard: no run to sit in, so not listed.
+  assert.doesNotMatch(html, /586sellercenter/);
+  assert.match(html, /<span id="n">0<\/span> label/);
 });

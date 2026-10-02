@@ -319,6 +319,88 @@ export function buildManualOrder(input) {
 
 
 /**
+ * A resend: the parcel that puts right a parcel we got wrong.
+ *
+ * Built on the same validator as every other typed-in transaction, with three differences
+ * that are the whole of what a resend is.
+ *
+ * The replacement goods are free. The customer paid for them once already, on the order
+ * this is attached to, so every line is forced to zero here rather than trusted from the
+ * form - a price typed into one of those boxes would be revenue counted twice, and the
+ * one place to make that impossible is the side that decides.
+ *
+ * The goods that went out wrongly are recorded too, at what they sell for, and they are
+ * required. They are not coming back - the house rule is that they stay with the customer -
+ * so they are the mistake's cost, and without them there is nothing to book and no way to
+ * ever answer what wrong parcels cost in a month.
+ *
+ * And it names the order it is putting right. A resend with nothing attached is a free
+ * parcel with no reason recorded, which is the one thing this must not be able to become.
+ *
+ * @param {{resendFor: {channel: string, id: string}, wrongLines: Array}} input
+ */
+export function buildResend(input) {
+  const source = String(input.source ?? '').trim().toUpperCase();
+  if (source !== 'RS') throw new InvoiceError(`sumber "${source}" bukan kirim ulang`);
+
+  const link = {
+    channel: String(input.resendFor?.channel ?? '').trim(),
+    id: String(input.resendFor?.id ?? '').trim(),
+  };
+  if (!link.channel || !link.id) throw new InvoiceError('kirim ulang harus menyebut pesanan yang salah kirim');
+  if (link.channel === 'manual' && link.id.startsWith('RS-')) {
+    throw new InvoiceError('kirim ulang tidak bisa menunjuk kirim ulang lain');
+  }
+
+  const wrongRows = (input.wrongLines ?? []).filter((l) => l && l.sku);
+  if (wrongRows.length === 0) throw new InvoiceError('sebutkan barang yang terlanjur salah kirim');
+
+  // The replacement never carries money. Zeroed here rather than refused, because an
+  // operator filling a price in is describing what the goods are worth, not asking to
+  // charge for them - and charging for them is simply not a thing this can do.
+  const order = buildManualOrder({
+    ...input,
+    lines: (input.lines ?? []).map((line) => ({ ...line, unitPrice: 0, unitDiscount: 0, discountMode: 'rp' })),
+    shipping: 0,
+  });
+
+  const wrong = wrongRows.map((line, index) => {
+    const product = findProduct(String(line.sku).trim());
+    if (!product) throw new InvoiceError(`SKU ${line.sku} tidak ada di data master`);
+    const qty = Number(line.qty);
+    if (!Number.isInteger(qty) || qty <= 0) throw new InvoiceError(`kuantitas barang salah kirim baris ${index + 1} tidak valid`);
+    const unitPrice = Number(line.unitPrice);
+    if (!Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isInteger(unitPrice)) {
+      throw new InvoiceError(`nilai barang salah kirim baris ${index + 1} tidak valid`);
+    }
+    return {
+      sku: product.sku,
+      name: product.variant ? `${product.name} - ${product.variant}` : product.name,
+      variant: product.variant ?? '',
+      qty,
+      unitPrice,
+      unitDiscount: 0,
+    };
+  });
+
+  const value = wrong.reduce((n, l) => n + l.unitPrice * l.qty, 0);
+  if (value <= 0) throw new InvoiceError('nilai barang salah kirim nol - tidak ada yang bisa dibukukan');
+
+  return {
+    ...order,
+    // Never revenue. The orders list adds this up, and a resend that counted would make a
+    // month of mistakes look like a month of trade.
+    total: 0,
+    resendFor: link,
+    finance: {
+      ...order.finance,
+      shipping: 0,
+      wrongGoods: { lines: wrong, value, date: channelDate(order.createdAt, 'manual') },
+    },
+  };
+}
+
+/**
  * What to tell the operator after a typed-in sale, and it is only ever what happened.
  *
  * `postManual` answers with five different things and the screen used to celebrate four

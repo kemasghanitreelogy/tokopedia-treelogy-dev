@@ -36,6 +36,15 @@ export const PREFIXES = {
   DP: { label: 'WhatsApp / direct sales', channel: null, ships: true },
   DW: { label: 'Walk-in', channel: null },
   WS: { label: 'Wholesale', channel: null },
+  /*
+   * Goods sent again because the first parcel held the wrong thing.
+   *
+   * Not a sale: the customer paid once, on the order this one is attached to, and that
+   * invoice already records it. What it does carry is a parcel to pack and a mistake to
+   * book - the goods that went out wrongly stay with the customer by house rule, so they
+   * are a loss and not a return.
+   */
+  RS: { label: 'Kirim ulang', channel: null, ships: true },
   // Shopify splits by how the buyer paid.
   WA: { label: 'Shopify via Xendit', channel: 'shopify' },
   WX: { label: 'Shopify Payments', channel: 'shopify' },
@@ -50,7 +59,16 @@ const BY_CHANNEL = { shopee: 'SP', tokopedia: 'TP', tiktok_shop: 'TT', shopify: 
  * push them, so they are typed in. They still become the same kind of invoice as an
  * online sale, which is the whole point: one set of books, not two.
  */
-export const MANUAL_SOURCES = ['CS', 'LB', 'DP', 'DW', 'WS'];
+export const MANUAL_SOURCES = ['CS', 'LB', 'DP', 'DW', 'WS', 'RS'];
+
+/**
+ * The ones that are a sale. RS is typed in like the rest and is not one of them: the
+ * customer paid on the order it is attached to, and a second invoice would count that
+ * once-paid sale twice. It is listed above because everything about entering it by hand
+ * is identical, and separated here because everything about billing it is not.
+ */
+export const SELLING_SOURCES = ['CS', 'LB', 'DP', 'DW', 'WS'];
+export const isSellingSource = (prefix) => SELLING_SOURCES.includes(prefix);
 
 export const isManualSource = (prefix) => MANUAL_SOURCES.includes(prefix);
 

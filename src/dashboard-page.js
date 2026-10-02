@@ -1431,12 +1431,20 @@ a.rv__product:hover{color:var(--accent)}
   transition:color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out)}
 .ln__x:hover{color:var(--bad); border-color:var(--bad)}
 .ln__x:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
+/* One column narrower than a sale line: a wrong parcel has no discount to give. */
+.ln--wrong,.lnh--wrong{grid-template-columns:minmax(0,1fr) 68px 116px 92px 36px}
+.rs__note{margin:.1rem 0 .9rem; max-width:58rem}
+.sum__r--wrong b{color:var(--warn)}
 .lnh{display:grid; grid-template-columns:minmax(0,1fr) 68px 116px 116px 92px 36px; gap:.4rem;
   font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); padding-bottom:.35rem;
   border-bottom:1px solid var(--line)}
 .lnh span:nth-child(n+2){text-align:right}
 @media (max-width:720px){
-  .lnh{display:none}
+  /* One column narrower than a sale line: a wrong parcel has no discount to give. */
+.ln--wrong,.lnh--wrong{grid-template-columns:minmax(0,1fr) 68px 116px 92px 36px}
+.rs__note{margin:.1rem 0 .9rem; max-width:58rem}
+.sum__r--wrong b{color:var(--warn)}
+.lnh{display:none}
   .ln{grid-template-columns:minmax(0,1fr) 36px; grid-auto-rows:auto; gap:.35rem;
     padding:.7rem 0; border-top:1px solid var(--line)}
   .ln select{grid-column:1}
@@ -3727,7 +3735,8 @@ export function renderManual({
               <div class="sum__r sum__r--wrong" data-wrong-row hidden><span>Nilai salah kirim</span><b data-sum-wrong>Rp0</b></div>
               <div class="sum__t"><span data-total-label>Total</span><b data-sum-total>Rp0</b></div>
               <input type="hidden" name="total" data-total-field value="0">
-              <button class="sum__go" type="submit" id="mxgo" disabled>${edit ? 'Simpan perubahan' : 'Simpan &amp; kirim ke Jurnal'}</button>
+              <button class="sum__go" type="submit" id="mxgo" data-sell="${edit ? 'Simpan perubahan' : 'Simpan &amp; kirim ke Jurnal'}"
+                disabled>${edit ? 'Simpan perubahan' : 'Simpan &amp; kirim ke Jurnal'}</button>
             </div>
           </aside>
         </div>
@@ -3834,6 +3843,49 @@ export function renderManual({
     // Absent while editing: the code is the invoice's identity in Jurnal and is shown
     // read-only, so there is nothing here to regenerate.
     if (codeIsOurs && codeField) codeField.value = suggest();
+  }
+
+  /** Every wrong-goods row that names a product and a value, in rupiah. */
+  function wrongTotal() {
+    if (!wlines) return 0;
+    var sum = 0;
+    Array.prototype.forEach.call(wlines.querySelectorAll('[data-wrong]'), function (row) {
+      var sku = row.querySelector('select').value;
+      var qty = num(row.querySelector('[name="wqty"]'));
+      var field = row.querySelector('[name="wunitPrice"]');
+      var rate = num(field);
+      var cell = row.querySelector('[data-wrong-total]');
+      if (!sku || qty <= 0 || field.value === '' || rate <= 0) { cell.textContent = '\\u2014'; return; }
+      cell.textContent = rupiah(rate * qty);
+      sum += rate * qty;
+    });
+    return sum;
+  }
+
+  /** At least one line that actually names something to put in the box. */
+  function hasReplacement() {
+    return Array.prototype.slice.call(lines.querySelectorAll('[data-row]'))
+      .some(function (row) { return row.querySelector('select').value && num(row.querySelector('[name="qty"]')) > 0; });
+  }
+
+  /*
+   * The form changes shape when the source does.
+   *
+   * A resend charges nobody, so the money rows say nothing useful and the one number worth
+   * watching is what the mistake cost. Hiding the price boxes on the replacement lines
+   * would be a lie of a different kind - the operator does want to see what they are
+   * sending is worth - so they stay, and the server is what makes them free.
+   */
+  function shape() {
+    if (!rsFields) return;
+    var on = resending();
+    rsFields.hidden = !on;
+    form.querySelector('[data-wrong-row]').hidden = !on;
+    form.querySelector('[data-total-label]').textContent = on ? 'Ditagih' : 'Total';
+    // "kirim ulang" never sends an invoice, and a button that says it does is the kind of
+    // small lie somebody eventually repeats to an accountant.
+    go.textContent = on ? 'Simpan kirim ulang' : go.dataset.sell;
+    if (linked) linked.required = on;
   }
 
   function total() {
@@ -4006,8 +4058,54 @@ export function renderManual({
       refreshCode();
     }
     if (e.target === dateField) refreshCode();
+    if (e.target.name === 'source') shape();
     total();
   });
+
+  if (wlines) {
+    var wTemplate = wlines.firstElementChild.cloneNode(true);
+    document.getElementById('addwln').addEventListener('click', function () {
+      var row = wTemplate.cloneNode(true);
+      row.querySelector('select').value = '';
+      row.querySelector('[name="wunitPrice"]').value = '';
+      row.querySelector('[name="wqty"]').value = '1';
+      row.querySelector('[data-wrong-total]').textContent = '\\u2014';
+      wlines.appendChild(row);
+      wireWrong(row);
+      row.querySelector('select').focus();
+      total();
+    });
+    Array.prototype.forEach.call(wlines.querySelectorAll('[data-wrong]'), wireWrong);
+  }
+
+  // The value of a wrong parcel is what the storefront sells it for, which the option
+  // already carries - so picking the product is enough and nobody has to look it up.
+  function wireWrong(row) {
+    row.querySelector('select').addEventListener('change', function (e) {
+      var option = e.target.options[e.target.selectedIndex];
+      var price = option ? Number(option.dataset.price) : 0;
+      row.querySelector('[name="wunitPrice"]').value = e.target.value ? String(price) : '';
+      total();
+    });
+    row.querySelector('[data-remove-wrong]').addEventListener('click', function () {
+      if (wlines.querySelectorAll('[data-wrong]').length === 1) {
+        row.querySelector('select').value = '';
+        row.querySelector('[name="wunitPrice"]').value = '';
+      } else {
+        row.remove();
+      }
+      total();
+    });
+    row.querySelectorAll('input[type="number"]').forEach(function (input) {
+      input.addEventListener('wheel', function (e) {
+        if (document.activeElement !== input) return;
+        e.preventDefault();
+        input.blur();
+      }, { passive: false });
+    });
+  }
+
+  shape();
 
   total();
 }());`,

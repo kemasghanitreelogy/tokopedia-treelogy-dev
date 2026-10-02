@@ -41,7 +41,10 @@ test('which sources are settled by the platform, named the way the business name
   const labels = (wanted) => [...new Set(entries.filter(([, s]) => s.autoPaid === wanted).map(([, s]) => s.label))].sort();
 
   assert.deepEqual(labels(true), ['Shopee', 'TikTok Shop', 'Tokopedia', 'Website']);
-  assert.deepEqual(labels(false), ['Consignment', 'La Brisa', 'Walk in', 'WhatsApp', 'Wholesale']);
+  // Kirim ulang is in neither sense a sale - nobody pays for it and nobody is chased for
+  // it - but it sits on the chased side because that is what "the platform did not take
+  // the money" means, and it never raises an invoice for anybody to read either way.
+  assert.deepEqual(labels(false), ['Consignment', 'Kirim ulang', 'La Brisa', 'Walk in', 'WhatsApp', 'Wholesale']);
 });
 
 test('money already taken and money still owed never share a receivable', () => {
@@ -73,7 +76,7 @@ test('the setup check knows about every tag this system will write', () => {
   // afterwards - a tag that depends on somebody remembering is right for a fortnight and
   // then silently is not. coa.js creates whatever is in this list before the first sweep;
   // a tag missing from it is one Jurnal has never heard of.
-  assert.deepEqual(TAGS, ['Consignment', 'La Brisa', 'Shopee', 'Tokopedia', 'Walk in', 'Website', 'Whatsapp', 'Wholesale']);
+  assert.deepEqual(TAGS, ['Consignment', 'Kirim ulang', 'La Brisa', 'Shopee', 'Tokopedia', 'Walk in', 'Website', 'Whatsapp', 'Wholesale']);
   for (const [prefix, source] of entries) {
     assert.ok(TAGS.includes(source.tag), `${prefix}: tag "${source.tag}" tidak pernah dibuat di Jurnal`);
     assert.equal(source.tag, source.tag.trim(), `${prefix}: tag berspasi tidak akan cocok dengan yang ada di Jurnal`);

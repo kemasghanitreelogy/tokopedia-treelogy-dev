@@ -49,6 +49,17 @@ export const SOURCES = {
   LB: { label: 'La Brisa', tag: 'La Brisa', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
   DP: { label: 'WhatsApp', tag: 'Whatsapp', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
   DW: { label: 'Walk in', tag: 'Walk in', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
+  /*
+   * A resend raises no invoice at all, so the receivable and the term below are never
+   * used by one. They are here because every typed-in source is read through this table -
+   * the form reads the term to draw a due date, prefix.js reads nothing else - and a
+   * source missing from it is a source that throws on the way in.
+   *
+   * What a resend does write to the books is a journal entry: the goods that went out by
+   * mistake, debited to Waste Goods Expense and credited out of Inventory. The tag is what
+   * makes that readable back as "what did wrong parcels cost us this month".
+   */
+  RS: { label: 'Kirim ulang', tag: 'Kirim ulang', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
 };
 
 /**

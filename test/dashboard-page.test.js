@@ -737,7 +737,7 @@ test('the form ships with a code, a date and one product row', () => {
 });
 
 test('the submit button starts disabled, because an empty form is not a sale', () => {
-  assert.match(manualPage(), /id="mxgo" disabled/);
+  assert.match(manualPage(), /id="mxgo"[^>]*\sdisabled/s);
 });
 
 test('the form says plainly when it cannot actually post yet', () => {

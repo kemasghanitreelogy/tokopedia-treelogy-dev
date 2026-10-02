@@ -25,6 +25,7 @@ import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
 import { amendManualInvoice } from '../src/mekari/amend.js';
+import { postWasteEntry } from '../src/mekari/resend.js';
 import { orderById, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
 /**
@@ -116,7 +117,7 @@ import { postingAccounts } from '../src/mekari/accounts.js';
  * it is not the bank.
  */
 const POOLED_LABEL = 'akun penampung per kanal';
-import { buildManualOrder, formatManualCode, encodeSequence, manualOutcome } from '../src/mekari/manual.js';
+import { buildManualOrder, buildResend, formatManualCode, encodeSequence, manualOutcome } from '../src/mekari/manual.js';
 import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
@@ -821,6 +822,88 @@ async function handleWrite(form, ip, user, csrf) {
         menu: 'jurnal', verb: 'sync', target: `${result.created} faktur`,
         summary: `Mengirim penjualan ke Jurnal: ${result.created} faktur dibuat, ${result.exists ?? 0} sudah ada, ${failed.length} bermasalah${later > 0 ? `, ${later} menunggu sapuan` : ''}`,
         changes: result.results.filter((r) => r.status !== 'exists').map((r) => ({ field: r.customId ?? r.id ?? '?', to: r.status, note: r.error ?? '' })),
+      },
+    };
+  }
+
+  if (action === 'manual_invoice' && String(form.get('source') ?? '').toUpperCase() === 'RS') {
+    if (!isMekariConfigured()) throw new Error('kredensial Mekari belum diisi');
+
+    /*
+     * A resend. Not a sale, so none of the invoice path below runs.
+     *
+     * The customer paid once, on the order this is attached to, and that invoice already
+     * records it. What the books are missing is the goods that went out wrongly and stay
+     * with the customer by house rule - one journal entry, debited to waste and credited
+     * out of inventory. Everything else about it is a parcel: it gets a label, a picklist
+     * line and a row in the order list at zero.
+     */
+    const fragment = String(form.get('resendFor') ?? '').trim();
+    const matches = await ordersMatchingId(fragment).catch(() => []);
+    const exact = matches.filter((o) => String(o.id).toLowerCase() === fragment.toLowerCase());
+    const found = exact.length > 0 ? exact : matches;
+    if (found.length === 0) throw new Error(`pesanan "${fragment}" tidak ditemukan - periksa order ID-nya`);
+    // Two orders sharing an id across channels is possible and rare; guessing which one a
+    // mistake belongs to is not something to do silently.
+    if (found.length > 1) {
+      throw new Error(`"${fragment}" cocok dengan ${found.length} pesanan (${found.map((o) => `${o.channel} ${o.id}`).join(', ')}) - tulis order ID lengkapnya`);
+    }
+    const wrongOrder = found[0];
+
+    const order = buildResend({
+      source: 'RS',
+      code: form.get('code'),
+      date: form.get('date'),
+      note: form.get('note'),
+      addedBy: user.name || user.email,
+      buyer: form.get('buyer') || wrongOrder.buyer,
+      buyerPhone: form.get('buyerPhone') || wrongOrder.buyerPhone,
+      buyerEmail: form.get('buyerEmail') || wrongOrder.buyerEmail,
+      shipTo: form.get('shipTo') || wrongOrder.shipTo,
+      carrier: form.get('carrier'),
+      resendFor: { channel: wrongOrder.channel, id: wrongOrder.id },
+      lines: form.getAll('sku').map((sku, index) => ({ sku, qty: Number(form.getAll('qty')[index]) })),
+      wrongLines: form.getAll('wsku').map((sku, index) => ({
+        sku,
+        qty: Number(form.getAll('wqty')[index]),
+        unitPrice: Number(form.getAll('wunitPrice')[index]),
+      })),
+    });
+
+    const ledger = await loadSyncLedger().catch(() => ({ orders: {} }));
+    if (manualCodes(ledger).includes(order.id)) {
+      throw new Error(`kode ${order.id} sudah dipakai transaksi lain; buka formulir lagi untuk kode baru`);
+    }
+    if (process.env.MEKARI_SYNC_LIVE !== '1') {
+      throw new Error(`${order.id} valid, nilai salah kirim ${order.finance.wrongGoods.value}, tapi MEKARI_SYNC_LIVE belum disetel`);
+    }
+
+    // The books first. A parcel listed as sent against a mistake nobody costed is the one
+    // outcome worth avoiding, and the entry is refused rather than doubled on a repeat.
+    const booked = await postWasteEntry(order, { dryRun: false });
+
+    const saved = await saveOrders([order], { source: 'resend' });
+    if (saved.rejected.length > 0) {
+      throw new Error(`beban sudah dibukukan (${booked.customId}) tapi daftar pesanan menolak: ${saved.rejected[0].error}`);
+    }
+
+    invalidate('orders');
+    invalidate('jurnal');
+    const value = order.finance.wrongGoods.value;
+    console.log(`dashboard: resend ${order.id} for ${wrongOrder.channel}/${wrongOrder.id} - waste ${value} (${booked.status})`);
+    return {
+      view: 'orders',
+      message: `${order.id} dibuat untuk ${wrongOrder.id} - Rp${value.toLocaleString('id-ID')} dibukukan sebagai beban barang rusak`,
+      celebrate: 'Kirim ulang tercatat',
+      audit: {
+        menu: 'jurnal', verb: 'add', target: `manual ${order.id}`,
+        summary: `Kirim ulang ${order.id} untuk ${wrongOrder.channel} ${wrongOrder.id} - beban barang rusak Rp${value.toLocaleString('id-ID')}`,
+        changes: [
+          { field: 'pesanan salah kirim', to: `${wrongOrder.channel} ${wrongOrder.id}` },
+          ...order.finance.wrongGoods.lines.map((l) => ({ field: `hilang ${l.sku}`, to: `${l.qty} × Rp${l.unitPrice.toLocaleString('id-ID')}` })),
+          ...order.finance.lines.map((l) => ({ field: `dikirim ulang ${l.sku}`, to: String(l.qty) })),
+          { field: 'jurnal beban', to: booked.status === 'created' ? booked.customId : `${booked.customId} (sudah ada)` },
+        ],
       },
     };
   }

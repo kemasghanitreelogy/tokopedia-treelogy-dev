@@ -1,6 +1,7 @@
 import { mekari } from './client.js';
 import { readDoc, writeDoc } from '../store/index.js';
 import { RECEIVABLE_NUMBERS, POOLING_NUMBERS, SHIPPING_ACCOUNT_NUMBER } from './sources.js';
+import { WASTE_ACCOUNT, INVENTORY_ACCOUNT } from './resend-accounts.js';
 
 /**
  * Account numbers to Jurnal's internal ids, looked up once and then remembered.
@@ -99,7 +100,10 @@ export async function accountMap({ force = false, deadlineAt = null, call } = {}
  * balance and are wrong - which is the failure that takes months to notice.
  */
 export async function requiredAccounts(options = {}) {
-  const wanted = [...RECEIVABLE_NUMBERS, ...POOLING_NUMBERS, SHIPPING_ACCOUNT_NUMBER];
+  // The two a resend names are in here for the same reason as the rest: an account found
+  // missing at setup is a line in a report, and one found missing at the moment somebody
+  // is trying to put a wrong parcel right is an outage in front of a customer.
+  const wanted = [...RECEIVABLE_NUMBERS, ...POOLING_NUMBERS, SHIPPING_ACCOUNT_NUMBER, WASTE_ACCOUNT, INVENTORY_ACCOUNT];
   let map = await accountMap(options);
   let missing = wanted.filter((n) => !map[n]);
   // An account created in Jurnal a minute ago is exactly the case a cache gets wrong, so

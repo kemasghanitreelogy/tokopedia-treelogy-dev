@@ -493,8 +493,10 @@ test('used codes are read back out of the ledger', () => {
   assert.deepEqual(manualCodes(ledger), ['CS-260911-001']);
 });
 
-test('the form is offered exactly the five offline sources and real SKUs', () => {
-  assert.deepEqual(SOURCE_OPTIONS.map((o) => o.prefix), ['CS', 'LB', 'DP', 'DW', 'WS']);
+test('the form is offered exactly the offline sources and real SKUs', () => {
+  // RS is last on purpose: it is the one that is not a sale, and the four before it are
+  // what somebody opening this form is almost always doing.
+  assert.deepEqual(SOURCE_OPTIONS.map((o) => o.prefix), ['CS', 'LB', 'DP', 'DW', 'WS', 'RS']);
   for (const option of SOURCE_OPTIONS) assert.equal(option.termDays, 7, option.prefix);
   assert.ok(SELLABLE.length > 0);
   for (const product of SELLABLE) assert.ok(findProductForTest(product.sku), product.sku);

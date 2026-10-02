@@ -193,6 +193,27 @@ export async function orderById(channel, id) {
 }
 
 /**
+ * Orders whose id contains a fragment, newest first.
+ *
+ * For the label search: somebody holding a parcel types part of its order number and
+ * expects to find it whatever state it is in, not only among the rows a worklist chose to
+ * show. The fragment is reduced to the characters an order id is made of before it goes
+ * anywhere near a PostgREST filter, and a short one is refused - "1" matches everything.
+ */
+export const ID_SEARCH_MIN = 4;
+export async function ordersMatchingId(fragment, { limit = 30, ...options } = {}) {
+  const needle = String(fragment ?? '').replace(/[^A-Za-z0-9-]/g, '');
+  if (needle.length < ID_SEARCH_MIN) return [];
+  const rows = await selectAll('orders', {
+    select: 'payload',
+    id: `ilike.*${needle}*`,
+    order: 'created_at.desc,channel.asc,id.asc',
+    limit,
+  }, { timeout: 8_000, retries: 1, ...options });
+  return rows.map((row) => row.payload).filter(Boolean).slice(0, limit);
+}
+
+/**
  * Many orders by id, in one round trip per channel.
  *
  * Printing a hundred labels used to mean asking the platforms for them, and for Shopify

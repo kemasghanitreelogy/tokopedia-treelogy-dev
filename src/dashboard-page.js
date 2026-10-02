@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omn
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { labelReadiness, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
+import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
@@ -255,6 +255,8 @@ const AWAITING_AWB = new Set(['to_ship', 'shipping']);
 const PRINTABLE = new Set(['to_ship', 'shipping']);
 /** Mirrors MAX_LABELS in api/labels.js; the button must not offer more than the server takes. */
 const MAX_PRESELECT = 100;
+/** Mirrors ID_SEARCH_MIN in db/orders.js: shorter than this, the server does not search. */
+const ID_SEARCH_MIN = 4;
 
 const idNumber = (n) => Number(n).toLocaleString('id-ID');
 
@@ -3560,6 +3562,51 @@ export function renderManual({
     </div>`;
   };
 
+  /*
+   * The half of a resend that no other source has.
+   *
+   * Rendered always and shown by the source radio, because choosing RS must not cost a
+   * page load - the operator is standing in front of a mistake and the whole form is
+   * already open.
+   *
+   * Two things live here. The order being put right, which a resend without is a free
+   * parcel with no reason recorded. And the goods that went out wrongly, priced, because
+   * they are not coming back and their value is the only thing this transaction owes the
+   * books. The replacement above is free whatever is typed into it; the server zeroes it.
+   */
+  const wrongRow = (index) => `
+    <div class="ln ln--wrong" data-wrong>
+      <span class="ln__prod">
+        <select name="wsku" aria-label="Barang salah kirim baris ${index + 1}">
+          <option value="">Pilih produk&hellip;</option>
+          ${productOptions}
+        </select>
+      </span>
+      <input type="number" name="wqty" value="1" min="1" step="1" inputmode="numeric" aria-label="Kuantitas salah kirim">
+      <input type="number" name="wunitPrice" value="" min="0" step="1" inputmode="numeric" placeholder="Nilai" aria-label="Nilai satuan">
+      <span class="ln__t" data-wrong-total>&mdash;</span>
+      <button class="ln__x" type="button" data-remove-wrong aria-label="Hapus baris ${index + 1}">&times;</button>
+    </div>`;
+
+  const resendFieldset = edit ? '' : `
+    <div class="fset" id="rsfields" hidden>
+      <h3 class="fset__h">Salah kirim</h3>
+      <div class="flds flds--one">
+        <div class="fld">
+          <label for="resendFor">Order ID yang salah kirim</label>
+          <input id="resendFor" name="resendFor" maxlength="64" autocomplete="off" spellcheck="false"
+                 placeholder="mis. 2609ABCDE atau #11143">
+          <span class="fld__hint">Dicari di seluruh pesanan, kanal apa pun. Nama dan alamat pelanggan ikut terisi dari sana.</span>
+        </div>
+      </div>
+      <p class="fld__hint rs__note">Barang di bawah ini yang terlanjur dikirim salah. Sesuai SOP tidak ditarik kembali - jadi
+        nilainya dibukukan ke Jurnal sebagai beban barang rusak, bukan sebagai penjualan. Yang di atas adalah penggantinya,
+        dan itu gratis.</p>
+      <div class="lnh lnh--wrong"><span>Produk</span><span>Qty</span><span>Nilai</span><span>Subtotal</span><span></span></div>
+      <div id="wlines">${wrongRow(0)}</div>
+      <button class="addln" type="button" id="addwln">+ Tambah baris</button>
+    </div>`;
+
   return shell({ user,
     csrf,
     title: edit ? `Ubah ${edit.id}` : 'Transaksi manual',
@@ -3655,6 +3702,8 @@ export function renderManual({
               <button class="addln" type="button" id="addln">+ Tambah baris</button>
             </div>
 
+            ${resendFieldset}
+
             <div class="fset">
               <h3 class="fset__h">Catatan</h3>
               <div class="fld">
@@ -3675,7 +3724,8 @@ export function renderManual({
               <div class="sum__r"><span>Ongkir</span><b data-sum-ship>Rp0</b></div>
               <div class="sum__r"><span>Termin</span><b data-sum-term>Net ${chosen.termDays}</b></div>
               <div class="sum__r"><span>Jatuh tempo</span><b data-sum-due>&mdash;</b></div>
-              <div class="sum__t"><span>Total</span><b data-sum-total>Rp0</b></div>
+              <div class="sum__r sum__r--wrong" data-wrong-row hidden><span>Nilai salah kirim</span><b data-sum-wrong>Rp0</b></div>
+              <div class="sum__t"><span data-total-label>Total</span><b data-sum-total>Rp0</b></div>
               <input type="hidden" name="total" data-total-field value="0">
               <button class="sum__go" type="submit" id="mxgo" disabled>${edit ? 'Simpan perubahan' : 'Simpan &amp; kirim ke Jurnal'}</button>
             </div>
@@ -3725,6 +3775,11 @@ export function renderManual({
   var dateField = form.querySelector('input[name="date"]');
   var shipField = form.querySelector('input[name="shipping"]');
   var go = document.getElementById('mxgo');
+  // Everything a resend adds. Absent while editing, which is why each use is guarded.
+  var rsFields = document.getElementById('rsfields');
+  var wlines = document.getElementById('wlines');
+  var linked = document.getElementById('resendFor');
+  var resending = function () { return source().value === 'RS'; };
   var existing = ${JSON.stringify(existingCodes)};
   // Thumbnails by SKU, so picking a product shows what it looks like - a check against
   // choosing the 90-gram powder when the slip says 180.
@@ -3822,7 +3877,21 @@ export function renderManual({
       due.textContent = '\\u2014';
     }
 
-    go.disabled = goods <= 0;
+    /*
+     * A resend has no total to be above zero, so it cannot be gated on one.
+     *
+     * What it needs instead is the three things that make it a resend at all: the order it
+     * is putting right, something to send, and something to book. Any one of them missing
+     * and the button stays down, because each produces a different kind of wrong record -
+     * a free parcel with no reason, an empty parcel, or a mistake nobody ever costed.
+     */
+    if (resending()) {
+      var wrongValue = wrongTotal();
+      form.querySelector('[data-sum-wrong]').textContent = rupiah(wrongValue);
+      go.disabled = !(hasReplacement() && wrongValue > 0 && linked.value.trim().length > 0);
+    } else {
+      go.disabled = goods <= 0;
+    }
     // The confirmation quotes what is actually about to be written - the house rule for
     // anything that writes - so it is rebuilt whenever the numbers change.
     form.dataset.confirm = editing
@@ -4334,6 +4403,58 @@ export function renderReviews({
 const loadTokopediaSlug = () => process.env.TOKOPEDIA_SHOP_SLUG || 'treelogy-moringa';
 const defaultMediaUrl = (id, size) => `/api/tokopedia/media?id=${encodeURIComponent(id)}&s=${size}`;
 
+const READY_TONE = { needsPrint: 'ok', reprint: 'flag' };
+
+/**
+ * One row of the label table.
+ *
+ * Shared by the list and by the search across every order, so a row found by searching
+ * looks, ticks and prints exactly like one that was already on the page. A row with no
+ * checkbox (`gone`) is one that cannot be printed, and `extra` says why underneath.
+ */
+function labelRowHtml({ order: o, readiness, entry = null }, { batchKey = null, out = false, on = true, gone = false, extra = '' } = {}) {
+  // The stage pill is redundant here - every row on this page is printable by
+  // definition, and the readiness note already says what matters.
+  const times = Number(entry?.times ?? 0);
+  const why = extra || (readiness.unavailable ? 'label tidak bisa dicetak ulang setelah pickup' : '');
+  return `<tr data-id="${escape(String(o.id).toLowerCase())}"${batchKey ? ` data-batch="${escape(batchKey)}"` : ''}${out ? ' data-out="1" hidden' : ''}>
+      <td>${gone ? '' : `<input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${on ? ' checked' : ''}
+        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''}${out ? ' disabled' : ''} aria-label="Cetak label ${escape(o.id)}">`}</td>
+      <td>${channelTag(o)}</td>
+      <td>
+        <span class="mono nowrap">${escape(o.id)}</span>
+        <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
+      </td>
+      <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
+      <td class="nowrap"><span class="${READY_TONE[readiness.state] ?? 'dim'}">${escape(readiness.note)}</span>${
+        times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}${
+        why ? `<br><span class="dim">${escape(why)}</span>` : ''}</td>
+    </tr>`;
+}
+
+/**
+ * Rows for an order-ID search across every order, not just the worklist.
+ *
+ * The list on screen is what is worth printing today; a search is somebody holding one
+ * parcel, and they want it found whatever state it is in. What can be fetched gets a
+ * ticked checkbox, everything else is listed without one and says why - and when it was
+ * last printed, by whom, which is usually the question.
+ */
+export function renderLabelLookup({ orders, printed = {}, arranged = {}, people = {} }) {
+  const personName = (email) => people[email] || String(email || '').split('@')[0] || 'tidak diketahui';
+  return orders.map((o) => {
+    const readiness = labelReadiness(o, printed, arranged);
+    const entry = printedEntry(printed, o);
+    const gone = !FETCHABLE.has(readiness.state) || Boolean(readiness.unavailable);
+    const when = entry?.at
+      ? `dicetak ${dateTime(entry.at, BENCH_CHANNEL)} ${printZoneLabel()}${entry.by ? ` oleh ${personName(entry.by)}` : ''}`
+      : '';
+    const why = [gone && readiness.unavailable ? 'label tidak bisa dicetak ulang setelah pickup' : '', when]
+      .filter(Boolean).join(' · ');
+    return labelRowHtml({ order: o, readiness, entry }, { on: !gone, gone, extra: why });
+  }).join('');
+}
+
 /**
  * Label view: pick the parcels to print, get one PDF sized for the thermal printer.
  *
@@ -4378,8 +4499,6 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
 
   let ticked = 0;
 
-  const READY_TONE = { needsPrint: 'ok', reprint: 'flag' };
-
   const labelRow = ({ order: o, readiness, entry = null }, batchKey = null, out = false) => {
     // Everything printable starts ticked - except a run the filter left out, which is
     // only on the page so the search can reach it, and anything past what one print run
@@ -4387,22 +4506,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     const gone = Boolean(readiness.unavailable);
     const on = !gone && !out && ticked < MAX_PRESELECT;
     if (on) ticked += 1;
-    // The stage pill is redundant here - every row on this page is printable by
-    // definition, and the readiness note already says what matters.
-    const times = Number(entry?.times ?? 0);
-    return `<tr data-id="${escape(String(o.id).toLowerCase())}"${batchKey ? ` data-batch="${escape(batchKey)}"` : ''}${out ? ' data-out="1" hidden' : ''}>
-      <td>${gone ? '' : `<input class="pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}"${on ? ' checked' : ''}
-        ${batchKey ? `data-batch="${escape(batchKey)}"` : ''}${out ? ' disabled' : ''} aria-label="Cetak label ${escape(o.id)}">`}</td>
-      <td>${channelTag(o)}</td>
-      <td>
-        <span class="mono nowrap">${escape(o.id)}</span>
-        <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
-      </td>
-      <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
-      <td class="nowrap"><span class="${READY_TONE[readiness.state]}">${escape(readiness.note)}</span>${
-        times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}${
-        gone ? '<br><span class="dim">label tidak bisa dicetak ulang setelah pickup</span>' : ''}</td>
-    </tr>`;
+    return labelRowHtml({ order: o, readiness, entry }, { batchKey, out, on, gone });
   };
 
   /*
@@ -4546,16 +4650,17 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
    * It filters as it is typed, and it takes the hidden rows out of the print with it:
    * pressing "Cetak" after a search prints what is on screen, not the hundred behind it.
    */
-  const search = (showReprints ? shownBatches.length > 0 : candidates.length > 0)
-    ? `<div class="filters lbs">
+  // Always there, even over an empty list: the order being looked for is usually not one
+  // the list holds.
+  const search = `<div class="filters lbs">
         <label class="dr__lbl" for="lbq">Cari order ID</label>
         <input class="dr__in lbs__in" type="search" id="lbq" autocomplete="off" spellcheck="false"
                placeholder="mis. 11143 atau 2609..." aria-label="Saring daftar berdasarkan order ID">
         <button class="chip" type="button" id="lbq-clear" hidden>Hapus pencarian</button>
         <span class="grow"></span>
         <span class="rpf__n" id="lbq-n" hidden></span>
-      </div>`
-    : '';
+      </div>`;
+  const empty = showReprints ? shownBatches.length === 0 : candidates.length === 0;
 
   return shell({ user,
     csrf,
@@ -4572,9 +4677,9 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         ${stat('Atur pengiriman', String(counts.arrange), counts.arrange > 0 ? 'flag' : '')}
         ${stat('Sudah jalan', String(counts.reprint))}
       </div>`,
-    body: (showReprints ? shownBatches.length === 0 : candidates.length === 0)
-      ? `${reprintFilters}
-         <p class="empty">${!showReprints
+    body: `${reprintFilters}
+        ${search}
+        ${empty ? `<div id="lb-empty"><p class="empty">${!showReprints
           ? 'Semua label sudah dicetak.'
           : filtering
             ? 'Tidak ada batch cetak yang cocok dengan filter ini.'
@@ -4582,10 +4687,8 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
          <div class="apply">${filtering
            ? '<a class="chip" href="?view=labels&reprint=1">Hapus filter</a>'
            : `<a class="chip" href="?view=labels&reprint=${showReprints ? '0' : '1'}">${
-              showReprints ? 'Kembali ke daftar harian' : 'Tampilkan cetak ulang'}</a>`}</div>`
-      : `${reprintFilters}
-        ${search}
-        <form method="post" action="/api/labels" target="_blank">
+              showReprints ? 'Kembali ke daftar harian' : 'Tampilkan cetak ulang'}</a>`}</div></div>` : ''}
+        <form method="post" action="/api/labels" target="_blank" id="lbform"${empty ? ' data-empty hidden' : ''}>
           <input type="hidden" name="csrf" value="${escape(csrf)}">
           <div class="filters">
             <label class="dr__lbl" for="size">Ukuran label</label>
@@ -4600,7 +4703,8 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
               <th><input type="checkbox" id="head" checked aria-label="Pilih semua"></th>
               <th>Kanal</th><th>Pesanan</th><th>Pembeli</th><th>Label</th>
             </tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody id="lb-rows">${rows}</tbody>
+            <tbody id="lbq-more"></tbody>
           </table></div>
           <div class="apply">
             <button type="submit" id="go">Cetak <span id="n">${ticked}</span> label</button>
@@ -4615,11 +4719,15 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         </form>`,
     script: `
 (function () {
-  var picks = Array.prototype.slice.call(document.querySelectorAll('.pick'));
+  var form = document.getElementById('lbform');
   var counter = document.getElementById('n');
   var head = document.getElementById('head');
   var toggle = document.getElementById('pickall');
-  if (!picks.length) return;
+  if (!form) return;
+  // Read again whenever a search adds rows: the found ones print like any other.
+  var picks = [];
+  function refresh() { picks = Array.prototype.slice.call(form.querySelectorAll('.pick')); }
+  refresh();
 
   // Only what a search has left on screen counts. A disabled row is not printed, so
   // counting it would promise a sheet that is not coming.
@@ -4632,7 +4740,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     // The server refuses a run past the cap, so the button says so before it is pressed.
     var go = document.getElementById('go');
     var over = document.getElementById('over');
-    if (go) go.disabled = n > ${MAX_PRESELECT};
+    if (go) go.disabled = n > ${MAX_PRESELECT} || n === 0;
     if (over) over.hidden = n <= ${MAX_PRESELECT};
     head.checked = live.length > 0 && n === live.length;
     head.indeterminate = n > 0 && n < live.length;
@@ -4645,7 +4753,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
 
   // One checkbox per print run, on its heading. Reprinting a whole batch is the reason
   // this list is open, and ticking forty rows by hand to do it is not a feature.
-  var batchPicks = Array.prototype.slice.call(document.querySelectorAll('.grp__pick'));
+  var batchPicks = Array.prototype.slice.call(form.querySelectorAll('.grp__pick'));
   function rowsOf(key) {
     return picks.filter(function (p) { return p.getAttribute('data-batch') === key; });
   }
@@ -4668,7 +4776,10 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     });
   });
 
-  picks.forEach(function (p) { p.addEventListener('change', function () { syncBatches(); sync(); }); });
+  // Delegated, so a row a search brings in later is counted without wiring it up.
+  form.addEventListener('change', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('pick')) { syncBatches(); sync(); }
+  });
   head.addEventListener('change', function () { setAll(head.checked); });
 
   /*
@@ -4678,18 +4789,79 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
    * control is not submitted. So "Cetak" after a search prints exactly what is on screen.
    * Disabling rather than unticking is what lets the whole selection come back untouched
    * when the box is cleared.
+   *
+   * The rows on the page are only the worklist. So a search of four characters or
+   * more also asks the server, which looks through every order whatever its state, and
+   * whatever it finds that is not already here is listed below under its own heading -
+   * printable ones ticked, the rest saying why not.
    */
   var box = document.getElementById('lbq');
   if (box) {
     var clear = document.getElementById('lbq-clear');
     var tally = document.getElementById('lbq-n');
-    var rows = Array.prototype.slice.call(document.querySelectorAll('tbody tr[data-id]'));
-    var groups = Array.prototype.slice.call(document.querySelectorAll('tbody tr.grp'));
+    var more = document.getElementById('lbq-more');
+    var emptyNote = document.getElementById('lb-empty');
+    var rows = Array.prototype.slice.call(form.querySelectorAll('#lb-rows tr[data-id]'));
+    var groups = Array.prototype.slice.call(form.querySelectorAll('#lb-rows tr.grp'));
+    var local = { shown: 0, outside: 0, inFilter: 0 };
+    var remote = { state: '', count: 0 };
+    var asked = 0;
+    var timer = null;
+
+    function report(needle) {
+      clear.hidden = !needle;
+      tally.hidden = !needle;
+      var text = local.shown + ' dari ' + local.inFilter + ' label'
+        + (local.outside ? ' · ' + local.outside + ' di luar filter' : '');
+      if (remote.state === 'busy') text += ' · mencari di semua pesanan…';
+      else if (remote.state === 'done') text += ' · ' + remote.count + ' lagi di semua pesanan';
+      else if (remote.state === 'failed') text += ' · pencarian ke semua pesanan gagal';
+      tally.textContent = text;
+      // A page with nothing to print keeps its table hidden until a search fills it.
+      if (form.hasAttribute('data-empty')) {
+        var any = Array.prototype.some.call(form.querySelectorAll('tbody tr[data-id]'), function (r) { return !r.hidden; });
+        form.hidden = !any;
+        if (emptyNote) emptyNote.hidden = Boolean(needle) && any;
+      }
+    }
+
+    function lookup(needle) {
+      var mine = ++asked;
+      remote = { state: 'busy', count: 0 };
+      report(needle);
+      fetch('?view=labels&lookup=' + encodeURIComponent(needle), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.json().then(function (body) { if (!r.ok) throw new Error(body.error || r.status); return body; }); })
+        .then(function (body) {
+          if (mine !== asked) return;
+          var holder = document.createElement('tbody');
+          holder.innerHTML = body.rows || '';
+          var here = {};
+          rows.forEach(function (row) { here[row.getAttribute('data-id')] = true; });
+          var found = Array.prototype.filter.call(holder.querySelectorAll('tr[data-id]'), function (row) {
+            return !here[row.getAttribute('data-id')];
+          });
+          more.innerHTML = '';
+          if (found.length) {
+            var title = document.createElement('tr');
+            title.className = 'grp';
+            title.innerHTML = '<td colspan="5"><span class="grp__t">Di semua pesanan</span>'
+              + '<span class="grp__n grp__n--batch">' + found.length + ' pesanan</span></td>';
+            more.appendChild(title);
+            found.forEach(function (row) { more.appendChild(row); });
+          }
+          remote = { state: 'done', count: found.length };
+          refresh(); syncBatches(); sync(); report(needle);
+        })
+        .catch(function () {
+          if (mine !== asked) return;
+          remote = { state: 'failed', count: 0 };
+          report(needle);
+        });
+    }
 
     function apply() {
       var needle = box.value.trim().toLowerCase();
-      var shown = 0;
-      var outside = 0;
+      local = { shown: 0, outside: 0, inFilter: 0 };
       rows.forEach(function (row) {
         // A run outside the date or printer filter only shows when the search finds
         // something in it; with the box empty the filter decides, as before.
@@ -4698,10 +4870,10 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         row.hidden = !hit;
         var pick = row.querySelector('.pick');
         if (pick) pick.disabled = !hit;
-        if (hit && out) outside += 1;
-        else if (hit) shown += 1;
+        if (!out) local.inFilter += 1;
+        if (hit && out) local.outside += 1;
+        else if (hit) local.shown += 1;
       });
-      var inFilter = rows.filter(function (row) { return !row.hasAttribute('data-out'); }).length;
       // A batch heading with nothing under it is a heading for nothing - and one that
       // still claims three labels above two rows reads as a list with something missing.
       groups.forEach(function (group) {
@@ -4719,17 +4891,20 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
             : count.dataset.full;
         }
       });
-      clear.hidden = !needle;
-      tally.hidden = !needle;
-      tally.textContent = shown + ' dari ' + inFilter + ' label'
-        + (outside ? ' \u00b7 ' + outside + ' di luar filter' : '');
-      syncBatches();
-      sync();
+
+      // The search across every order is one request per pause in typing, not per key,
+      // and a reply to a search that has since changed is dropped.
+      clearTimeout(timer);
+      asked += 1;
+      more.innerHTML = '';
+      remote = { state: '', count: 0 };
+      var bare = needle.replace(/[^a-z0-9-]/g, '');
+      if (bare.length >= ${ID_SEARCH_MIN}) timer = setTimeout(function () { lookup(bare); }, 350);
+      refresh(); syncBatches(); sync(); report(needle);
     }
 
-    box.addEventListener('keyup', apply);
-    // Typing is not the only way text gets in: the clear cross inside a search field and
-    // a paste both fire input and neither fires keyup.
+    // The clear cross inside a search field and a paste fire input and not keyup, and
+    // input covers typing too - one listener, so one search per change.
     box.addEventListener('input', apply);
     box.addEventListener('keydown', function (e) { if (e.key === 'Escape') { box.value = ''; apply(); } });
     clear.addEventListener('click', function () { box.value = ''; apply(); box.focus(); });

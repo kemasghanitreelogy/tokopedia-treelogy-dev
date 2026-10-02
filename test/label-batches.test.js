@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { printBatches, printBatchKey, printedEntry, printKey } from '../src/labels.js';
-import { renderLabels } from '../src/dashboard-page.js';
+import { renderLabels, renderLabelLookup } from '../src/dashboard-page.js';
 
 /**
  * The reprint list, read the way it was made.
@@ -296,7 +296,12 @@ test('a search over the print list filters as it is typed, and takes hidden rows
   assert.match(html, /id="lbq"[^>]*type="search"|type="search"[^>]*id="lbq"/);
   assert.ok(!/id="lbq"[^>]*\sname=/.test(html), 'kotak cari tidak ikut terkirim ke mana pun');
 
-  assert.match(script, /box\.addEventListener\('keyup', apply\)/);
+  // input alone: keyup as well would send every keystroke's search to the server twice.
+  assert.match(script, /box\.addEventListener\('input', apply\)/);
+  assert.doesNotMatch(script, /addEventListener\('keyup'/);
+  // Past the rows on the page, the search asks the server about every order.
+  assert.match(script, /\?view=labels&lookup=/);
+  assert.match(html, /<tbody id="lbq-more"><\/tbody>/);
   // A hidden row is disabled, and a disabled control is not submitted - so "Cetak" after
   // a search prints what is on screen.
   assert.match(script, /pick\.disabled = !hit/);
@@ -345,4 +350,33 @@ test('a parcel the courier took is still found in its run, with no way to print 
   // Printed outside the dashboard: no run to sit in, so not listed.
   assert.doesNotMatch(html, /586sellercenter/);
   assert.match(html, /<span id="n">0<\/span> label/);
+});
+
+test('a search across every order lists them all, printable or not, and says which', () => {
+  const html = renderLabelLookup({
+    orders: [
+      order('shopee', '2609SHIP', { status: 'SHIPPED' }),
+      order('tokopedia', '5863GONE', { status: 'DELIVERED' }),
+      order('tokopedia', '5863WAIT', { status: 'AWAITING_SHIPMENT' }),
+    ],
+    printed: { 'tokopedia:5863GONE': { at: 1790300000, by: 'ika@treelogy.com', batch: 'b1' } },
+    people: { 'ika@treelogy.com': 'Ika' },
+  });
+  // Shopee still issues a waybill after pickup: found, and ticked to print.
+  assert.match(html, /value="shopee:2609SHIP" checked/);
+  // Tokopedia does not: listed, no checkbox, and when it was printed and by whom.
+  assert.match(html, /<tr data-id="5863gone">/);
+  assert.doesNotMatch(html, /value="tokopedia:5863GONE"/);
+  assert.match(html, /label tidak bisa dicetak ulang setelah pickup · dicetak [^<]* oleh Ika/);
+  // Not arranged yet: listed with the reason, nothing to print.
+  assert.match(html, /<tr data-id="5863wait">/);
+  assert.doesNotMatch(html, /value="tokopedia:5863WAIT"/);
+  assert.match(html, /atur pengiriman dulu di Seller Center/);
+});
+
+test('an empty list still offers the search, with the table waiting for its results', () => {
+  const html = page({ orders: [], showReprints: false, printed: {} });
+  assert.match(html, /id="lbq"/);
+  assert.match(html, /<form method="post" action="\/api\/labels" target="_blank" id="lbform" data-empty hidden>/);
+  assert.match(html, /Semua label sudah dicetak/);
 });

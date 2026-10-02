@@ -2,7 +2,7 @@ import { collectOrders, summarize } from '../src/omni.js';
 import { loadOrders, loadOutstanding, rememberOrders } from '../src/orders-source.js';
 import { isSupabaseConfigured } from '../src/db/client.js';
 import { saveOrders } from '../src/db/orders.js';
-import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderExpressLog, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
+import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderLabelLookup, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderExpressLog, renderLogin, dashboardError, VALID_VIEWS } from '../src/dashboard-page.js';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
 import { can, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
@@ -25,7 +25,7 @@ import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
 import { amendManualInvoice } from '../src/mekari/amend.js';
-import { orderById } from '../src/db/orders.js';
+import { orderById, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
 /**
  * Which typed-in sources can be corrected in place rather than deleted and re-entered.
@@ -1409,6 +1409,37 @@ export default async function handler(req, res) {
     // One entry per range for every menu: the picklist and the ledger used to ask for a
     // copy without tracking numbers and paid for a second database read to get it. The
     // worklists ignore the range entirely and read by stage instead.
+    /*
+     * The label search, asked of every order rather than the worklist.
+     *
+     * Answered before the worklist is read: it needs none of it, and somebody typing an
+     * order number should not wait on three platforms to be told about one row. Rows come
+     * back as markup from the same function the list uses, so the page only inserts them.
+     */
+    if (view === 'labels' && url.searchParams.has('lookup')) {
+      const fragment = String(url.searchParams.get('lookup') ?? '').slice(0, 64);
+      const json = (status, body) => send(status, JSON.stringify(body), { 'Content-Type': 'application/json; charset=utf-8' });
+      if (fragment.replace(/[^A-Za-z0-9-]/g, '').length < ID_SEARCH_MIN) {
+        json(200, { rows: '', count: 0, min: ID_SEARCH_MIN });
+        return;
+      }
+      try {
+        const [found, printed, arrangedNow, roster] = await Promise.all([
+          ordersMatchingId(fragment),
+          printedLabels().catch(() => ({})),
+          arrangedOrders().catch(() => ({})),
+          listUsers().catch(() => []),
+        ]);
+        const people = Object.fromEntries(roster.map((u) => [u.email, u.name]));
+        console.log(`dashboard/labels lookup: ${found.length} match(es)`);
+        json(200, { rows: renderLabelLookup({ orders: found, printed, arranged: arrangedNow, people }), count: found.length });
+      } catch (error) {
+        console.error('dashboard/labels lookup failed:', error.message);
+        json(502, { error: 'Pencarian ke database gagal, coba lagi sebentar.' });
+      }
+      return;
+    }
+
     const started = Date.now();
     let data = OUTSTANDING_VIEWS.has(view) ? await outstandingOrders() : await ordersFor(range);
     const took = () => `${Date.now() - started}ms`;

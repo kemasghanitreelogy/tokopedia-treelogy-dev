@@ -56,15 +56,15 @@ test('money already taken and money still owed never share a receivable', () => 
   for (const number of settled) {
     assert.ok(!chased.has(number), `akun ${number} dipakai untuk dua perlakuan sekaligus`);
   }
-  assert.deepEqual([...settled].sort(), ['1503', '1504', '1505']);
-  assert.deepEqual([...chased].sort(), ['1501', '1502']);
+  assert.deepEqual([...settled].sort(), ['15.00.03', '15.00.04', '15.00.05']);
+  assert.deepEqual([...chased].sort(), ['15.00.01', '15.00.02']);
 });
 
 test('the setup check knows about every account this system will book into', () => {
   // accounts.js verifies exactly this list exists in Jurnal before anything is posted. An
   // account missing from it is an account nobody checks, and the first invoice that needs
   // it fails as an unexplained 422 in the middle of a sweep.
-  assert.deepEqual(RECEIVABLE_NUMBERS, ['1501', '1502', '1503', '1504', '1505']);
+  assert.deepEqual(RECEIVABLE_NUMBERS, ['15.00.01', '15.00.02', '15.00.03', '15.00.04', '15.00.05']);
   assert.equal(RECEIVABLE_NUMBERS.length, new Set(RECEIVABLE_NUMBERS).size, 'tidak boleh ada yang dobel');
   for (const [prefix, source] of entries) {
     assert.ok(RECEIVABLE_NUMBERS.includes(source.receivable), `${prefix}: akun ${source.receivable} tidak diperiksa saat setup`);
@@ -101,7 +101,7 @@ test('the three Shopify prefixes are one source wearing three names', () => {
   // and not about the shop. If they ever pointed at different receivables, the web shop's
   // balance would depend on gateway detection - which is a guess, and falls back to SHF.
   for (const prefix of ['SHF', 'WA', 'WX']) {
-    assert.equal(SOURCES[prefix].receivable, '1505', prefix);
+    assert.equal(SOURCES[prefix].receivable, '15.00.05', prefix);
     assert.equal(SOURCES[prefix].tag, 'Website', prefix);
     assert.equal(SOURCES[prefix].termDays, 14, prefix);
     assert.equal(SOURCES[prefix].autoPaid, true, prefix);
@@ -123,7 +123,7 @@ test('an order nobody can classify is still booked, and always the same way', ()
   for (const order of [{ channel: 'lazada' }, { channel: '' }, {}, { channel: null }]) {
     assert.equal(sourceOf(order), SOURCES.SHF, JSON.stringify(order));
     assert.equal(tagFor(order), 'Website');
-    assert.equal(receivableFor(order), '1505');
+    assert.equal(receivableFor(order), '15.00.05');
     assert.equal(termDaysFor(order), 14);
     assert.equal(isAutoPaid(order), true);
   }
@@ -152,11 +152,11 @@ test('each channel settles into its own pooling account, and TikTok shares Tokop
     channel, id, stage: 'to_ship', createdAt: 1_757_500_000,
     finance: { lines: [{ sku: 'OMO-30-001', name: 'Moringa Seed Oil 30ml', qty: 1, unitPrice: 100_000, unitDiscount: 0 }], shipping: 0 },
   });
-  assert.equal(poolingFor(sale('shopee', '2609140FJEFCSW')), '1111');
-  assert.equal(poolingFor(sale('tokopedia', '585859894801303056')), '1112');
-  assert.equal(poolingFor(sale('tiktok_shop', '577000000000000000')), '1112',
+  assert.equal(poolingFor(sale('shopee', '2609140FJEFCSW')), '11.00.11');
+  assert.equal(poolingFor(sale('tokopedia', '585859894801303056')), '11.00.12');
+  assert.equal(poolingFor(sale('tiktok_shop', '577000000000000000')), '11.00.12',
     'TikTok Shop settles through the same entity as Tokopedia, by decision');
-  assert.equal(poolingFor(sale('shopify', '10899')), '1113');
+  assert.equal(poolingFor(sale('shopify', '10899')), '11.00.13');
 });
 
 test('a source somebody has to chase has no pooling account at all', () => {

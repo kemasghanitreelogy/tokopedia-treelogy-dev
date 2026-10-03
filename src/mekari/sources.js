@@ -25,30 +25,48 @@ import { PREFIXES, orderPrefix } from './prefix.js';
  * @property {string|null} pooling  where that settlement lands until the platform pays out
  */
 
+/*
+ * The numbers below are the ones Jurnal holds today, and "today" is load-bearing.
+ *
+ * They were flat - 1501, 1111 - until the whole chart was renumbered to a dotted form on
+ * 3 Oct 2026. The accounts never moved: 15.00.01 is still id 112363381, the same Accounts
+ * Receivable - Consignment it always was. But every write resolves its account through
+ * this table by number, so while the two disagreed the dashboard refused with "akun 1111,
+ * 1112, 1113 tidak ada di Jurnal" and no manual transaction could be saved at all.
+ *
+ *   1501 -> 15.00.01  Accounts Receivable - Consignment
+ *   1502 -> 15.00.02  Accounts Receivable (A/R) - General Consumer
+ *   1503 -> 15.00.03  Accounts Receivable (A/R) - Shopee
+ *   1504 -> 15.00.04  Accounts Receivable (A/R) - Tokopedia
+ *   1505 -> 15.00.05  Accounts Receivable (A/R) - Website
+ *   1111 -> 11.00.11  Pooling Account for Shopee
+ *   1112 -> 11.00.12  Pooling Account for Tokopedia
+ *   1113 -> 11.00.13  Pooling Account for Website
+ */
 /** @type {Record<string, Source>} */
 export const SOURCES = {
   // Marketplaces and the web shop collect the money themselves, so the invoice is raised
   // and settled in the same breath - leaving them open would overstate receivables by the
   // whole of every month's online turnover.
-  SP: { label: 'Shopee', tag: 'Shopee', receivable: '1503', termDays: 14, autoPaid: true, pooling: '1111' },
-  TP: { label: 'Tokopedia', tag: 'Tokopedia', receivable: '1504', termDays: 14, autoPaid: true, pooling: '1112' },
+  SP: { label: 'Shopee', tag: 'Shopee', receivable: '15.00.03', termDays: 14, autoPaid: true, pooling: '11.00.11' },
+  TP: { label: 'Tokopedia', tag: 'Tokopedia', receivable: '15.00.04', termDays: 14, autoPaid: true, pooling: '11.00.12' },
   // TikTok Shop settles through the same account as Tokopedia: one API, one entity, one
   // receivable. The tag says Tokopedia too, by the same decision.
-  TT: { label: 'TikTok Shop', tag: 'Tokopedia', receivable: '1504', termDays: 14, autoPaid: true, pooling: '1112' },
-  SHF: { label: 'Website', tag: 'Website', receivable: '1505', termDays: 14, autoPaid: true, pooling: '1113' },
-  WA: { label: 'Website', tag: 'Website', receivable: '1505', termDays: 14, autoPaid: true, pooling: '1113' },
-  WX: { label: 'Website', tag: 'Website', receivable: '1505', termDays: 14, autoPaid: true, pooling: '1113' },
+  TT: { label: 'TikTok Shop', tag: 'Tokopedia', receivable: '15.00.04', termDays: 14, autoPaid: true, pooling: '11.00.12' },
+  SHF: { label: 'Website', tag: 'Website', receivable: '15.00.05', termDays: 14, autoPaid: true, pooling: '11.00.13' },
+  WA: { label: 'Website', tag: 'Website', receivable: '15.00.05', termDays: 14, autoPaid: true, pooling: '11.00.13' },
+  WX: { label: 'Website', tag: 'Website', receivable: '15.00.05', termDays: 14, autoPaid: true, pooling: '11.00.13' },
 
   // Everything below is invoiced and then chased. The money arrives later, by transfer or
   // in person, so the invoice stays open until somebody records the payment - and the term
   // is a week, not a fortnight, because these are the ones that need chasing.
-  CS: { label: 'Consignment', tag: 'Consignment', receivable: '1501', termDays: 7, autoPaid: false, pooling: null },
+  CS: { label: 'Consignment', tag: 'Consignment', receivable: '15.00.01', termDays: 7, autoPaid: false, pooling: null },
   // Wholesale shares consignment's receivable by decision, not by accident: both are trade
   // buyers settling on terms, and the business wants one number for them.
-  WS: { label: 'Wholesale', tag: 'Wholesale', receivable: '1501', termDays: 7, autoPaid: false, pooling: null },
-  LB: { label: 'La Brisa', tag: 'La Brisa', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
-  DP: { label: 'WhatsApp', tag: 'Whatsapp', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
-  DW: { label: 'Walk in', tag: 'Walk in', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
+  WS: { label: 'Wholesale', tag: 'Wholesale', receivable: '15.00.01', termDays: 7, autoPaid: false, pooling: null },
+  LB: { label: 'La Brisa', tag: 'La Brisa', receivable: '15.00.02', termDays: 7, autoPaid: false, pooling: null },
+  DP: { label: 'WhatsApp', tag: 'Whatsapp', receivable: '15.00.02', termDays: 7, autoPaid: false, pooling: null },
+  DW: { label: 'Walk in', tag: 'Walk in', receivable: '15.00.02', termDays: 7, autoPaid: false, pooling: null },
   /*
    * A resend raises no invoice at all, so the receivable and the term below are never
    * used by one. They are here because every typed-in source is read through this table -
@@ -59,7 +77,7 @@ export const SOURCES = {
    * mistake, debited to Waste Goods Expense and credited out of Inventory. The tag is what
    * makes that readable back as "what did wrong parcels cost us this month".
    */
-  RS: { label: 'Kirim ulang', tag: 'Kirim ulang', receivable: '1502', termDays: 7, autoPaid: false, pooling: null },
+  RS: { label: 'Kirim ulang', tag: 'Kirim ulang', receivable: '15.00.02', termDays: 7, autoPaid: false, pooling: null },
 };
 
 /**

@@ -9,9 +9,9 @@ import { jurnalDate } from '../src/mekari/invoice.js';
 const AT = Date.parse('2026-09-13T16:30:00Z') / 1000;
 
 const CHART = {
-  1111: { id: 11, number: '1111', name: 'Pooling Account for Shopee' },
-  1112: { id: 12, number: '1112', name: 'Pooling Account for Tokopedia' },
-  1113: { id: 13, number: '1113', name: 'Pooling Account for Website' },
+  '11.00.11': { id: 11, number: '11.00.11', name: 'Pooling Account for Shopee' },
+  '11.00.12': { id: 12, number: '11.00.12', name: 'Pooling Account for Tokopedia' },
+  '11.00.13': { id: 13, number: '11.00.13', name: 'Pooling Account for Website' },
 };
 
 const order = (over = {}) => ({

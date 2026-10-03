@@ -16,9 +16,9 @@ import { postable, postOrder, POSTABLE_STAGES } from '../src/mekari/sync.js';
  * is the whole reason the deposit stopped being a single environment variable.
  */
 const CHART = {
-  1111: { id: 11, number: '1111', name: 'Pooling Account for Shopee' },
-  1112: { id: 12, number: '1112', name: 'Pooling Account for Tokopedia' },
-  1113: { id: 13, number: '1113', name: 'Pooling Account for Website' },
+  '11.00.11': { id: 11, number: '11.00.11', name: 'Pooling Account for Shopee' },
+  '11.00.12': { id: 12, number: '11.00.12', name: 'Pooling Account for Tokopedia' },
+  '11.00.13': { id: 13, number: '11.00.13', name: 'Pooling Account for Website' },
 };
 
 const order = (over = {}) => ({
@@ -269,24 +269,25 @@ test('every source names a receivable and a tag, and no prefix falls through', (
   // wholesale sale ends up in the wrong account and balances anyway.
   assert.deepEqual(uncoveredPrefixes(), []);
   for (const [prefix, source] of Object.entries(SOURCES)) {
-    assert.match(source.receivable, /^1(50[1-5])$/, prefix);
+    // Dotted since the chart was renumbered on 3 Oct 2026; the accounts never moved.
+    assert.match(source.receivable, /^15\.00\.0[1-5]$/, prefix);
     assert.ok(source.tag, `${prefix} tanpa tag`);
     assert.ok(PREFIXES[prefix]?.label, `${prefix} tanpa arti`);
   }
 });
 
 test('the receivable follows the source the business asked for', () => {
-  assert.equal(receivableFor({ channel: 'shopee' }), '1503');
-  assert.equal(receivableFor({ channel: 'tokopedia' }), '1504');
+  assert.equal(receivableFor({ channel: 'shopee' }), '15.00.03');
+  assert.equal(receivableFor({ channel: 'tokopedia' }), '15.00.04');
   // TikTok Shop settles through Tokopedia's receivable and carries its tag: one API, one
   // entity, one number.
-  assert.equal(receivableFor({ channel: 'tiktok_shop' }), '1504');
+  assert.equal(receivableFor({ channel: 'tiktok_shop' }), '15.00.04');
   assert.equal(tagFor({ channel: 'tiktok_shop' }), 'Tokopedia');
-  assert.equal(receivableFor({ channel: 'shopify' }), '1505');
+  assert.equal(receivableFor({ channel: 'shopify' }), '15.00.05');
   // Wholesale and consignment share one receivable by decision, not by accident.
   assert.equal(SOURCES.WS.receivable, SOURCES.CS.receivable);
   // WhatsApp, La Brisa and a walk-in are all the general consumer.
-  for (const prefix of ['DP', 'LB', 'DW']) assert.equal(SOURCES[prefix].receivable, '1502', prefix);
+  for (const prefix of ['DP', 'LB', 'DW']) assert.equal(SOURCES[prefix].receivable, '15.00.02', prefix);
 });
 
 test('due date is the transaction date plus the term, in WIB', () => {
@@ -1268,8 +1269,8 @@ test('a short customer list refuses to move anybody, before the first PATCH', as
   // get back, so a half-done move costs the books, not a re-run.
   const { alignReceivables, PartialCustomerListError } = await import('../src/mekari/receivables.js');
   const customers = Array.from({ length: 499 }, (_, i) => ({ id: i + 1, display_name: `Pembeli ${i}`, default_ar_account: { number: '1100', name: 'General' } }));
-  const accounts = [{ id: 77, number: '1503', name: 'Piutang Shopee' }];
-  const wanted = new Map([['Pembeli 0', '1503']]);
+  const accounts = [{ id: 77, number: '15.00.03', name: 'Piutang Shopee' }];
+  const wanted = new Map([['Pembeli 0', '15.00.03']]);
 
   const patched = [];
   const call = async ({ path, method }) => {

@@ -9,7 +9,7 @@ const item = (over = {}) => ({
   date: '15/09/2026',
   was: '1104 BCA',
   to: 'Pooling Account for Shopee',
-  toNumber: '1111',
+  toNumber: '11.00.11',
   amount: 1_225_000,
   person: 'ronisyah1',
   method: null,

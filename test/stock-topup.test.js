@@ -52,6 +52,16 @@ test('Shopify is topped up too, by variant, so an outside copy cannot drag the o
   );
 });
 
+test('Shopify variants sharing a SKU are each topped up from their own count', () => {
+  // OMC-90-001 is the capsules product and a variant of the protocol: two inventory
+  // items, 98 and 102. Treating that as a conflict left the 98 to run down untouched.
+  const plan = planTopup(catalog([{ sku: 'OMC-90-001', shopify: { qty: 98, conflict: true, rows: [
+    { qty: 98, variantId: 'v1' }, { qty: 102, variantId: 'v2' },
+  ] } }]));
+  assert.deepEqual(plan.changes.map((c) => [c.ref.variantId, c.from, c.to]), [['v1', 98, 198]]);
+  assert.deepEqual(plan.skipped, []);
+});
+
 test('a channel that disagrees with itself is skipped and said out loud', () => {
   // Several live listings reporting different quantities: picking one to write to is a
   // guess, and a guess landing on the wrong listing is worse than one saying "habis".

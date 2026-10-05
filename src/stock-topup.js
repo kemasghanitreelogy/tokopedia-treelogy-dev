@@ -25,7 +25,10 @@ import { findProduct } from './master.js';
  *
  *   A SKU whose channel reports a conflict, meaning several live listings disagree about
  *   the quantity. Picking one to write to is a guess, and a guess that lands on the wrong
- *   listing is worse than a listing that says "habis".
+ *   listing is worse than a listing that says "habis". Shopify is the exception: a SKU
+ *   there sits on several products (the capsules on their own and inside a protocol),
+ *   each variant its own inventory item with its own count, so disagreeing is normal and
+ *   each variant is topped up from its own number.
  *
  *   A SKU already at or above the floor, obviously; and one whose quantity the channel
  *   did not report at all, since "unknown" is not "low".
@@ -47,10 +50,11 @@ export const ADD = 100;
 /**
  * Nothing sane needs more than this in one run.
  *
- * Twenty-nine SKUs across two channels is fifty-eight writes at the absolute maximum, and
- * a run wanting more than this has misread the catalogue rather than found a crisis.
+ * Twenty-six SKUs on two marketplaces plus about thirty-five Shopify variants is under
+ * ninety writes at the absolute maximum, and a run wanting more than this has misread the
+ * catalogue rather than found a crisis.
  */
-export const MAX_WRITES = 40;
+export const MAX_WRITES = 90;
 
 const refFor = (channel, row) => {
   if (channel === 'tiktok') return { productId: row.productId, skuId: row.skuId, warehouseId: row.warehouseId };
@@ -74,7 +78,7 @@ export function planTopup(catalog, { floor = FLOOR, add = ADD, max = MAX_WRITES 
       const bucket = entry[channel];
       if (!bucket) continue; // not listed live here - never create a listing
 
-      if (bucket.conflict) {
+      if (bucket.conflict && channel !== 'shopify') {
         skipped.push({ sku: entry.sku, channel, reason: 'beberapa listing hidup tidak sepakat jumlahnya' });
         continue;
       }
@@ -163,7 +167,7 @@ export function wouldDropBelow(catalog, order, { floor = FLOOR, margin = 5 } = {
 
     for (const channel of TOPUP_CHANNELS) {
       const bucket = entry[channel];
-      if (!bucket || bucket.conflict) continue;
+      if (!bucket || (bucket.conflict && channel !== 'shopify')) continue;
       for (const current of bucket.rows ?? []) {
         const from = numberOrNull(current.qty);
         if (from === null) continue;

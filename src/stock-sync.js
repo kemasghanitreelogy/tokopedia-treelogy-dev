@@ -24,12 +24,11 @@ export const CHANNEL_LABEL = {
 };
 
 /**
- * Channels the planner may write to.
+ * Channels the ledger planner may write to.
  *
- * Shopify is read-only for now: its stock lives in inventory levels tied to locations,
- * so writing it needs inventorySetQuantities and a location id rather than a number on
- * the variant. Including it before that is built would produce a plan that silently
- * fails on a third of its rows.
+ * Shopify is left out here: its writer adds a delta at one location rather than setting
+ * a target, which is what the top-up needs and not what planSync means. The top-up
+ * names its own channels in stock-topup.js.
  */
 export const WRITABLE_CHANNELS = ['tiktok', 'shopee'];
 
@@ -153,6 +152,7 @@ import { loadConfig } from './config.js';
 import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
 import { writeDoc } from './store/index.js';
+import { adjustVariantStock } from './shopify/inventory.js';
 
 /**
  * A hard stop for anything that would change a live listing.
@@ -190,6 +190,16 @@ async function writeTikTok(config, row) {
       }],
     },
   });
+}
+
+/**
+ * Shopify takes a delta rather than a target, because its stock sits per location and
+ * the writer reads that location's own figure. Only the top-up sends Shopify rows, and
+ * its rows are always "add this much".
+ */
+async function writeShopify(row) {
+  assertWritable(`stok ${row.sku} di Shopify`);
+  await adjustVariantStock({ variantId: row.ref.variantId, delta: row.delta });
 }
 
 async function writeShopee(config, auth, row) {
@@ -288,6 +298,7 @@ export async function applySync(plan, { dryRun = true, blobToken } = {}) {
   for (const row of rows) {
     try {
       if (row.channel === 'tiktok') await writeTikTok(tiktokConfig, row);
+      else if (row.channel === 'shopify') await writeShopify(row);
       else await writeShopee(shopee.config, shopee.auth, row);
       results.push({ ...row, status: 'ok' });
     } catch (error) {

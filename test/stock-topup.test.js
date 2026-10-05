@@ -41,11 +41,15 @@ test('each channel is topped up from its own number', () => {
   assert.deepEqual(plan.changes.map((c) => [c.channel, c.to]), [['tiktok', 110], ['shopee', 180]]);
 });
 
-test('Shopify is never written, because writing it is not built', () => {
-  // Its stock lives in inventory levels tied to a location, so a plan including it would
-  // silently fail a third of itself.
-  const plan = planTopup(catalog([{ sku: 'S', shopify: { qty: 5, rows: [{ qty: 5 }], conflict: false } }]));
-  assert.deepEqual(plan.changes, []);
+test('Shopify is topped up too, by variant, so an outside copy cannot drag the others down', () => {
+  // Something copies one channel's figure onto the rest after each sale; leaving Shopify
+  // at 2 while the marketplaces read 102 lasted exactly until the next order.
+  const plan = planTopup(catalog([{ sku: 'S', shopify: { qty: 5, rows: [{ qty: 5, variantId: 'gid://shopify/ProductVariant/1' }], conflict: false } }]));
+  assert.equal(plan.changes.length, 1);
+  assert.deepEqual(
+    { channel: plan.changes[0].channel, from: plan.changes[0].from, delta: plan.changes[0].delta, ref: plan.changes[0].ref },
+    { channel: 'shopify', from: 5, delta: 100, ref: { variantId: 'gid://shopify/ProductVariant/1' } },
+  );
 });
 
 test('a channel that disagrees with itself is skipped and said out loud', () => {

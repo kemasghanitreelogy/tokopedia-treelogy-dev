@@ -20,8 +20,8 @@ import { findProduct } from './master.js';
  *
  * What it will not touch, even here:
  *
- *   Shopify, because writing its stock needs inventorySetQuantities against a location
- *   id and that is not built - a plan including it would silently fail a third of itself.
+ *   A Shopify variant stocked at more than one location; the writer refuses it rather
+ *   than guess which shelf the hundred belongs on (src/shopify/inventory.js).
  *
  *   A SKU whose channel reports a conflict, meaning several live listings disagree about
  *   the quantity. Picking one to write to is a guess, and a guess that lands on the wrong
@@ -30,6 +30,15 @@ import { findProduct } from './master.js';
  *   A SKU already at or above the floor, obviously; and one whose quantity the channel
  *   did not report at all, since "unknown" is not "low".
  */
+
+/**
+ * Shopify as well as the marketplaces.
+ *
+ * Something outside this system copies one channel's number onto the others after every
+ * sale. Topping up only the marketplaces left Shopify at 2 while they showed 102, and the
+ * next copy dragged them back down; every channel has to clear the floor for it to hold.
+ */
+export const TOPUP_CHANNELS = [...WRITABLE_CHANNELS, 'shopify'];
 
 /** Below this, a listing is close enough to stopping that it needs more. */
 export const FLOOR = 100;
@@ -43,6 +52,12 @@ export const ADD = 100;
  */
 export const MAX_WRITES = 40;
 
+const refFor = (channel, row) => {
+  if (channel === 'tiktok') return { productId: row.productId, skuId: row.skuId, warehouseId: row.warehouseId };
+  if (channel === 'shopify') return { variantId: row.variantId };
+  return { itemId: row.itemId, modelId: row.modelId };
+};
+
 /**
  * @param {{skus: Array}} catalog  from readCatalog()
  * @param {{floor?: number, add?: number, max?: number}} options
@@ -55,7 +70,7 @@ export function planTopup(catalog, { floor = FLOOR, add = ADD, max = MAX_WRITES 
   const skipped = [];
 
   for (const entry of catalog?.skus ?? []) {
-    for (const channel of WRITABLE_CHANNELS) {
+    for (const channel of TOPUP_CHANNELS) {
       const bucket = entry[channel];
       if (!bucket) continue; // not listed live here - never create a listing
 
@@ -86,9 +101,7 @@ export function planTopup(catalog, { floor = FLOOR, add = ADD, max = MAX_WRITES 
           from,
           to: from + add,
           delta: add,
-          ref: channel === 'tiktok'
-            ? { productId: current.productId, skuId: current.skuId, warehouseId: current.warehouseId }
-            : { itemId: current.itemId, modelId: current.modelId },
+          ref: refFor(channel, current),
           reason: `di bawah ${floor}`,
         });
       }
@@ -148,7 +161,7 @@ export function wouldDropBelow(catalog, order, { floor = FLOOR, margin = 5 } = {
     const qty = sold.get(master) ?? sold.get(entry.sku) ?? 0;
     if (qty <= 0) continue;
 
-    for (const channel of WRITABLE_CHANNELS) {
+    for (const channel of TOPUP_CHANNELS) {
       const bucket = entry[channel];
       if (!bucket || bucket.conflict) continue;
       for (const current of bucket.rows ?? []) {

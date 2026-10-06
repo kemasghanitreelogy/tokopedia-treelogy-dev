@@ -80,7 +80,10 @@ export const PRODUCTS = [
   // costs the buyer nothing (ten Shopee invoices from 18 to 25 September were refused for
   // want of that line). One bottle, one card: Tokopedia's Mystery Gift and Shopee's
   // Oil-3ml carried the same 195 in stock.
-  { sku: 'Mystery-Gift', name: 'Mystery Gift', variant: 'Moringa Seed Oil 3 ml', category: 'gift', gift: true, aliases: ['GFT-MYST-001', 'Mystery Gift', 'Oil-3ml'] },
+  // Named for what it is. "Mystery Gift" is kept as an alias for the listings and old
+  // orders that still say it; one name, no variant, so the stock tab does not fold the
+  // free 3 ml into the 30 and 60 ml it sells.
+  { sku: 'Mystery-Gift', name: 'Moringa Seed Oil 3 ml', category: 'gift', gift: true, aliases: ['GFT-MYST-001', 'Mystery Gift', 'Oil-3ml'] },
 
   // --- Bundle: a recipe, so availability can be derived from the parts
   /*

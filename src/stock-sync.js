@@ -193,13 +193,15 @@ async function writeTikTok(config, row) {
 }
 
 /**
- * Shopify takes a delta rather than a target, because its stock sits per location and
- * the writer reads that location's own figure. Only the top-up sends Shopify rows, and
- * its rows are always "add this much".
+ * Shopify's stock sits per location, so the writer reads that location's own figure and
+ * moves it. A row marked `target` (the stock follower's) means "make it this"; any other
+ * means "add this much", which is what the old top-up planned.
  */
 async function writeShopify(row) {
   assertWritable(`stok ${row.sku} di Shopify`);
-  await adjustVariantStock({ variantId: row.ref.variantId, delta: row.delta });
+  await adjustVariantStock(row.target
+    ? { variantId: row.ref.variantId, target: row.to }
+    : { variantId: row.ref.variantId, delta: row.delta });
 }
 
 async function writeShopee(config, auth, row) {

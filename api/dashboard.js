@@ -103,6 +103,7 @@ import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
+import { followAfterOrder } from '../src/stock-watch.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
@@ -984,6 +985,9 @@ async function handleWrite(form, ip, user, csrf) {
     }
     invalidate('jurnal');
     console.log(`dashboard: manual_invoice ${order.id} -> ${result.status}`);
+    // A sale typed in here is goods off the same shelf as a marketplace order, so it comes
+    // off every channel the same way. Not awaited: the operator is waiting for the page.
+    void followAfterOrder(order);
 
     // The order list and the invoice printer both read the orders table, and nothing else
     // will ever put a typed-in sale there. The sale is in Jurnal either way - that is the

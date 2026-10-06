@@ -11,7 +11,7 @@ import { signRequest } from './sign.js';
 import { collectOrders, summarize, CHANNELS, STAGES } from './omni.js';
 import { backfill } from './db/backfill.js';
 import { verifyAgainstPlatforms } from './db/verify.js';
-import { readCoverage, dbStats, DB_HISTORY_START } from './db/orders.js';
+import { readCoverage, dbStats, DB_HISTORY_START, ordersInRange } from './db/orders.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { activeSources, rememberOrders, loadOrders } from './orders-source.js';
 import { resolveRange, wibDate } from './range.js';
@@ -22,7 +22,8 @@ import { planSync, applySync, describePlan } from './stock-sync.js';
 import { runSync, loadSyncLedger } from './mekari/sync.js';
 import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './mekari/retry.js';
 import { auditRecent } from './mekari/audit.js';
-import { planTopup, describeTopup, FLOOR, ADD } from './stock-topup.js';
+import { seedMissing, applyOrders, topUpMaster, planFollow } from './stock-follow.js';
+import { followStock } from './stock-watch.js';
 import { recordSample, loadHistory, drops } from './stock-history.js';
 import { raiseAlert } from './alerts.js';
 import { backendName } from './store/index.js';
@@ -349,73 +350,73 @@ async function cmdStockApply(config, args = []) {
 }
 
 /**
- * Put stock back on any listing that has drifted under the floor.
+ * Keep every channel on the master figure - the half-hourly run of the stock follower.
+ *
+ * The same follower an order runs the moment it arrives (src/stock-watch.js), here over a
+ * week of stored orders rather than one, and over every listing rather than an order's.
+ * The orders are the backstop for a push that never came: an order already counted is
+ * recognised and skipped, so reading the week again costs nothing but the read. The
+ * listings are the backstop for anything that moved a figure by hand.
  *
  * The figure on a Treelogy listing is a display number rather than a count of jars, which
- * is the fact that makes this safe to do without a person - and it was confirmed before
- * this was built, because on the other reading it would be selling goods that do not
- * exist. See src/stock-topup.js for what it still refuses to touch.
+ * is what makes writing it without a person safe - confirmed before the top-up was built.
  *
- * Dry run unless --yes, like every other write here. The timer passes --yes; a person
- * running it by hand sees the plan first.
+ * Dry run unless --yes, like every other write here. The timer passes --yes.
  */
 async function cmdStockTopup(config, args = []) {
-  const floor = Number(args.find((a) => a.startsWith('--floor='))?.slice('--floor='.length)) || FLOOR;
-  const add = Number(args.find((a) => a.startsWith('--add='))?.slice('--add='.length)) || ADD;
-
+  const now = Date.now();
   const catalog = await readCatalog();
   const channelErrors = Object.entries(catalog.errors ?? {});
   if (channelErrors.length > 0) {
-    // A channel that would not answer reads as "no listings" and therefore as "nothing is
-    // low", which is the one way this could quietly stop doing its job.
+    // A channel that would not answer reads as "no listings" and therefore as nothing to
+    // correct, which is the one way this could quietly stop doing its job.
     for (const [channel, message] of channelErrors) console.log(`  ${warn(`${channel} tidak terbaca: ${message}`)}`);
     console.log(`  ${fail('katalog tidak lengkap - tidak menulis apa pun')}\n`);
     return 1;
   }
 
   // Written down before anything is decided, so a fall found later can be pinned to a
-  // half hour rather than to a day. It costs no marketplace call: this is the reading
-  // the plan is about to be built from.
+  // half hour rather than to a day. It costs no marketplace call.
   await recordSample(catalog, { note: 'sebelum tulis' });
 
-  const plan = planTopup(catalog, { floor, add });
-  console.log(`\n  ambang ${floor}, tambah ${add}  ·  ${catalog.skus.length} sku ditelusuri`);
-  for (const s2 of plan.skipped) console.log(`  ${warn(`lewati ${s2.sku} ${s2.channel}: ${s2.reason}`)}`);
-  if (plan.overflow > 0) console.log(`  ${warn(`${plan.overflow} listing lain juga di bawah ambang - dibatasi, sisanya run berikutnya`)}`);
-
-  if (plan.changes.length === 0) {
-    console.log(`  ${ok('tidak ada listing di bawah ambang')}\n`);
-    return 0;
-  }
-
-  console.log('');
-  for (const c of plan.changes) {
-    console.log(`    ${c.sku.padEnd(24)} ${c.channel.padEnd(7)} ${String(c.from).padStart(5)} -> ${c.to}`);
-  }
+  const since = Math.floor(now / 1000) - 7 * 86400;
+  const orders = await ordersInRange({ since, until: Math.floor(now / 1000) }).catch((error) => {
+    console.log(`  ${warn(`pesanan tidak terbaca dari database (${error.message}) - hanya menyamakan listing`)}`);
+    return [];
+  });
 
   if (!args.includes('--yes')) {
+    const seeded = seedMissing((await loadLedger().catch(() => null)) ?? emptyLedger(), catalog, { now });
+    const counted = applyOrders(seeded.ledger, orders, { now });
+    const topped = topUpMaster(counted.ledger, { now });
+    const plan = planFollow(catalog, topped.ledger);
+    console.log(`\n  ${catalog.skus.length} sku · ${orders.length} pesanan 7 hari · ${counted.applied.length} belum terhitung · ${seeded.seeded.length} stok induk baru`);
+    for (const r of topped.raised) console.log(`    isi ulang ${r.sku.padEnd(28)} ${r.from} -> ${r.to}`);
+    for (const c of plan.changes) console.log(`    ${c.sku.padEnd(28)} ${c.channel.padEnd(7)} ${String(c.from).padStart(5)} -> ${c.to}`);
     console.log(`\n  ${warn('belum ditulis. Ulangi dengan --yes untuk menulis ke marketplace')}\n`);
     return 0;
   }
 
-  const result = await applySync(plan, { dryRun: false });
-  console.log('');
-  for (const r of result.results) {
+  const result = await followStock({ orders, only: 'all', read: async () => catalog, now });
+  if (result.reason) { console.log(`  ${fail(result.reason)}\n`); return 1; }
+  console.log(`\n  ${catalog.skus.length} sku · ${orders.length} pesanan 7 hari · ${result.applied} baru terhitung · ${result.seeded.length} stok induk baru`);
+  for (const r of result.raised) console.log(`  ${ok(`isi ulang ${r.sku} ${r.from} -> ${r.to}`)}`);
+  for (const r of result.results ?? []) {
     const line = `${r.sku.padEnd(24)} ${r.channel.padEnd(7)} ${r.from} -> ${r.to}`;
     console.log(r.status === 'ok' ? ok(line) : fail(`${line}  ${r.error ?? ''}`));
   }
-  console.log(`\n  ${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted}\n`);
+  console.log(`\n  ${result.written} ditulis, ${result.failed} gagal\n`);
 
   // And again from what we believe we just wrote. Without a reading either side, our own
-  // top-up looks exactly like the thing being hunted.
-  await recordSample({ skus: catalog.skus.map((e) => applied(e, result.results)) }, { note: 'sesudah tulis' });
+  // write looks exactly like the thing being hunted.
+  await recordSample({ skus: catalog.skus.map((e) => applied(e, result.results ?? [])) }, { note: 'sesudah tulis' });
 
   if (result.failed > 0) {
-    // Only failures. A top-up that worked is the system doing its job, and an alert
-    // channel that carries good news is one people mute.
+    // Only failures. A sync that worked is the system doing its job, and an alert channel
+    // that carries good news is one people mute.
     await sendTelegram(
-      `<b>⚠️ Isi ulang stok gagal sebagian</b>\n${result.failed} dari ${result.attempted} listing tidak bisa ditulis.\n` +
-      result.results.filter((r) => r.status === 'failed').slice(0, 6)
+      `<b>⚠️ Sinkron stok gagal sebagian</b>\n${result.failed} listing tidak bisa ditulis.\n` +
+      (result.results ?? []).filter((r) => r.status === 'failed').slice(0, 6)
         .map((r) => `• <code>${r.sku}</code> ${r.channel}: ${String(r.error ?? '').slice(0, 120)}`).join('\n'),
       { key: `topup-failed|${new Date().toISOString().slice(0, 13)}` },
     ).catch(() => {});

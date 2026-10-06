@@ -1,6 +1,5 @@
 import { WRITABLE_CHANNELS } from './stock-sync.js';
 import { numberOrNull } from './numbers.js';
-import { findProduct } from './master.js';
 
 /**
  * Keeping a listing from showing "habis", one SKU at a time.
@@ -124,59 +123,6 @@ export function planTopup(catalog, { floor = FLOOR, add = ADD, max = MAX_WRITES 
     add,
     plannedAt: Date.now(),
   };
-}
-
-/**
- * How much of each SKU an order takes off the shelf, in the catalogue's own spelling.
- *
- * A channel spells a SKU its own way - MRS-002 on Shopee is MRS-002+45 on Tokopedia - so
- * the master catalogue is what reconciles them. A line whose SKU maps to nothing is
- * counted under its own name, because an unmappable SKU is still stock leaving.
- */
-export function soldBySku(order) {
-  const sold = new Map();
-  for (const line of order?.lines ?? []) {
-    const key = findProduct(line.sku)?.sku ?? String(line.sku ?? '').trim();
-    if (!key) continue;
-    sold.set(key, (sold.get(key) ?? 0) + (numberOrNull(line.qty) ?? 0));
-  }
-  return sold;
-}
-
-/**
- * Would this order push a listing under the floor?
- *
- * Answered from the catalogue already in hand rather than by asking the channels, which
- * is the whole point: a read costs two seconds and several marketplace calls, and on a
- * normal order the answer is no. Only when the projection says yes is a real read worth
- * making - and the top-up that follows decides from the fresh figures, not from these.
- *
- * `margin` is for the cached figure being a minute old and for the orders that landed
- * inside that minute. Triggering early costs one catalogue read; triggering late costs a
- * listing that says "habis".
- */
-export function wouldDropBelow(catalog, order, { floor = FLOOR, margin = 5 } = {}) {
-  const sold = soldBySku(order);
-  if (sold.size === 0) return [];
-
-  const at = [];
-  for (const entry of catalog?.skus ?? []) {
-    const master = findProduct(entry.sku)?.sku ?? entry.sku;
-    const qty = sold.get(master) ?? sold.get(entry.sku) ?? 0;
-    if (qty <= 0) continue;
-
-    for (const channel of TOPUP_CHANNELS) {
-      const bucket = entry[channel];
-      if (!bucket || (bucket.conflict && channel !== 'shopify')) continue;
-      for (const current of bucket.rows ?? []) {
-        const from = numberOrNull(current.qty);
-        if (from === null) continue;
-        const projected = from - qty;
-        if (projected < floor + margin) at.push({ sku: entry.sku, channel, from, projected });
-      }
-    }
-  }
-  return at;
 }
 
 /** One line for a log or a message; the same sentence the audit record carries. */

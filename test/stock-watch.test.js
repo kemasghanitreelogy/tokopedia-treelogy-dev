@@ -1,112 +1,148 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { soldBySku, wouldDropBelow } from '../src/stock-topup.js';
-import { topUpAfterOrder, resetStockWatch } from '../src/stock-watch.js';
-import { invalidate } from '../src/cache.js';
+import { linesOf, seedMissing, applyOrders, topUpMaster, planFollow } from '../src/stock-follow.js';
+import { followStock, followAfterOrder, resetStockWatch } from '../src/stock-watch.js';
 
 /**
- * Topping a listing up the moment an order takes it under.
+ * One number per product on every channel, and an order anywhere moves it everywhere.
  *
- * The half-hourly timer is the backstop, not the answer: a listing that sells its last
- * few inside that window shows "habis" to everybody who looks, which is the one thing
- * the top-up exists to prevent. What moves stock is an order, so the check hangs off the
- * push - and the projection is what keeps that from costing a catalogue read each time.
+ * Jubelio did this until it was unlinked on 5 Oct 2026; without it a Shopee sale lowered
+ * Shopee and nothing else. These are the cases where getting it wrong costs real stock:
+ * an order counted twice, a cancellation never put back, history counted on top of a
+ * seed that already reflects it.
  */
 
-const line = (sku, qty) => ({ sku, qty });
-const tiktok = (qty) => ({ qty, rows: [{ qty, productId: 'p', skuId: 's', warehouseId: 'w' }], conflict: false });
+const row = (qty, over = {}) => ({ qty, ...over });
+const bucket = (...rows) => ({ qty: Math.min(...rows.map((r) => r.qty)), rows, conflict: new Set(rows.map((r) => r.qty)).size > 1 });
+const tt = (qty) => bucket(row(qty, { productId: 'p', skuId: 's', warehouseId: 'w' }));
+const sp = (qty) => bucket(row(qty, { itemId: 1, modelId: 2 }));
 const catalog = (skus) => ({ skus, errors: {} });
+const T0 = 1_791_000_000;
+const order = (id, stage, lines, createdAt = T0 + 60, channel = 'shopee') => ({ id, channel, stage, createdAt, lines: lines.map(([sku, qty]) => ({ sku, qty })) });
+const seeded = (qty) => ({ skus: { 'OMC-90-001': { qty } }, applied: {}, follow_started_at: T0 });
 
-test('what left the shelf is counted in the catalogue’s own spelling', () => {
-  // Shopee calls it OMC-90, Tokopedia calls it OMC90, the master reconciles both.
-  const sold = soldBySku({ lines: [line('OMC-90', 2), line('OMC90', 3), line('OMP-45-001', 1)] });
-  assert.equal(sold.get('OMC-90-001'), 5);
-  assert.equal(sold.get('OMP-45-001'), 1);
+test('an order comes off the master once, however many times it is pushed', () => {
+  // Shopee pushes the same order on every status change; each push re-reads it.
+  const sale = order('A', 'to_ship', [['OMC-90-001', 2]]);
+  let { ledger } = applyOrders(seeded(150), [sale]);
+  ({ ledger } = applyOrders(ledger, [{ ...sale, stage: 'shipping' }, { ...sale, stage: 'completed' }]));
+  assert.equal(ledger.skus['OMC-90-001'].qty, 148);
 });
 
-test('a SKU the master has never heard of is still stock leaving', () => {
-  const sold = soldBySku({ lines: [line('SOMETHING-NEW', 4)] });
-  assert.equal(sold.get('SOMETHING-NEW'), 4);
+test('every spelling of a SKU is the same jar', () => {
+  // TikTok drops the -001; a free capsule consumes the same stock as a sold one.
+  assert.deepEqual(linesOf({ lines: [{ sku: 'OMC90', qty: 1 }, { sku: 'OMC-90-001', qty: 2 }, { sku: 'FREE-OMC-90-001', qty: 1 }] }), { 'OMC-90-001': 4 });
+  assert.deepEqual(linesOf({ lines: [{ sku: 'TIDAK-ADA', qty: 3 }] }), {}, 'SKU di luar master tidak menyentuh apa pun');
 });
 
-test('an ordinary order is answered without asking any channel', () => {
-  // The whole point: a subtraction is free, and on a normal order the answer is no.
-  const at = wouldDropBelow(catalog([{ sku: 'OMC-90-001', tiktok: tiktok(223) }]), { lines: [line('OMC-90-001', 2)] });
-  assert.deepEqual(at, []);
+test('a cancellation puts the lines back, once', () => {
+  let { ledger } = applyOrders(seeded(150), [order('A', 'unpaid', [['OMC-90-001', 3]])]);
+  assert.equal(ledger.skus['OMC-90-001'].qty, 147);
+  ({ ledger } = applyOrders(ledger, [order('A', 'cancelled', [['OMC-90-001', 3]])]));
+  ({ ledger } = applyOrders(ledger, [order('A', 'cancelled', [['OMC-90-001', 3]])]));
+  assert.equal(ledger.skus['OMC-90-001'].qty, 150);
 });
 
-test('an order that takes a listing under the floor is flagged', () => {
-  const at = wouldDropBelow(catalog([{ sku: 'OMC-90-001', tiktok: tiktok(101) }]), { lines: [line('OMC-90-001', 3)] });
-  assert.deepEqual(at.map((a) => [a.sku, a.from, a.projected]), [['OMC-90-001', 101, 98]]);
+test('an order already cancelled when first seen takes nothing and returns nothing', () => {
+  const { ledger, touched } = applyOrders(seeded(150), [order('A', 'cancelled', [['OMC-90-001', 3]])]);
+  assert.equal(ledger.skus['OMC-90-001'].qty, 150);
+  assert.equal(touched.size, 0);
 });
 
-test('it triggers slightly early, because the cached figure is a minute old', () => {
-  // Landing exactly on the floor still counts: other orders may have landed inside the
-  // minute the cache has been held. Being early costs one read; being late costs "habis".
-  const at = wouldDropBelow(catalog([{ sku: 'X', tiktok: tiktok(104) }]), { lines: [line('X', 1)] });
-  assert.equal(at.length, 1, 'proyeksi 103 masih dalam margin');
+test('orders from before the seed are already in the figures the seed was read from', () => {
+  const { ledger } = applyOrders(seeded(150), [order('OLD', 'completed', [['OMC-90-001', 5]], T0 - 3600)]);
+  assert.equal(ledger.skus['OMC-90-001'].qty, 150);
 });
 
-test('a SKU the order did not touch is nobody’s business', () => {
-  const at = wouldDropBelow(
-    catalog([{ sku: 'SOLD', tiktok: tiktok(101) }, { sku: 'QUIET', tiktok: tiktok(3) }]),
-    { lines: [line('SOLD', 5)] },
-  );
-  assert.deepEqual(at.map((a) => a.sku), ['SOLD'], 'yang rendah tapi tak terjual diurus timer');
+test('the seed takes the lowest live figure across all three channels', () => {
+  // Seeding high puts stock on a channel that does not have it; low only under-sells.
+  const { ledger, seeded: fresh } = seedMissing({ skus: {} }, catalog([
+    { sku: 'OMC-90-001', tiktok: tt(193), shopee: sp(189), shopify: bucket(row(198, { variantId: 'v1' }), row(102, { variantId: 'v2' })) },
+  ]), { now: T0 * 1000 });
+  assert.deepEqual(fresh, ['OMC-90-001']);
+  assert.equal(ledger.skus['OMC-90-001'].qty, 102);
+  assert.equal(ledger.follow_started_at, T0);
 });
 
-test('an order with no lines asks nothing at all', () => {
-  assert.deepEqual(wouldDropBelow(catalog([{ sku: 'X', tiktok: tiktok(1) }]), { lines: [] }), []);
+test('a master somebody set by hand is never reseeded', () => {
+  const { ledger } = seedMissing({ skus: { 'OMC-90-001': { qty: 400, source: 'manual:ika' } } }, catalog([{ sku: 'OMC-90-001', tiktok: tt(10) }]));
+  assert.equal(ledger.skus['OMC-90-001'].qty, 400);
 });
 
-/* ------------------------------------------------------ the trigger itself */
+test('the top-up is the operator rule on the master: under a hundred, add a hundred', () => {
+  const { ledger, raised } = topUpMaster({ skus: { A: { qty: 99 }, B: { qty: 100 }, C: { qty: 2 } } });
+  assert.deepEqual(raised.map((r) => [r.sku, r.to]), [['A', 199], ['C', 102]]);
+  assert.equal(ledger.skus.B.qty, 100);
+});
 
-test('a quiet order writes nothing and reads no channel', async (t) => {
+test('every listing that disagrees is written to the master, Shopify variants each', () => {
+  const plan = planFollow(catalog([
+    { sku: 'OMC-90-001', tiktok: tt(193), shopee: sp(102), shopify: bucket(row(198, { variantId: 'v1' }), row(102, { variantId: 'v2' })) },
+    { sku: 'OTHER', tiktok: tt(5) },
+  ]), { skus: { 'OMC-90-001': { qty: 102 } } });
+  assert.deepEqual(plan.changes.map((c) => [c.channel, c.from, c.to, c.ref.variantId ?? null]), [['tiktok', 193, 102, null], ['shopify', 198, 102, 'v1']]);
+  assert.ok(plan.changes.every((c) => c.target), 'Shopify ditulis sebagai target, bukan selisih');
+});
+
+test('a channel that reported no figure is not corrected on the strength of nothing', () => {
+  const plan = planFollow(catalog([{ sku: 'A', tiktok: bucket(row(null, { productId: 'p' })) }]), { skus: { A: { qty: 150 } } });
+  assert.deepEqual(plan.changes, []);
+});
+
+/* --------------------------------------------------------------------- the runner */
+
+const memoryStore = (initial = null) => {
+  let doc = initial;
+  return {
+    update: async (key, fn, empty) => { doc = fn(doc ?? structuredClone(empty)); return doc; },
+    get: () => doc,
+  };
+};
+
+test('an order on one channel moves the others to the same figure', async () => {
   resetStockWatch();
-  invalidate();
+  const store = memoryStore(seeded(150));
+  const writes = [];
+  // Shopee already took its own sale off (149); TikTok and Shopify have not heard.
+  const read = async () => catalog([{ sku: 'OMC-90-001', tiktok: tt(150), shopee: sp(149), shopify: bucket(row(150, { variantId: 'v' })) }]);
+  const out = await followStock({
+    orders: [order('A', 'to_ship', [['OMC-90-001', 1]])], read, update: store.update, now: (T0 + 120) * 1000,
+    apply: async (plan) => { writes.push(...plan.changes); return { succeeded: plan.changes.length, failed: 0, results: plan.changes.map((c) => ({ ...c, status: 'ok' })) }; },
+  });
+  assert.equal(store.get().skus['OMC-90-001'].qty, 149);
+  assert.deepEqual(writes.map((w) => [w.channel, w.to]), [['tiktok', 149], ['shopify', 149]]);
+  assert.equal(out.written, 2);
+});
+
+test('an incomplete catalogue moves nothing and writes nothing', async () => {
+  resetStockWatch();
+  const store = memoryStore(seeded(150));
   let applied = 0;
-  const read = async () => catalog([{ sku: 'A', tiktok: tiktok(500) }]);
-  const out = await topUpAfterOrder({ lines: [line('A', 1)] }, { read, apply: async () => { applied += 1; } });
-  assert.equal(out.atRisk, 0);
+  const out = await followStock({
+    orders: [order('A', 'to_ship', [['OMC-90-001', 1]])], update: store.update,
+    read: async () => ({ skus: [], errors: { shopee: 'timeout' } }),
+    apply: async () => { applied += 1; return { succeeded: 0, failed: 0, results: [] }; },
+  });
+  assert.match(out.reason, /tidak lengkap/);
   assert.equal(applied, 0);
+  assert.equal(store.get().skus['OMC-90-001'].qty, 150, 'pesanan dihitung run berikutnya, bukan dibuang');
 });
 
-test('a burst of orders is one reason to look, not six', async () => {
+test('orders arriving during a run are all counted, none skipped for a cooldown', async () => {
   resetStockWatch();
-  invalidate();
-  const read = async () => catalog([{ sku: 'A', tiktok: tiktok(101) }]);
-  let applied = 0;
-  const apply = async () => { applied += 1; return { succeeded: 1, failed: 0, results: [] }; };
-  const order = { lines: [line('A', 3)] };
-
-  const outs = await Promise.all([
-    topUpAfterOrder(order, { read, apply }),
-    topUpAfterOrder(order, { read, apply }),
-    topUpAfterOrder(order, { read, apply }),
-  ]);
-  assert.ok(outs.some((o) => /berjalan|dijalankan/.test(o.reason ?? '')), 'yang lain ditahan');
-  assert.ok(applied <= 1, `menulis ${applied} kali untuk satu ledakan pesanan`);
-});
-
-test('an incomplete catalogue is never a reason to write', async () => {
-  resetStockWatch();
-  invalidate();
-  const read = async () => ({ skus: [{ sku: 'A', tiktok: tiktok(1) }], errors: { shopee: 'tidak menjawab' } });
-  let applied = 0;
-  const out = await topUpAfterOrder({ lines: [line('A', 1)] }, { read, apply: async () => { applied += 1; } });
-  // A channel that will not answer reads as "nothing is low", so it must stop the run
-  // rather than let it decide from half a picture.
-  assert.equal(out.checked, false);
-  assert.equal(applied, 0);
+  const store = memoryStore(seeded(150));
+  const read = async () => { await new Promise((r) => setTimeout(r, 5)); return catalog([{ sku: 'OMC-90-001', tiktok: tt(150) }]); };
+  const apply = async (plan) => ({ succeeded: plan.changes.length, failed: 0, results: [] });
+  const opts = { read, apply, update: store.update, now: (T0 + 120) * 1000 };
+  const first = followAfterOrder(order('A', 'to_ship', [['OMC-90-001', 1]]), opts);
+  followAfterOrder(order('B', 'to_ship', [['OMC-90-001', 2]]), opts);
+  followAfterOrder(order('C', 'to_ship', [['OMC-90-001', 3]]), opts);
+  await first;
+  assert.equal(store.get().skus['OMC-90-001'].qty, 144);
 });
 
 test('it never throws at the webhook that called it', async () => {
   resetStockWatch();
-  invalidate();
-  // A failed stock write must not turn a handled push into a 500 the platform retries.
-  const out = await topUpAfterOrder({ lines: [line('A', 5)] }, {
-    read: async () => catalog([{ sku: 'A', tiktok: tiktok(101) }]),
-    apply: async () => { throw new Error('shopee menolak'); },
-  });
-  assert.ok(out);
+  const out = await followAfterOrder(order('A', 'to_ship', [['OMC-90-001', 1]]), { read: async () => { throw new Error('boom'); } });
+  assert.equal(out.error, 'boom');
 });

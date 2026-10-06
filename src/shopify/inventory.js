@@ -39,14 +39,14 @@ mutation TreelogyTopupShopify($input: InventoryAdjustQuantitiesInput!, $key: Str
 }`;
 
 /**
- * Add `delta` to the variant's available stock at its one location.
+ * Add `delta` to the variant's available stock at its one location, or bring it to `target`.
  *
  * More than one stocked location is refused rather than guessed at: which shelf the
  * extra hundred belongs on is not something this can know. `changeFromQuantity` makes
  * Shopify reject the write if the number moved between our read and our write, so a sale
  * landing in that second cannot turn one top-up into a wrong figure.
  */
-export async function adjustVariantStock({ variantId, delta }, config = loadShopifyConfig()) {
+export async function adjustVariantStock({ variantId, delta = null, target = null }, config = loadShopifyConfig()) {
   const data = await shopifyGraphql(VARIANT_LEVELS_QUERY, { id: variantId }, config);
   const item = data.productVariant?.inventoryItem;
   if (!item) throw new Error(`varian ${variantId} tidak ditemukan`);
@@ -58,6 +58,10 @@ export async function adjustVariantStock({ variantId, delta }, config = loadShop
   const level = levels[0];
   const available = level.quantities.find((q) => q.name === 'available')?.quantity;
   if (typeof available !== 'number') throw new Error('jumlah available tidak terbaca');
+  // A target becomes a delta against the figure just read. changeFromQuantity then makes
+  // Shopify refuse it if a sale moves that figure between this read and the write.
+  if (target !== null) delta = target - available;
+  if (!delta) return { from: available, to: available };
 
   const result = await shopifyGraphql(ADJUST_MUTATION, {
     key: randomUUID(),

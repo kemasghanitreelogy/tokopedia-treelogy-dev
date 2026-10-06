@@ -9,7 +9,7 @@ import { invalidate } from '../cache.js';
 import { beatWebhook } from '../mekari/heartbeat.js';
 import { notifySyncFailures } from '../notify/telegram.js';
 import { announceExpress } from '../alerts-express.js';
-import { topUpAfterOrder } from '../stock-watch.js';
+import { followAfterOrder } from '../stock-watch.js';
 import { rememberOrder } from '../orders-source.js';
 
 /**
@@ -97,14 +97,14 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
   await announceExpress(order);
 
   /*
-   * What just left the shelf may have taken a listing under a hundred.
+   * What just left the shelf comes off every channel, not only the one it sold on.
    *
    * Deliberately not awaited. The order is already stored, the platform wants its 200
    * quickly, and a catalogue read plus a few stock writes is seconds - seconds of a
-   * marketplace waiting to be told we heard it. It answers to nobody here and swallows
-   * its own failures; the half-hourly timer is the backstop either way.
+   * marketplace waiting to be told we heard it. It swallows its own failures; the
+   * half-hourly run reads the stored order again and finishes the job either way.
    */
-  void topUpAfterOrder(order);
+  void followAfterOrder(order);
 
   // The order has just changed in the database, so every cached list of orders is now a
   // description of the past. Without this the push was only half a push: the row was

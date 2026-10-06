@@ -219,12 +219,14 @@ test('a channel that failed to load is never reported as "not listed there"', ()
     errors: {},
   };
 
+  // The card's status tags were removed on request; the card itself makes no channel
+  // claim now, so what is left to hold is that a failed read is named, never implied.
   const healthy = renderProducts({ catalog: onlyTiktok, ledger, ...common, errors: {} });
-  assert.ok(healthy.includes('hanya Tokopedia'), 'a genuinely single-channel SKU should say so');
+  assert.ok(!healthy.includes('<span class="stop">?</span>'), 'a healthy read marks no figure unknown');
 
   const degraded = renderProducts({ catalog: onlyTiktok, ledger, ...common, errors: { shopee: 'rate limit' } });
   assert.ok(!degraded.includes('hanya Tokopedia'), 'a failed channel must not become a claim');
-  assert.ok(degraded.includes('tidak terbaca'), 'the failure should be named');
+  assert.ok(degraded.includes('<span class="stop">?</span>'), 'the failed channel reads as unknown, not as empty');
 });
 
 test('counts derived from a partial catalogue are withheld, not shown as facts', () => {

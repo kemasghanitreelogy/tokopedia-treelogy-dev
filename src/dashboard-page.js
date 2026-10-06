@@ -811,7 +811,6 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 .qty b{font-weight:600; font-variant-numeric:tabular-nums}
 .card__foot{display:flex; align-items:center; justify-content:space-between; gap:.35rem;
   flex-wrap:wrap; font-size:.76rem}
-.card__tags{display:flex; gap:.3rem; align-items:center; font-size:.68rem}
 .badge{font-size:.63rem; letter-spacing:.04em; text-transform:uppercase;
   padding:.1rem .35rem; border-radius:4px; background:var(--panel); color:var(--muted)}
 .badge--b{color:var(--done); background:color-mix(in srgb,var(--done) 16%,transparent)}
@@ -6160,7 +6159,10 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     .join('');
 
   function cardFor(product) {
-    const { tt, sp, sy, price, status, build, attention } = cell(product);
+    // The status tags ("hanya Shopee", "stok beda", "rakit 152") were taken off the card on
+    // request: the three figures above already say it. A card that needs a look still
+    // carries the flag, which is what "Perlu perhatian" filters on.
+    const { tt, sp, sy, price, attention } = cell(product);
     const qty = (value, failed) =>
       failed ? '<span class="stop">?</span>'
       : value === null ? '<span class="dim">&mdash;</span>'
@@ -6184,7 +6186,6 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       </span>
       <span class="card__foot">
         <span class="mono">${price === null ? '<span class="dim">&mdash;</span>' : escape(rupiah(price))}</span>
-        <span class="card__tags">${build}${status}</span>
       </span>
     </a>`;
   }

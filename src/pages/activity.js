@@ -1,6 +1,7 @@
 import { shell, svg, escape, initials, pager } from '../dashboard-page.js';
 import { paginate, DEFAULT_PER_PAGE } from '../paging.js';
 import { MENUS, VERBS } from '../audit.js';
+import { ROLES, STATUS } from '../users.js';
 import { LOGGED_MENUS } from '../dashboard-page.js';
 
 /**
@@ -80,7 +81,7 @@ function entryRow(e) {
  * @param {{entries: object[], actors: object[], filter: {actor: string, menu: string, status: string, q: string},
  *   paging: {page: number, perPage: number}, baseQuery: string, user: object, range, errors, shopeeShop, generatedAt, csrf, flash}} props
  */
-export function renderActivity({ entries, actors, filter, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user, csrf, flash, ...common }) {
+export function renderActivity({ entries, actors, filter, profile = null, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user, csrf, flash, ...common }) {
   const paged = paginate(entries, paging);
   const keep = (over) => {
     const q = new URLSearchParams(baseQuery);
@@ -166,7 +167,7 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
     </section>`).join('');
   }
 
-  const body = `${heading}<section class="panel ac">
+  const body = `${heading}${profile ? profileCard(profile, entries) : ''}<section class="panel ac">
     ${filters}
     ${list}
     ${pager(paged, { baseQuery, noun: 'tindakan' })}
@@ -178,11 +179,62 @@ export function renderActivity({ entries, actors, filter, paging = { page: 1, pe
     title: locked ? `Log aktivitas · ${MENUS[locked]}` : 'Log aktivitas',
     // The tab row keeps the menu this log belongs to lit, so the page still feels like
     // part of that menu rather than a place of its own.
-    view: locked || 'orders',
+    view: locked || (profile ? 'users' : 'orders'),
   });
 }
 
+const stamp = (epochSeconds) => epochSeconds
+  ? new Date(epochSeconds * 1000).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })
+  : null;
+
+/**
+ * Who this history belongs to, above the history itself.
+ *
+ * Opened from a name on the Pengguna tab, so it answers what that tab only hints at: the
+ * account as it stands, and what the person did in the range below. The counts come from
+ * the entries already filtered to them, so the card and the list cannot disagree.
+ */
+function profileCard(p, entries) {
+  const last = entries[0]?.at ?? null;
+  const failed = entries.filter((e) => e.status === 'failed').length;
+  const fact = (label, value) => `<div class="ac__fact"><dt>${label}</dt><dd>${value ? escape(value) : '<span class="dim">&mdash;</span>'}</dd></div>`;
+  return `<section class="panel ac__who" aria-label="Detail pengguna">
+    <a class="ac__back" href="?view=users">${svg('chevL')}<span>Pengguna</span></a>
+    <div class="ac__who-top">
+      <span class="ac__av" aria-hidden="true">${escape(initials(p.name || p.email))}</span>
+      <div class="ac__who-id">
+        <h2 class="ac__who-name">${escape(p.name || p.email)}</h2>
+        <a class="ac__who-mail" href="mailto:${escape(p.email)}">${escape(p.email)}</a>
+      </div>
+      <span class="ac__tag">${escape(ROLES[p.role]?.label ?? p.role ?? '')}</span>
+      <span class="ac__tag ac__tag--${escape(p.status ?? '')}">${escape(STATUS[p.status] ?? p.status ?? '')}</span>
+    </div>
+    <dl class="ac__facts">
+      ${fact('Masuk terakhir', stamp(p.lastLoginAt) ?? 'belum pernah')}
+      ${fact(p.activatedAt ? 'Aktif sejak' : 'Diundang', stamp(p.activatedAt ?? p.invitedAt))}
+      ${fact('Diundang oleh', p.invitedBy?.email ?? (p.role === 'owner' ? 'diatur di environment' : null))}
+      ${fact('Tindakan di rentang ini', `${entries.length.toLocaleString('id-ID')}${failed ? ` · ${failed} gagal` : ''}`)}
+      ${fact('Tindakan terakhir', stamp(last))}
+    </dl>
+  </section>`;
+}
+
 const STYLE = `
+.ac__who{margin-bottom:1rem; padding:1rem 1.15rem}
+.ac__who .ac__back{margin-bottom:.85rem}
+.ac__who-top{display:flex; align-items:center; gap:.85rem; flex-wrap:wrap}
+.ac__av{display:inline-grid; place-items:center; width:44px; height:44px; border-radius:12px; font-weight:600; font-size:.9rem;
+  background:var(--panel-2); border:1px solid var(--line); color:var(--fg)}
+.ac__who-id{display:flex; flex-direction:column; min-width:0; flex:1 1 12rem}
+.ac__who-name{margin:0; font-size:1.05rem; font-weight:600}
+.ac__who-mail{font-size:.82rem; color:var(--muted); text-decoration:none; overflow-wrap:anywhere}
+.ac__who-mail:hover{color:var(--fg); text-decoration:underline}
+.ac__tag{font-size:.75rem; padding:.2rem .55rem; border-radius:6px; border:1px solid var(--line); color:var(--muted); background:var(--panel-2)}
+.ac__tag--active{color:var(--ok, var(--fg))}
+.ac__tag--disabled{color:var(--stop, var(--fg))}
+.ac__facts{display:grid; grid-template-columns:repeat(auto-fit, minmax(10.5rem, 1fr)); gap:.75rem 1.25rem; margin:1rem 0 0}
+.ac__fact dt{font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--dim)}
+.ac__fact dd{margin:.2rem 0 0; font-size:.88rem}
 .ac__head{display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:.85rem}
 .ac__back{display:inline-flex; align-items:center; gap:.35rem; font-size:.84rem; font-weight:500; color:var(--muted); text-decoration:none;
   padding:.4rem .75rem .4rem .5rem; border:1px solid var(--line); border-radius:9px; background:var(--panel); transition:color var(--t-fast), border-color var(--t-fast)}

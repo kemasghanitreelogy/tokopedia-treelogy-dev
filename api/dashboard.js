@@ -1323,8 +1323,13 @@ export default async function handler(req, res) {
       const all = await readActivity({ from: range.from, to: range.to });
       const entries = filter.actor || filter.menu || filter.status || filter.q ? await readActivity({ from: range.from, to: range.to, ...filter }) : all;
       console.log(`dashboard/activity: ${entries.length} of ${all.length} entries for ${range.label}`);
+      // A name clicked on the Pengguna tab lands here; whoever may manage users also sees
+      // the account itself above the history. Nobody else gets more than the log showed.
+      const profile = filter.actor && can(user, 'users')
+        ? (await listUsers().catch(() => [])).find((u) => u.id === filter.actor) ?? null
+        : null;
       send(200, renderActivity({
-        entries, actors: actorsIn(all), filter, paging, baseQuery, user,
+        entries, actors: actorsIn(all), filter, profile, paging, baseQuery, user,
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
       return;

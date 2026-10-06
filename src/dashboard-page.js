@@ -1952,7 +1952,10 @@ ${celebration(flash)}
     // A download never leaves this page, so a skeleton armed for it would never be put away.
     if (link.hasAttribute('download')) return;
     var href = link.getAttribute('href');
-    if (!href || href.charAt(0) === '#' || href.indexOf('javascript:') === 0) return;
+    if (!href || href.charAt(0) === '#') return;
+    // mailto:, tel: and javascript: hand off to another app or run in place; the page stays
+    // and a skeleton armed for them sat over it for good - the Pengguna tab's emails did.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^https?:/i.test(href)) return;
     beginNavigation(link.classList.contains('viewtab') ? 'Memuat ' + link.textContent.trim() + '…' : 'Memuat…');
   }, true);
 

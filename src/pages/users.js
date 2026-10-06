@@ -71,7 +71,7 @@ function userRow({ u, me, csrf, now }) {
       <div class="um__who">
         <span class="um__av um__av--${u.status}" aria-hidden="true">${escape(initials(u.name || u.email))}</span>
         <div class="um__id">
-          <span class="um__name">${escape(u.name)}${isMe ? ' <span class="um__me">Anda</span>' : ''}</span>
+          <a class="um__name um__open" href="?view=activity&amp;actor=${escape(u.id)}&amp;preset=30d" title="Detail dan riwayat aktivitas ${escape(u.name || u.email)}">${escape(u.name)}${isMe ? ' <span class="um__me">Anda</span>' : ''}</a>
           <a class="um__mail" href="mailto:${escape(u.email)}">${escape(u.email)}</a>
         </div>
       </div>
@@ -195,6 +195,9 @@ const STYLE = `
 .um__av--disabled{background:var(--line); color:var(--muted)}
 .um__id{display:flex; flex-direction:column; min-width:0; line-height:1.3}
 .um__name{font-weight:600; font-size:.9rem; white-space:nowrap}
+.um__open{color:var(--fg); text-decoration:none; border-radius:4px}
+.um__open:hover{color:var(--brand); text-decoration:underline; text-underline-offset:3px}
+.um__open:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .um__me{font-size:.62rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; padding:.1rem .4rem; border-radius:5px;
   color:var(--brand); background:color-mix(in srgb,var(--brand) 16%,transparent); vertical-align:middle; margin-left:.3rem}
 .um__mail{font-size:.76rem; color:var(--muted); text-decoration:none; white-space:nowrap}

@@ -6,7 +6,7 @@ import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
-import { PRODUCTS, CATEGORIES, groupProducts, findProduct, familyOf, isBundle, buildableFrom, unmapped } from './master.js';
+import { PRODUCTS, CATEGORIES, groupProducts, findProduct, familyOf, isBundle, buildableFrom, unmapped, allProducts, isRemoved } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
 import { defaultSlot } from './shopee/pickup.js';
@@ -87,6 +87,7 @@ icon.pencil = '<path d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L
 icon.userPlus = '<path d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM4 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 10.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/>';
 icon.check2 = '<path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>';
 icon.x = '<path d="M6 18 18 6M6 6l12 12"/>';
+icon.image = '<path d="m2.25 15.75 5.16-5.16a2.25 2.25 0 0 1 3.18 0l5.16 5.16m-1.5-1.5 1.41-1.41a2.25 2.25 0 0 1 3.18 0l2.91 2.91m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
 icon.export = '<path d="M12 15V3m0 0L8.5 6.5M12 3l3.5 3.5M20.25 14.25v4.5a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-4.5"/>';
 
 export const svg = (name, cls = '') =>
@@ -6050,7 +6051,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
  * makes "Moringa Powder, three sizes" visible again, and what lets a bundle be shown
  * against the components it is actually assembled from.
  */
-export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null }) {
+export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null, creating = false }) {
   const live = new Map(catalog.skus.map((e) => [e.sku, e]));
   const stockOf = (sku) => {
     const entry = live.get(sku);
@@ -6063,36 +6064,14 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 
   // The sync plan lived on its own tab that showed the same SKUs twice. It belongs here,
   // as a single bar that only appears when there is something to do.
-  const syncBar = plan && (plan.changes.length > 0 || plan.review.length > 0 || plan.blocked.length > 0)
-    ? `<div class="sync">
-        <span class="sync__txt">
-          ${plan.changes.length > 0
-            ? `<b>${plan.changes.length}</b> perubahan stok siap ditulis ke marketplace`
-            : 'Tidak ada perubahan yang siap ditulis'}
-          ${plan.review.length + plan.blocked.length > 0
-            ? ` &middot; <span class="flag">${plan.review.length + plan.blocked.length} ditahan untuk ditinjau</span>`
-            : ''}
-        </span>
-        <details class="sync__d">
-          <summary>Lihat rincian</summary>
-          <div class="scroll"><table class="dense">
-            <thead><tr><th>SKU</th><th>Kanal</th><th class="num">Dari</th><th class="num">Jadi</th><th>Keterangan</th></tr></thead>
-            <tbody>${[...plan.changes, ...plan.review, ...plan.blocked].map((c) => `<tr>
-              <td class="mono nowrap">${escape(c.sku)}</td>
-              <td class="dim nowrap">${escape(CHANNEL_LABEL[c.channel] ?? c.channel)}</td>
-              <td class="num mono">${c.from}</td>
-              <td class="num mono">${c.to}</td>
-              <td>${c.reason ? `<span class="flag">${escape(c.reason)}</span>` : '<span class="ok">siap</span>'}</td>
-            </tr>`).join('')}</tbody>
-          </table></div>
-        </details>
-        <form method="post" data-confirm="Tulis ${plan.changes.length} perubahan stok ke marketplace?">
-          ${hidden}
-          <input type="hidden" name="action" value="apply">
-          <button class="sync__go" type="submit" ${plan.changes.length === 0 ? 'disabled' : ''}>Terapkan</button>
-        </form>
-      </div>`
-    : '';
+  // The ledger's old review bar is gone: the stock follower writes the master figure to
+  // every channel on its own, so there is no plan waiting here for anybody to approve.
+  const syncBar = '';
+
+  if (creating) {
+    return shell({ user, csrf, title: 'Tambah produk', range, errors, shopeeShop, generatedAt, view: 'products',
+      hideRangeControls: true, flash, body: productForm({ catalog, csrf }), style: PF_STYLE, script: PF_SCRIPT });
+  }
 
   const detail = selected ? findProduct(selected) : null;
   if (detail) {
@@ -6107,6 +6086,8 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       staleSince: catalog.savedAt ? wibStamp(catalog.savedAt) : null,
       kpis: '',
       body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images, listing }),
+      style: PF_STYLE,
+      script: PF_SCRIPT,
     });
   }
 
@@ -6243,8 +6224,9 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       ${stat('Di luar master', partial ? '?' : String(drift.length))}
       <span class="strip__grow"></span>
       <input class="search" id="q" type="search" aria-label="Cari produk atau SKU" placeholder="Cari produk atau SKU...">
+      <a class="cta" href="?view=products&amp;new=1">${svg('plus')}<span>Tambah produk</span></a>
     </div>`,
-    body: `${syncBar}${groups}${driftNote}
+    body: `${syncBar}${groups}${removedNote(csrf)}${driftNote}
       <div class="foot">
         <span id="shown"></span>
         <span>Klik kartu untuk melihat dan mengubah data di tiap kanal.</span>
@@ -6290,20 +6272,405 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 }
 
 /** One product: what each channel holds, and the controls to change it. */
+/* ------------------------------------------------------------- product catalogue */
+
+const CATEGORY_OPTIONS = (current) => Object.entries(CATEGORIES)
+  .map(([key, label]) => `<option value="${key}" ${key === current ? 'selected' : ''}>${escape(label)}</option>`).join('');
+
+/** Families already in use, offered as suggestions so a new variant joins its siblings. */
+const familyList = () => [...new Set(PRODUCTS.map((p) => familyOf(p)))].sort()
+  .map((f) => `<option value="${escape(f)}"></option>`).join('');
+
+const partOptions = (selected, exclude) => PRODUCTS.filter((p) => p.sku !== exclude && !isBundle(p))
+  .map((p) => `<option value="${escape(p.sku)}" ${p.sku === selected ? 'selected' : ''}>${escape(p.name)}${p.variant ? ` · ${escape(p.variant)}` : ''}</option>`).join('');
+
+/**
+ * The master's own facts, as fields. Shared by the new-product form and a product's page,
+ * so both say the same thing the same way.
+ */
+function masterFields(product = null, { idPrefix = 'm' } = {}) {
+  const parts = product?.components?.length ? product.components : [];
+  const partRow = (part = { sku: '', qty: 1 }) => `<div class="pf__part" data-part>
+      <label class="visually-hidden" for="${idPrefix}-ps-${part.sku || 'new'}">Produk</label>
+      <select name="part_sku" id="${idPrefix}-ps-${part.sku || 'new'}"><option value="">Pilih produk…</option>${partOptions(part.sku, product?.sku)}</select>
+      <label class="visually-hidden" for="${idPrefix}-pq-${part.sku || 'new'}">Jumlah</label>
+      <input name="part_qty" id="${idPrefix}-pq-${part.sku || 'new'}" type="number" min="1" max="99" step="1" value="${part.qty}" inputmode="numeric">
+      <button class="pf__x" type="button" data-part-remove aria-label="Hapus baris isi bundle">${svg('x')}</button>
+    </div>`;
+  return `<div class="pf__grid">
+      <label class="pf__f"><span>SKU <i aria-hidden="true">*</i></span>
+        <input name="sku" required pattern="[A-Za-z0-9][A-Za-z0-9+&amp;._\\-]{1,49}" maxlength="50" autocomplete="off" spellcheck="false"
+          value="${escape(product?.sku ?? '')}" ${product ? 'readonly aria-readonly="true"' : 'autofocus'} class="mono" placeholder="mis. OMC-360-001">
+        <small>${product ? 'SKU tidak bisa diubah: ini yang menyambungkan pesanan, stok dan faktur.' : 'Dipakai sebagai SKU penjual di semua kanal.'}</small></label>
+      <label class="pf__f"><span>Kategori <i aria-hidden="true">*</i></span>
+        <select name="category" required data-category>${CATEGORY_OPTIONS(product?.category ?? 'capsules')}</select></label>
+      <label class="pf__f"><span>Nama produk <i aria-hidden="true">*</i></span>
+        <input name="name" required maxlength="120" value="${escape(product?.name ?? '')}" placeholder="mis. Moringa Capsules"></label>
+      <label class="pf__f"><span>Varian</span>
+        <input name="variant" maxlength="80" value="${escape(product?.variant ?? '')}" placeholder="mis. 360 caps"></label>
+      <label class="pf__f"><span>Keluarga</span>
+        <input name="family" list="${idPrefix}-families" maxlength="120" value="${escape(product?.family ?? '')}" placeholder="kosong = sama dengan nama">
+        <datalist id="${idPrefix}-families">${familyList()}</datalist>
+        <small>Produk dengan keluarga sama dikelompokkan di daftar.</small></label>
+      <label class="pf__f"><span>Alias SKU</span>
+        <input name="aliases" maxlength="400" value="${escape((product?.aliases ?? []).join(', '))}" class="mono" placeholder="OMC360, 1731…">
+        <small>Ejaan lain untuk produk yang sama di kanal lain, pisahkan dengan koma.</small></label>
+      <div class="pf__f pf__f--wide"><span>Isi bundle</span>
+        <div class="pf__parts" data-parts>${parts.map(partRow).join('')}</div>
+        <template data-part-template>${partRow()}</template>
+        <button class="pf__add" type="button" data-part-add>${svg('plus')}<span>Tambah isi</span></button>
+        <small>Kosongkan untuk produk tunggal.</small></div>
+      <label class="pf__check"><input type="checkbox" name="gift" value="1" ${product?.gift ? 'checked' : ''}><span>Hadiah gratis, tidak dijual terpisah</span></label>
+    </div>`;
+}
+
+/** A product's master facts on its own page, with the way out of the catalogue. */
+function masterEditor(product, csrf) {
+  const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
+  return `<p class="sec">Data master</p>
+    <form class="pf pf--inline" method="post" data-confirm="Simpan data master ${escape(product.sku)}?">
+      ${hidden}
+      <input type="hidden" name="action" value="product_master">
+      <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
+      ${masterFields(product, { idPrefix: 'me' })}
+      <div class="pf__go">
+        <button class="pf__ghost" type="submit" form="pf-remove">${svg('trash')}<span>Hapus dari daftar</span></button>
+        <button class="pf__primary" type="submit">Simpan data master</button>
+      </div>
+    </form>
+    <form id="pf-remove" method="post" hidden data-confirm="Hapus ${escape(product.sku)} dari daftar produk? Listing di marketplace tidak disentuh, pesanan lama tetap terbaca, dan produk bisa dikembalikan.">
+      ${hidden}
+      <input type="hidden" name="action" value="product_remove">
+      <input type="hidden" name="sku" value="${escape(product.sku)}">
+      <input type="hidden" name="removed" value="1">
+    </form>`;
+}
+
+/** Products taken out of the list, each one press from coming back. */
+function removedNote(csrf) {
+  const gone = allProducts().filter((p) => isRemoved(p.sku));
+  if (gone.length === 0) return '';
+  return `<details class="pf-gone">
+      <summary>${gone.length} produk dihapus dari daftar</summary>
+      <ul>${gone.map((p) => `<li><span>${escape(p.name)}${p.variant ? ` <span class="note">${escape(p.variant)}</span>` : ''} <span class="mono dim">${escape(p.sku)}</span></span>
+        <form method="post"><input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="action" value="product_remove">
+          <input type="hidden" name="sku" value="${escape(p.sku)}"><input type="hidden" name="removed" value="0">
+          <button class="pf__ghost" type="submit">${svg('check2')}<span>Kembalikan</span></button></form></li>`).join('')}</ul>
+    </details>`;
+}
+
+/**
+ * A new product, and its listings on the channels ticked.
+ *
+ * Three steps on one page, in the order somebody thinks them: what it is, what the
+ * listing says, where it goes. The marketplace-only requirements - category, attributes,
+ * brand, logistics, certificates - come from an example listing picked per channel,
+ * defaulted to one of the same kind, so nobody has to know Shopee's category tree.
+ */
+function productForm({ catalog, csrf }) {
+  const listings = (channel) => {
+    const seen = new Map();
+    for (const entry of catalog.skus) {
+      for (const row of entry[channel]?.rows ?? []) {
+        const id = channel === 'tiktok' ? row.productId : row.itemId;
+        if (!id || seen.has(String(id))) continue;
+        seen.set(String(id), { id, title: row.title ?? entry.title, sku: entry.sku, category: findProduct(entry.sku)?.category ?? '' });
+      }
+    }
+    return [...seen.values()].sort((a, b) => String(a.title).localeCompare(String(b.title)));
+  };
+  const channelCard = (key, label, note, options) => {
+    const list = options ?? [];
+    const usable = key === 'shopify' || list.length > 0;
+    return `<div class="pf__ch${usable ? '' : ' is-off'}" data-ch="${key}">
+      <label class="pf__chhead"><input type="checkbox" name="channel" value="${key}" ${usable ? 'checked' : 'disabled'} data-ch-toggle>
+        <span class="pf__chname">${label}</span></label>
+      <p class="pf__chnote">${note}</p>
+      ${options ? `<label class="pf__f"><span>Salin kategori &amp; atribut dari</span>
+        <select name="template_${key}" data-template>${list.map((l) => `<option value="${escape(String(l.id))}" data-category="${escape(l.category)}">${escape(String(l.title).slice(0, 90))}</option>`).join('')}</select></label>` : ''}
+    </div>`;
+  };
+  return `<a class="pf-back" href="?view=products">${svg('chevL')}<span>Produk</span></a>
+  <form class="pf" method="post" enctype="multipart/form-data" novalidate data-pf
+        data-confirm="Buat produk baru di kanal terpilih?">
+    <input type="hidden" name="csrf" value="${escape(csrf)}">
+    <input type="hidden" name="action" value="product_create">
+    <input type="hidden" name="back" value="?view=products&amp;new=1">
+    <div class="pf__err" role="alert" aria-live="assertive" hidden data-pf-err></div>
+
+    <section class="pf__step" aria-labelledby="pf-s1">
+      <header><span class="pf__n" aria-hidden="true">1</span><h2 id="pf-s1">Produk</h2><p>Cara dashboard mengenal produk ini: untuk stok, pesanan, faktur, dan label.</p></header>
+      ${masterFields(null, { idPrefix: 'pn' })}
+    </section>
+
+    <section class="pf__step" aria-labelledby="pf-s2">
+      <header><span class="pf__n" aria-hidden="true">2</span><h2 id="pf-s2">Listing</h2><p>Yang dilihat pembeli. Sama untuk semua kanal yang dipilih.</p></header>
+      <div class="pf__grid">
+        <label class="pf__f pf__f--wide"><span>Judul listing <i aria-hidden="true">*</i></span>
+          <input name="title" required minlength="5" maxlength="255" data-listing placeholder="TREELOGY - Organic Moringa Capsules | Kapsul Daun Kelor Premium">
+          <small data-count="title">0 / 255</small></label>
+        <label class="pf__f pf__f--wide"><span>Deskripsi <i aria-hidden="true">*</i></span>
+          <textarea name="description" required minlength="20" rows="8" data-listing placeholder="Manfaat, isi, cara pakai, penyimpanan, sertifikasi…"></textarea>
+          <small>Paragraf dipisah baris kosong.</small></label>
+        <label class="pf__f"><span>Harga (Rp) <i aria-hidden="true">*</i></span>
+          <input name="price" type="number" required min="100" step="1" inputmode="numeric" data-listing class="mono" placeholder="525000"></label>
+        <label class="pf__f"><span>Stok awal <i aria-hidden="true">*</i></span>
+          <input name="stock" type="number" required min="1" max="99999" step="1" inputmode="numeric" data-listing class="mono" value="150">
+          <small>Menjadi stok induk; semua kanal mengikutinya.</small></label>
+        <label class="pf__f"><span>Berat paket (gram) <i aria-hidden="true">*</i></span>
+          <input name="weightGram" type="number" required min="1" step="1" inputmode="numeric" data-listing class="mono" placeholder="600"></label>
+        <div class="pf__f"><span>Dimensi paket (cm) <i aria-hidden="true">*</i></span>
+          <div class="pf__dims">
+            <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang (cm)" placeholder="P" data-dim class="mono">
+            <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar (cm)" placeholder="L" data-dim class="mono">
+            <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi (cm)" placeholder="T" data-dim class="mono">
+          </div>
+          <small>Wajib untuk Tokopedia/TikTok dan Shopee.</small></div>
+        <div class="pf__f pf__f--wide"><span>Foto <i aria-hidden="true">*</i></span>
+          <label class="pf__drop" data-drop>
+            <input name="images" type="file" accept="image/jpeg,image/png" multiple data-images>
+            ${svg('image')}<b>Pilih atau tarik foto ke sini</b><small>1-9 foto JPG/PNG, maksimal 10 MB per foto. Foto pertama jadi foto utama.</small>
+          </label>
+          <div class="pf__thumbs" data-thumbs aria-live="polite"></div></div>
+      </div>
+    </section>
+
+    <section class="pf__step" aria-labelledby="pf-s3">
+      <header><span class="pf__n" aria-hidden="true">3</span><h2 id="pf-s3">Kanal</h2><p>Hapus centang kanal yang tidak dipakai. Tanpa kanal, produk hanya masuk ke master.</p></header>
+      <div class="pf__chs">
+        ${channelCard('tiktok', 'Tokopedia + TikTok', 'Tayang di Tokopedia dan TikTok Shop sekaligus. Sertifikat BPOM ikut disalin dari listing contoh.', listings('tiktok'))}
+        ${channelCard('shopee', 'Shopee', 'Jasa kirim, brand, dan atribut wajib ikut disalin dari listing contoh.', listings('shopee'))}
+        ${channelCard('shopify', 'Shopify', 'Produk tunggal dengan stok di lokasi Shopify yang aktif.', null)}
+      </div>
+      <fieldset class="pf__mode"><legend>Setelah dibuat</legend>
+        <label><input type="radio" name="mode" value="live" checked><span><b>Tayangkan sekarang</b><small>Langsung bisa dibeli (TikTok tetap melewati review).</small></span></label>
+        <label><input type="radio" name="mode" value="draft"><span><b>Simpan sebagai draft</b><small>Tidak terlihat pembeli: draft di TikTok, nonaktif di Shopee, draft di Shopify.</small></span></label>
+      </fieldset>
+    </section>
+
+    <div class="pf__bar"><a class="pf__ghost" href="?view=products">Batal</a><button class="pf__primary" type="submit" data-pf-go>Buat produk</button></div>
+  </form>`;
+}
+
+const PF_STYLE = `
+.pf{display:flex; flex-direction:column; gap:1.1rem; margin-top:1rem}
+.pf-back{display:inline-flex; align-items:center; gap:.35rem; min-height:36px; padding:.4rem .8rem .4rem .55rem; font-size:.84rem; font-weight:500;
+  color:var(--muted); text-decoration:none; border:1px solid var(--line); border-radius:9px; background:var(--panel); transition:color var(--t-fast), border-color var(--t-fast)}
+.pf-back:hover{color:var(--fg); border-color:var(--brand)}
+.pf-back:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.pf-back .ico{width:16px; height:16px}
+.pf--inline{margin:0; padding:1rem}
+.pf__step{border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); padding:1.2rem 1.25rem 1.3rem}
+.pf__step > header{display:grid; grid-template-columns:auto 1fr; column-gap:.75rem; align-items:center; margin-bottom:1.1rem}
+.pf__step > header h2{margin:0; font-size:1rem; font-weight:600}
+.pf__step > header p{grid-column:2; margin:.15rem 0 0; font-size:.8rem; color:var(--muted)}
+.pf__n{grid-row:span 2; display:inline-grid; place-items:center; width:30px; height:30px; border-radius:50%; font-size:.8rem; font-weight:600;
+  background:color-mix(in srgb, var(--brand) 18%, transparent); color:var(--brand); border:1px solid color-mix(in srgb, var(--brand) 40%, transparent)}
+.pf__grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:1rem 1.1rem}
+.pf__f{display:flex; flex-direction:column; gap:.35rem; min-width:0}
+.pf__f > span{font-size:.78rem; font-weight:500; color:var(--muted)}
+.pf__f > span i{color:var(--cta-a); font-style:normal; margin-left:.15rem}
+.pf__f--wide{grid-column:1/-1}
+.pf__f small{font-size:.72rem; color:var(--dim); line-height:1.4}
+.pf input:not([type=checkbox]):not([type=radio]):not([type=file]), .pf select, .pf textarea{font:inherit; font-size:.9rem; color:var(--fg);
+  background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:.6rem .75rem; min-height:44px; width:100%;
+  transition:border-color var(--t-fast), box-shadow var(--t-fast)}
+.pf textarea{resize:vertical; line-height:1.55; min-height:10rem}
+.pf input[readonly]{color:var(--muted); background:transparent}
+.pf input:focus-visible, .pf select:focus-visible, .pf textarea:focus-visible{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent)}
+.pf .is-bad{border-color:var(--bad) !important; box-shadow:0 0 0 3px color-mix(in srgb, var(--bad) 18%, transparent) !important}
+.pf__msg{font-size:.72rem; color:var(--bad)}
+.pf__dims{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.5rem}
+.pf__parts{display:flex; flex-direction:column; gap:.5rem}
+.pf__part{display:grid; grid-template-columns:minmax(0,1fr) 5.5rem 44px; gap:.5rem; align-items:center}
+.pf__x{display:inline-grid; place-items:center; width:44px; height:44px; border-radius:10px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer}
+.pf__x:hover{color:var(--bad); border-color:var(--bad)}
+.pf__x .ico{width:16px; height:16px}
+.pf__add{align-self:flex-start; display:inline-flex; align-items:center; gap:.35rem; font:inherit; font-size:.8rem; min-height:40px; padding:.4rem .8rem;
+  border-radius:10px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer}
+.pf__add:hover{color:var(--fg); border-color:var(--brand)}
+.pf__add .ico{width:15px; height:15px}
+.pf__check{grid-column:1/-1; display:flex; align-items:center; gap:.55rem; font-size:.85rem; cursor:pointer; min-height:44px}
+.pf__check input, .pf__chhead input, .pf__mode input{accent-color:var(--brand); width:18px; height:18px; margin:0}
+.pf__drop{position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.3rem; text-align:center;
+  min-height:8.5rem; padding:1.1rem; border:1.5px dashed var(--line); border-radius:var(--radius-s); background:var(--panel-2); cursor:pointer;
+  color:var(--muted); transition:border-color var(--t-fast), background var(--t-fast)}
+.pf__drop:hover, .pf__drop.is-over{border-color:var(--brand); background:color-mix(in srgb, var(--brand) 7%, var(--panel-2))}
+.pf__drop .ico{width:26px; height:26px; color:var(--brand)}
+.pf__drop--s{min-height:6rem; padding:.9rem}
+.pf__drop b{font-size:.88rem; color:var(--fg); font-weight:500}
+.pf__drop input{position:absolute; inset:0; opacity:0; cursor:pointer}
+.pf__drop:focus-within{outline:2px solid var(--brand); outline-offset:2px}
+.pf__thumbs{display:flex; flex-wrap:wrap; gap:.55rem}
+.pf__thumbs figure{position:relative; margin:0; width:84px}
+.pf__thumbs img{width:84px; height:84px; object-fit:cover; border-radius:10px; border:1px solid var(--line); display:block}
+.pf__thumbs figcaption{font-size:.66rem; color:var(--dim); margin-top:.2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.pf__thumbs figure:first-child::after{content:'Utama'; position:absolute; top:6px; left:6px; font-size:.6rem; font-weight:600; letter-spacing:.04em;
+  padding:.1rem .35rem; border-radius:5px; background:var(--brand); color:#fff}
+.pf__chs{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.8rem}
+.pf__ch{display:flex; flex-direction:column; gap:.6rem; padding:.95rem 1rem; border:1px solid var(--line); border-radius:var(--radius-s); background:var(--panel-2);
+  transition:border-color var(--t-fast), opacity var(--t-fast)}
+.pf__ch:has([data-ch-toggle]:checked){border-color:color-mix(in srgb, var(--brand) 55%, var(--line))}
+.pf__ch:not(:has([data-ch-toggle]:checked)){opacity:.6}
+.pf__ch.is-off{opacity:.45}
+.pf__chhead{display:flex; align-items:center; gap:.55rem; cursor:pointer; min-height:32px}
+.pf__chname{font-weight:600; font-size:.92rem}
+.pf__chnote{margin:0; font-size:.75rem; color:var(--muted); line-height:1.45}
+.pf__mode{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:.75rem; border:0; margin:1rem 0 0; padding:0}
+.pf__mode legend{font-size:.78rem; font-weight:500; color:var(--muted); margin-bottom:.5rem; padding:0}
+.pf__mode label{display:flex; gap:.65rem; align-items:flex-start; padding:.8rem .9rem; border:1px solid var(--line); border-radius:var(--radius-s); cursor:pointer; background:var(--panel-2)}
+.pf__mode label:has(input:checked){border-color:color-mix(in srgb, var(--brand) 55%, var(--line))}
+.pf__mode span{display:flex; flex-direction:column; gap:.15rem}
+.pf__mode b{font-size:.86rem; font-weight:600}
+.pf__mode small{font-size:.74rem; color:var(--muted)}
+.pf__bar{position:sticky; bottom:0; z-index:5; display:flex; justify-content:flex-end; gap:.75rem; padding:.9rem 1rem;
+  border:1px solid var(--line); border-radius:var(--radius); background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(var(--blur))}
+.pf__go{display:flex; justify-content:flex-end; gap:.65rem; margin-top:1.1rem}
+.pf__primary{font:inherit; font-size:.88rem; font-weight:600; padding:.6rem 1.35rem; min-height:44px; border-radius:999px; cursor:pointer; color:#fff;
+  border:1px solid transparent; background:linear-gradient(155deg,var(--cta-a),var(--cta-b));
+  box-shadow:0 1px 0 rgba(255,255,255,.14) inset, 0 12px 26px -14px color-mix(in srgb,var(--cta-a) 85%,transparent); transition:filter var(--t-base)}
+.pf__primary:hover{filter:brightness(1.08)}
+.pf__primary[aria-busy="true"]{opacity:.7; cursor:progress}
+.pf__ghost{display:inline-flex; align-items:center; gap:.4rem; font:inherit; font-size:.82rem; min-height:44px; padding:.5rem 1rem; border-radius:999px;
+  border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; text-decoration:none; transition:color var(--t-fast), border-color var(--t-fast)}
+.pf__ghost:hover{color:var(--fg); border-color:var(--muted)}
+.pf__ghost .ico{width:15px; height:15px}
+.pf__primary:focus-visible, .pf__ghost:focus-visible, .pf__add:focus-visible, .pf__x:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.pf__err{padding:.8rem 1rem; border-radius:var(--radius-s); border:1px solid color-mix(in srgb, var(--bad) 45%, var(--line));
+  background:color-mix(in srgb, var(--bad) 10%, var(--panel)); color:var(--fg); font-size:.84rem}
+.pf-gone{margin:1.25rem 1rem 0; font-size:.84rem}
+.pf-gone summary{cursor:pointer; color:var(--muted); min-height:32px}
+.pf-gone ul{list-style:none; margin:.6rem 0 0; padding:0; display:flex; flex-direction:column; gap:.4rem}
+.pf-gone li{display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.45rem .7rem; border:1px solid var(--line); border-radius:10px}
+@media (max-width:860px){.pf__chs{grid-template-columns:minmax(0,1fr)} .pf__mode{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){.pf__grid{grid-template-columns:minmax(0,1fr)} .pf__step{padding:1rem}}
+@media (prefers-reduced-motion:reduce){.pf *{transition:none !important}}
+`;
+
+const PF_SCRIPT = `
+(function () {
+  // Bundle rows: add from the template, remove in place.
+  document.querySelectorAll('.pf').forEach(function (form) {
+    var parts = form.querySelector('[data-parts]');
+    var tpl = form.querySelector('[data-part-template]');
+    var add = form.querySelector('[data-part-add]');
+    if (add && parts && tpl) add.addEventListener('click', function () {
+      parts.appendChild(tpl.content.cloneNode(true));
+      var rows = parts.querySelectorAll('[data-part]');
+      var last = rows[rows.length - 1];
+      last.querySelectorAll('[id]').forEach(function (el) { el.id = el.id + '-' + rows.length; });
+      last.querySelectorAll('label[for]').forEach(function (el) { el.htmlFor = el.htmlFor + '-' + rows.length; });
+      last.querySelector('select').focus();
+    });
+    if (parts) parts.addEventListener('click', function (e) {
+      var x = e.target.closest('[data-part-remove]');
+      if (x) x.closest('[data-part]').remove();
+    });
+  });
+
+  // Pictures preview in the order they will be sent; the first is the main one. Every
+  // picture field on the page, the new-product form's and the listing editor's alike.
+  document.querySelectorAll('[data-images]').forEach(function (input) {
+    var field = input.closest('.pf__f, .le__f');
+    var thumbs = field && field.querySelector('[data-thumbs]');
+    var zone = input.closest('[data-drop]');
+    if (!thumbs) return;
+    input.addEventListener('change', function () {
+      thumbs.innerHTML = '';
+      Array.prototype.slice.call(input.files, 0, 9).forEach(function (file) {
+        var fig = document.createElement('figure');
+        var img = document.createElement('img');
+        img.alt = '';
+        img.src = URL.createObjectURL(file);
+        var cap = document.createElement('figcaption');
+        cap.textContent = file.name;
+        fig.appendChild(img); fig.appendChild(cap); thumbs.appendChild(fig);
+      });
+    });
+    if (zone) {
+      ['dragenter', 'dragover'].forEach(function (t) { zone.addEventListener(t, function () { zone.classList.add('is-over'); }); });
+      ['dragleave', 'drop'].forEach(function (t) { zone.addEventListener(t, function () { zone.classList.remove('is-over'); }); });
+    }
+  });
+
+  var form = document.querySelector('[data-pf]');
+  if (!form) return;
+  var err = form.querySelector('[data-pf-err]');
+  var images = form.querySelector('[data-images]');
+  var title = form.querySelector('[name="title"]');
+  var count = form.querySelector('[data-count="title"]');
+
+  // The example listing follows the product's kind: a new capsule copies a capsule.
+  var category = form.querySelector('[data-category]');
+  function pickTemplates() {
+    form.querySelectorAll('[data-template]').forEach(function (sel) {
+      var match = Array.prototype.find.call(sel.options, function (o) { return o.dataset.category === category.value; });
+      if (match) sel.value = match.value;
+    });
+  }
+  category.addEventListener('change', pickTemplates);
+  pickTemplates();
+
+  title.addEventListener('input', function () { count.textContent = title.value.length + ' / 255'; });
+
+  images.addEventListener('change', function () { check(images); });
+
+  function channels() { return Array.prototype.map.call(form.querySelectorAll('[data-ch-toggle]:checked'), function (c) { return c.value; }); }
+
+  // One message per field, said next to it, checked when the field is left.
+  function say(field, text) {
+    var holder = field.closest('.pf__f') || field.parentNode;
+    var msg = holder.querySelector('.pf__msg');
+    field.classList.toggle('is-bad', Boolean(text));
+    field.setAttribute('aria-invalid', text ? 'true' : 'false');
+    if (!text) { if (msg) msg.remove(); return true; }
+    if (!msg) { msg = document.createElement('span'); msg.className = 'pf__msg'; holder.appendChild(msg); }
+    msg.textContent = text;
+    return false;
+  }
+  function check(field) {
+    var listingNeeded = channels().length > 0;
+    var v = (field.value || '').trim();
+    if (field.name === 'sku') return say(field, /^[A-Za-z0-9][A-Za-z0-9+&._-]{1,49}$/.test(v) ? '' : 'SKU 2-50 karakter: huruf, angka, - _ . + &');
+    if (field.name === 'name') return say(field, v ? '' : 'Nama produk wajib diisi');
+    if (!listingNeeded) return say(field, '');
+    if (field.name === 'title') return say(field, v.length >= 5 ? '' : 'Judul minimal 5 karakter');
+    if (field.name === 'description') return say(field, v.length >= 20 ? '' : 'Deskripsi minimal 20 karakter');
+    if (field.name === 'price') return say(field, Number(v) >= 100 ? '' : 'Harga minimal Rp100');
+    if (field.name === 'stock') return say(field, Number(v) >= 1 && Number(v) <= 99999 ? '' : 'Stok awal 1-99.999');
+    if (field.name === 'weightGram') return say(field, Number(v) >= 1 ? '' : 'Berat wajib diisi');
+    if (field.hasAttribute('data-dim')) {
+      var marketplace = channels().some(function (c) { return c !== 'shopify'; });
+      return say(field, !marketplace || Number(v) >= 1 ? '' : 'Wajib');
+    }
+    if (field === images) return say(images, images.files.length >= 1 && images.files.length <= 9 ? '' : 'Pilih 1-9 foto');
+    return true;
+  }
+  form.querySelectorAll('input, textarea').forEach(function (f) { f.addEventListener('blur', function () { if (f.value) check(f); }); });
+
+  form.addEventListener('submit', function (e) {
+    var fields = form.querySelectorAll('[name="sku"], [name="name"], [data-listing], [data-dim]');
+    var bad = Array.prototype.filter.call(fields, function (f) { return !check(f); });
+    if (channels().length > 0 && !check(images)) bad.push(images);
+    if (bad.length) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      err.hidden = false;
+      err.textContent = bad.length + ' kolom perlu diperbaiki sebelum produk dibuat.';
+      bad[0].focus();
+      return;
+    }
+    err.hidden = true;
+  }, true);
+})();
+`;
+
 function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {}, listing = null }) {
   const entry = live.get(product.sku);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const ledgerRow = ledger?.skus?.[product.sku];
 
-  const mine = plan
-    ? [...plan.changes, ...plan.review, ...plan.blocked].filter((c) => c.sku === product.sku)
-    : [];
-  const syncNote = mine.length > 0
-    ? `<div class="apply">
-        <span class="note">${mine.map((c) => `${escape(CHANNEL_LABEL[c.channel] ?? c.channel)}:
-          <b>${c.from} &rarr; ${c.to}</b>${c.reason ? ` <span class="flag">${escape(c.reason)}</span>` : ' <span class="ok">siap</span>'}`).join(' &middot; ')}</span>
-      </div>`
-    : '';
+
 
   /*
    * On and off, per channel. Off is reversible on every channel (deactivate, unlist,
@@ -6314,6 +6681,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       data-confirm="${active ? `Nonaktifkan ${escape(product.sku)} di ${escape(label)}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.` : `Aktifkan lagi ${escape(product.sku)} di ${escape(label)}?`}">
       ${hidden}
       <input type="hidden" name="action" value="listing_active">
+      <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
       <input type="hidden" name="sku" value="${escape(product.sku)}">
       <input type="hidden" name="channel" value="${key}">
       <input type="hidden" name="active" value="${active ? '0' : '1'}">
@@ -6407,6 +6775,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
     <form class="le" method="post" enctype="multipart/form-data" data-confirm="Kirim perubahan listing ${escape(product.sku)} ke kanal terpilih?">
       ${hidden}
       <input type="hidden" name="action" value="listing_edit">
+      <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
       <input type="hidden" name="sku" value="${escape(product.sku)}">
       <input type="hidden" name="before" value="${escape(JSON.stringify(before))}">
       <div class="le__top">
@@ -6431,8 +6800,11 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
           <span class="le__hint">Shopify tidak menyimpan dimensi.</span></div>
         <div class="le__f le__f--wide"><span>Foto</span>
           ${L?.images?.length ? `<div class="le__pics">${L.images.slice(0, 9).map((u) => `<img src="${escape(u)}" alt="" width="64" height="64" loading="lazy">`).join('')}</div>` : ''}
-          <input name="images" type="file" accept="image/jpeg,image/png" multiple>
-          <span class="le__hint">Foto baru <b>mengganti semua foto</b> di kanal terpilih, sesuai urutan dipilih. Maksimal 9, JPG/PNG, 10 MB per foto. Kosongkan bila foto tidak diubah.</span></div>
+          <label class="pf__drop pf__drop--s" data-drop>
+            <input name="images" type="file" accept="image/jpeg,image/png" multiple data-images>
+            ${svg('image')}<b>Ganti foto</b><small>Foto baru <b>mengganti semua foto</b> di kanal terpilih, sesuai urutan dipilih. Maksimal 9 JPG/PNG, 10 MB per foto. Kosongkan bila foto tidak diubah.</small>
+          </label>
+          <div class="pf__thumbs" data-thumbs aria-live="polite"></div></div>
       </div>
       <div class="le__go"><button type="submit">Simpan ke kanal terpilih</button></div>
     </form>` : '';
@@ -6456,14 +6828,14 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       ${entry?.shopify || switchedOff('shopify').length ? channelCard('shopify', 'Shopify', entry?.shopify?.rows?.[0]) : ''}
     </div>
     ${editListing}
+    ${masterEditor(product, csrf)}
     <p class="sec">Stok &amp; harga</p>
-    ${syncNote}
     <div class="apply">
-      <form class="edit" method="post" data-confirm="Setel stok ledger ${escape(product.sku)} menjadi {v}?">
+      <form class="edit" method="post" data-confirm="Setel stok induk ${escape(product.sku)} menjadi {v}? Semua kanal akan mengikutinya.">
         ${hidden}
         <input type="hidden" name="action" value="ledger">
         <input type="hidden" name="sku" value="${escape(product.sku)}">
-        <label class="dr__lbl" for="qty">Stok ledger</label>
+        <label class="dr__lbl" for="qty">Stok induk</label>
         <input id="qty" name="qty" type="number" min="0" step="1" inputmode="numeric"
           value="${ledgerRow ? ledgerRow.qty : ''}" placeholder="&mdash;">
         <button type="submit">Simpan</button>
@@ -6471,6 +6843,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       ${entry ? `<form class="edit" method="post" data-confirm="Setel harga ${escape(product.sku)} menjadi Rp{v} di kanal terpilih?">
         ${hidden}
         <input type="hidden" name="action" value="price">
+        <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
         <input type="hidden" name="sku" value="${escape(product.sku)}">
         <label class="dr__lbl" for="price">Harga</label>
         <input id="price" name="price" type="number" min="1" step="1" inputmode="numeric"

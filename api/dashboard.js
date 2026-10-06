@@ -102,10 +102,13 @@ import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { LISTING_CHANNELS, refOf, diffPatch } from '../src/listing.js';
-import { findProduct } from '../src/master.js';
-import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
+import { findProduct, isBaseProduct } from '../src/master.js';
+import { cleanProduct, saveMasterProduct, setMasterRemoved } from '../src/master-store.js';
+import { CREATORS } from '../src/listing-create.js';
+import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.js';
+import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
-import { followAfterOrder } from '../src/stock-watch.js';
+import { followAfterOrder, followStock } from '../src/stock-watch.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
@@ -255,7 +258,8 @@ const readCatalogSafely = () =>
 /** Which menu each action belongs to, for the activity log and the redirect after a failure. */
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
-  listing_edit: 'products', listing_active: 'products',
+  listing_edit: 'products', listing_active: 'products', product_create: 'products',
+  product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
   label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', discard_manual: 'jurnal',
   manual_update: 'jurnal',
@@ -274,7 +278,9 @@ const USER_ACTIONS = new Set(['user_invite', 'user_resend', 'user_role', 'user_s
  * redirect anybody off this host.
  */
 export function afterWrite(outcome, form) {
-  const params = new URLSearchParams(String(form?.get('back') ?? '').replace(/^\?/, '').slice(0, 400));
+  // An outcome may name where it should land (a product just created has its own page);
+  // otherwise the form says where it came from.
+  const params = new URLSearchParams(String(outcome.back ?? form?.get('back') ?? '').replace(/^\?/, '').slice(0, 400));
   params.delete('done');
   params.delete('error');
   params.delete('yay');
@@ -360,16 +366,22 @@ async function handleWrite(form, ip, user, csrf) {
     if (!sku) throw new Error('SKU kosong');
     if (!Number.isInteger(qty) || qty < 0) throw new Error('jumlah harus bilangan bulat >= 0');
 
-    const ledger = (await loadLedger().catch(() => null)) ?? emptyLedger();
-    const before = ledger.skus[sku]?.qty ?? null;
-    const updated = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
-    await saveLedger(updated);
+    // A transaction on the one document the stock follower also writes: rewriting it whole
+    // from a copy read a moment ago could drop an order the follower had just counted.
+    let before = null;
+    await updateDoc(LEDGER_PATHNAME, (current) => {
+      const ledger = current ?? emptyLedger();
+      before = ledger.skus?.[sku]?.qty ?? null;
+      return setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
+    }, emptyLedger());
     // The stock view must show the number that was just saved, not a cached one.
     invalidate('catalog');
     invalidate('ledger');
+    // And every channel follows it now rather than at the next order or half hour.
+    void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
     console.log(`dashboard: ledger ${sku} -> ${qty}`);
     return {
-      view: 'products', message: `Ledger ${sku} disetel ke ${qty}`,
+      view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`, message: `Stok induk ${sku} disetel ke ${qty}, semua kanal mengikuti`,
       audit: { menu: 'products', verb: 'edit', target: sku, summary: `Mengubah stok ledger ${sku} dari ${before ?? '—'} menjadi ${qty}`, changes: [{ field: `stok ${sku}`, from: before, to: qty }] },
     };
   }
@@ -421,26 +433,33 @@ async function handleWrite(form, ip, user, csrf) {
     if (edits.length === 0 && vouched.size === 0) throw new Error('tidak ada perubahan untuk disimpan');
     if (edits.length > 200) throw new Error('terlalu banyak perubahan sekaligus');
 
-    let ledger = (await loadLedger().catch(() => null)) ?? emptyLedger();
+    // One transaction, for the same reason as a single edit: the stock follower writes
+    // this document too, and a whole-document rewrite could drop an order it had counted.
     let written = 0;
-    const changes = [];
-    for (const { sku, qty } of edits) {
-      // Only write what actually moved - unless the operator vouched for it, which is
-      // itself the change: the row stops being a seed and becomes a deliberate number.
-      const before = ledger.skus[sku]?.qty ?? null;
-      if (before === qty && !vouched.has(sku)) continue;
-      ledger = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
-      changes.push({ field: sku, from: before, to: qty, note: before === qty ? 'dikonfirmasi manual' : '' });
-      written += 1;
-    }
+    let changes = [];
+    await updateDoc(LEDGER_PATHNAME, (current) => {
+      let ledger = current ?? emptyLedger();
+      written = 0;
+      changes = [];
+      for (const { sku, qty } of edits) {
+        // Only write what actually moved - unless the operator vouched for it, which is
+        // itself the change: the row stops being a seed and becomes a deliberate number.
+        const before = ledger.skus?.[sku]?.qty ?? null;
+        if (before === qty && !vouched.has(sku)) continue;
+        ledger = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
+        changes.push({ field: sku, from: before, to: qty, note: before === qty ? 'dikonfirmasi manual' : '' });
+        written += 1;
+      }
+      return ledger;
+    }, emptyLedger());
     if (written === 0) return { view: 'stock', message: 'Tidak ada nilai yang berubah' };
 
-    await saveLedger(ledger);
     invalidate('ledger');
     invalidate('catalog');
+    void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
     console.log(`dashboard: ledger_batch ${written} skus`);
     return {
-      view: 'stock', message: `${written} stok disimpan ke ledger`,
+      view: 'stock', message: `${written} stok induk disimpan, semua kanal mengikuti`,
       audit: { menu: 'stock', verb: 'edit', target: `${written} SKU`, summary: `Mengubah stok ledger ${written} SKU: ${changes.slice(0, 3).map((c) => `${c.field} ${c.from ?? '—'}→${c.to}`).join(', ')}${changes.length > 3 ? ', …' : ''}`, changes },
     };
   }
@@ -911,6 +930,135 @@ async function handleWrite(form, ip, user, csrf) {
         summary: `${active ? 'Mengaktifkan' : 'Menonaktifkan'} ${sku} di ${LISTING_CHANNELS[channel].label}`,
         changes: [{ field: `status @ ${LISTING_CHANNELS[channel].label}`, to: active ? 'aktif' : 'nonaktif' }],
       },
+    };
+  }
+
+  /*
+   * A new product: into the master catalogue, and onto the channels ticked.
+   *
+   * Each marketplace takes its category, mandatory attributes, brand, logistics and (on
+   * TikTok) certificates from a listing the operator picks as the example; the product's
+   * own facts come from the form. Nothing is half-made out of sight: the master entry is
+   * written only once at least one channel accepted the listing, or when no channel was
+   * ticked at all - and the results say channel by channel what happened.
+   */
+  if (action === 'product_create') {
+    const { sku, entry } = cleanProduct({
+      sku: form.get('sku'), name: form.get('name'), variant: form.get('variant'), category: form.get('category'),
+      family: form.get('family'), aliases: form.get('aliases'), gift: form.get('gift') === '1',
+      components: form.getAll('part_sku').map((partSku, i) => ({ sku: partSku, qty: form.getAll('part_qty')[i] })),
+    }, { isNew: true });
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(CREATORS, c));
+    const draft = String(form.get('mode') ?? 'live') === 'draft';
+
+    const input = {
+      sku,
+      title: String(form.get('title') ?? '').trim(),
+      description: String(form.get('description') ?? '').replace(/\r\n/g, '\n').trim(),
+      price: Number(form.get('price')),
+      stock: Number(form.get('stock')),
+      weightGram: Number(form.get('weightGram')),
+      dims: { l: Number(form.get('dimL')), w: Number(form.get('dimW')), h: Number(form.get('dimH')) },
+    };
+    const files = form.getAll('images').filter((f) => f && typeof f === 'object' && f.size > 0);
+    if (picked.length > 0) {
+      if (input.title.length < 5 || input.title.length > 255) throw new Error('judul listing 5-255 karakter');
+      if (input.description.length < 20) throw new Error('deskripsi minimal 20 karakter');
+      if (!Number.isInteger(input.price) || input.price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
+      if (!Number.isInteger(input.stock) || input.stock < 1 || input.stock > 99999) throw new Error('stok awal 1-99.999');
+      if (!Number.isInteger(input.weightGram) || input.weightGram < 1) throw new Error('berat wajib diisi (gram)');
+      if (picked.some((c) => c !== 'shopify') && !['l', 'w', 'h'].every((k) => Number.isInteger(input.dims[k]) && input.dims[k] > 0)) {
+        throw new Error('dimensi paket wajib untuk Tokopedia/TikTok dan Shopee');
+      }
+      if (files.length < 1) throw new Error('minimal 1 foto');
+      if (files.length > 9) throw new Error('maksimal 9 foto');
+    }
+    const images = [];
+    for (const f of files) {
+      if (!/^image\/(jpeg|png)$/i.test(f.type)) throw new Error(`${f.name}: hanya JPG atau PNG`);
+      if (f.size > 10 * 1024 * 1024) throw new Error(`${f.name}: lebih dari 10 MB`);
+      images.push({ buffer: Buffer.from(await f.arrayBuffer()), name: f.name, type: f.type });
+    }
+
+    const results = [];
+    for (const channel of picked) {
+      const templateId = channel === 'shopify' ? null : String(form.get(`template_${channel}`) ?? '').trim();
+      if (channel !== 'shopify' && !templateId) { results.push({ channel, status: 'failed', error: 'pilih listing contoh' }); continue; }
+      try {
+        const out = await CREATORS[channel](input, images, { templateId, draft });
+        results.push({ channel, status: 'ok', id: out.id, warnings: out.warnings });
+      } catch (error) {
+        results.push({ channel, status: 'failed', error: error.message });
+      }
+    }
+    const ok = results.filter((r) => r.status === 'ok');
+    const failed = results.filter((r) => r.status === 'failed');
+    if (picked.length > 0 && ok.length === 0) {
+      throw new Error(`tidak ada listing yang dibuat - ${failed.map((r) => `${LISTING_CHANNELS[r.channel].label}: ${r.error}`).join(' · ')}`);
+    }
+
+    await saveMasterProduct({ sku, entry });
+    // The opening stock is the master figure from the start, so the stock follower writes
+    // it rather than seeding from whichever channel read lowest.
+    if (picked.length > 0) {
+      await updateDoc(LEDGER_PATHNAME, (current) => setSku(current ?? emptyLedger(), sku, { qty: input.stock, needs_review: false, source: `baru:${user.email}` }), emptyLedger());
+      invalidate('ledger');
+    }
+    invalidate('catalog');
+    const label = (c) => LISTING_CHANNELS[c].label;
+    console.log(`dashboard: product_create ${sku} [${picked.join(',')}] ${ok.length} ok, ${failed.length} gagal`);
+    return {
+      view: 'products',
+      back: `?view=products&sku=${encodeURIComponent(sku)}`,
+      kind: failed.length ? 'error' : 'ok',
+      message: picked.length === 0
+        ? `${sku} ditambahkan ke master`
+        : `${sku} dibuat${draft ? ' sebagai draft' : ''} di ${ok.map((r) => label(r.channel)).join(', ')}${failed.length ? `; gagal di ${failed.map((r) => `${label(r.channel)} (${r.error})`).join(', ')}` : ''}`,
+      celebrate: failed.length ? null : 'Produk dibuat',
+      audit: {
+        menu: 'products', verb: 'add', target: sku,
+        summary: `Membuat produk ${sku} (${entry.name}${entry.variant ? ` ${entry.variant}` : ''})${picked.length ? ` di ${picked.map(label).join(', ')}${draft ? ' sebagai draft' : ''}` : ' di master'}`,
+        changes: [
+          { field: 'nama', to: entry.name }, { field: 'kategori', to: entry.category },
+          ...(picked.length ? [{ field: 'harga', to: input.price }, { field: 'stok awal', to: input.stock }] : []),
+          ...results.map((r) => ({ field: label(r.channel), to: r.status === 'ok' ? String(r.id) : 'gagal', note: r.error ?? (r.warnings ?? []).join('; ') })),
+        ],
+      },
+    };
+  }
+
+  /** The master's own facts about a product: name, grouping, aliases, bundle recipe. */
+  if (action === 'product_master') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const current = findProduct(sku);
+    if (!current || current.sku !== sku) throw new Error(`${sku} tidak ada di master`);
+    const { entry } = cleanProduct({
+      sku, name: form.get('name'), variant: form.get('variant'), category: form.get('category'),
+      family: form.get('family'), aliases: form.get('aliases'), gift: form.get('gift') === '1',
+      components: form.getAll('part_sku').map((partSku, i) => ({ sku: partSku, qty: form.getAll('part_qty')[i] })),
+    }, { isNew: false });
+    await saveMasterProduct({ sku, entry });
+    invalidate('catalog');
+    const changes = ['name', 'variant', 'category', 'family', 'aliases', 'components', 'gift']
+      .filter((k) => JSON.stringify(current[k] ?? null) !== JSON.stringify(entry[k] ?? null))
+      .map((k) => ({ field: k, from: JSON.stringify(current[k] ?? null), to: JSON.stringify(entry[k] ?? null) }));
+    return {
+      view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`,
+      message: changes.length ? `Data master ${sku} disimpan` : `Data master ${sku} tidak berubah`,
+      audit: { menu: 'products', verb: 'edit', target: sku, summary: `Mengubah data master ${sku}`, changes },
+    };
+  }
+
+  /** Out of the catalogue the screens offer, or back into it. Never deleted. */
+  if (action === 'product_remove') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const removed = String(form.get('removed') ?? '1') === '1';
+    await setMasterRemoved(sku, removed);
+    invalidate('catalog');
+    return {
+      view: 'products', back: removed ? '?view=products' : `?view=products&sku=${encodeURIComponent(sku)}`,
+      message: removed ? `${sku} dihapus dari daftar produk (bisa dikembalikan)` : `${sku} dikembalikan ke daftar produk`,
+      audit: { menu: 'products', verb: 'edit', target: sku, summary: `${removed ? 'Menghapus' : 'Mengembalikan'} ${sku} ${removed ? 'dari' : 'ke'} daftar produk master` },
     };
   }
 
@@ -1531,6 +1679,7 @@ export default async function handler(req, res) {
         selected,
         images: await imagesByKey(),
         listing: selected ? await listingContent(catalog, selected) : null,
+        creating: url.searchParams.get('new') === '1',
       }));
       return;
     }

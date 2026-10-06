@@ -97,6 +97,11 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = 10 * 60 * 1000;
 server.headersTimeout = 65 * 1000;
 
+// The catalogue edited from the dashboard is laid over the base list before the first
+// request, and refreshed every minute so a change made elsewhere reaches this process.
+await import('./src/master-store.js').then(async (m) => { await m.loadMasterOverlay(); m.watchMasterOverlay(); })
+  .catch((error) => console.warn(`master: perubahan katalog tidak dimuat - ${error.message}`));
+
 server.listen(PORT, HOST, () => {
   console.log(`treelogy siap di http://${HOST}:${PORT} (state: ${process.env.STATE_BACKEND || 'auto'})`);
   warmDashboard();

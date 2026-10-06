@@ -1,6 +1,6 @@
 import { SOURCES } from './sources.js';
 import { MANUAL_SOURCES, PREFIXES, isManualSource, sourceShips } from './prefix.js';
-import { findProduct, PRODUCTS } from '../master.js';
+import { findProduct, PRODUCTS, onMasterChange } from '../master.js';
 import { InvoiceError, withoutEmoji } from './invoice.js';
 import { channelDayStart, channelDate, channelToday } from '../clock.js';
 
@@ -29,11 +29,14 @@ export const SOURCE_OPTIONS = MANUAL_SOURCES.map((prefix) => ({
 }));
 
 /** Products worth offering, newest naming first; gifts are sellable too (as a zero line). */
-export const SELLABLE = PRODUCTS.map((p) => ({
+const sellable = () => PRODUCTS.map((p) => ({
   sku: p.sku,
   name: p.variant ? `${p.name} - ${p.variant}` : p.name,
   category: p.category,
 }));
+// Rebuilt when the catalogue is edited from the dashboard; importers read the binding live.
+export let SELLABLE = sellable();
+onMasterChange(() => { SELLABLE = sellable(); });
 
 /**
  * What a SKU costs on the storefront, under whichever spelling Shopify listed it with.

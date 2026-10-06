@@ -36,6 +36,9 @@ function describeOpenHandles() {
 }
 
 try {
+  // The catalogue edited from the dashboard, laid over the base list before any command
+  // reads it - the half-hourly stock run included.
+  await import('../src/master-store.js').then((m) => m.loadMasterOverlay());
   process.exitCode = await run(process.argv.slice(2));
 } finally {
   // An open Redis client would otherwise keep the process alive after the command is done.

@@ -252,22 +252,19 @@ test('a form that writes to a marketplace confirms with the value it will write'
 
 test('the products view confirms both the ledger edit and the marketplace write', () => {
   const withPlan = { ...plan, changes: [{ sku: 'A', channel: 'tiktok', from: 1, to: 2, ref: {} }] };
-  const list = renderProducts({ catalog, ledger, plan: withPlan, ...common });
-  assert.match(list, /data-confirm="Tulis 1 perubahan/, 'the apply bar should confirm');
+  // The apply bar is gone: the stock follower writes the master figure to every channel
+  // itself. What is left to confirm on this page is the master edit.
 
   const detail = renderProducts({ catalog, ledger, plan: withPlan, selected: 'MRS-002', ...common });
   assert.match(detail, /data-confirm="[^"]*\{v\}/, 'the ledger edit should quote its value');
 });
 
-test('the sync bar only appears when there is something to sync', () => {
-  const quiet = renderProducts({ catalog, ledger, plan, ...common });
-  assert.ok(!quiet.includes('class="sync"'), 'an empty plan needs no bar');
-
+test('no sync bar waits for approval: the stock follower writes on its own', () => {
   const busy = renderProducts({
     catalog, ledger, ...common,
     plan: { ...plan, changes: [{ sku: 'A', channel: 'tiktok', from: 1, to: 2, ref: {} }] },
   });
-  assert.ok(busy.includes('class="sync"'), 'a pending change should surface');
+  assert.ok(!busy.includes('class="sync"'), 'tidak ada bar yang menunggu persetujuan');
 });
 
 test('stock has its own editing surface, separate from browsing products', async () => {

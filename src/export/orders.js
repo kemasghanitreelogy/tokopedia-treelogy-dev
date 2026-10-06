@@ -1,5 +1,5 @@
 import { CHANNELS, MANUAL_CHANNEL, STAGE_META, channelMeta } from '../omni.js';
-import { findProduct, PRODUCTS } from '../master.js';
+import { findProduct, PRODUCTS, onMasterChange } from '../master.js';
 import { PREFIXES } from '../mekari/prefix.js';
 import { zoneForChannel } from '../clock.js';
 import { excelSerial, toCsv, toXlsx } from './sheet.js';
@@ -27,7 +27,7 @@ const CHANNEL_IDS = new Set(EXPORT_CHANNELS.map((c) => c.id));
  * Grouped the way somebody thinks about the shelf rather than in catalogue order, and
  * labelled with the variant, because "Moringa Capsules" on its own is three products.
  */
-export const EXPORT_PRODUCTS = PRODUCTS.map((product) => ({
+const exportProducts = () => PRODUCTS.map((product) => ({
   sku: product.sku,
   name: product.name,
   // One variant is written with an HTML entity in the master list; a checkbox label is
@@ -35,7 +35,10 @@ export const EXPORT_PRODUCTS = PRODUCTS.map((product) => ({
   variant: String(product.variant ?? '').replaceAll('&middot;', '\u00B7'),
   category: product.category,
 }));
-const PRODUCT_SKUS = new Set(EXPORT_PRODUCTS.map((p) => p.sku));
+// Rebuilt when the catalogue is edited from the dashboard; importers read the binding live.
+export let EXPORT_PRODUCTS = exportProducts();
+let PRODUCT_SKUS = new Set(EXPORT_PRODUCTS.map((p) => p.sku));
+onMasterChange(() => { EXPORT_PRODUCTS = exportProducts(); PRODUCT_SKUS = new Set(EXPORT_PRODUCTS.map((p) => p.sku)); });
 
 /** What each group of the shelf is called. */
 export const PRODUCT_GROUPS = {

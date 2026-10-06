@@ -45,7 +45,7 @@ export const CATEGORIES = {
  * data - GIFT-OMC90/OMC180 is either one, and 'Inside Out  Moringa Protocol' does not say
  * which protocol - and those remain visible as unknown rather than guessed.
  */
-export const PRODUCTS = [
+const BASE_PRODUCTS = [
   // --- Moringa Powder
   { sku: 'OMP-45-001', name: 'Moringa Powder', variant: '45 gram', category: 'powder', aliases: ['OMP45', '1731010082174765019'] },
   { sku: 'OMP-90-001', name: 'Moringa Powder', variant: '90 gram', category: 'powder', aliases: ['OMP90', '1729838939428915163'] },
@@ -143,11 +143,64 @@ export const PRODUCTS = [
   },
 ];
 
-const BY_SKU = new Map();
-for (const product of PRODUCTS) {
-  BY_SKU.set(product.sku, product);
-  for (const alias of product.aliases ?? []) BY_SKU.set(alias, product);
+/*
+ * The list above is the base; the dashboard keeps changes to it in the state store
+ * (src/master-store.js) and they are laid over it here.
+ *
+ * An entry for a SKU above replaces the fields it names; an entry for a new SKU adds a
+ * product; a SKU listed as removed leaves the catalogue the screens offer - the products
+ * page, the manual form, the export, the forecast - but is still found by its spelling.
+ * Old orders still name it, and an invoice for one must still find its Jurnal code.
+ *
+ * PRODUCTS is a live binding: reassigned when the overlay changes, so every module that
+ * imports it reads the current list. Anything that builds its own copy at load time
+ * subscribes with onMasterChange and rebuilds.
+ */
+export let PRODUCTS = BASE_PRODUCTS;
+let BY_SKU = new Map();
+let REMOVED = new Set();
+const listeners = new Set();
+
+function index(products) {
+  const map = new Map();
+  for (const product of products) {
+    map.set(product.sku, product);
+    for (const alias of product.aliases ?? []) map.set(alias, product);
+  }
+  return map;
 }
+
+/**
+ * Lay the stored changes over the base list.
+ *
+ * @param {{products?: Record<string, object>, removed?: string[]}|null} overlay
+ */
+export function applyMasterOverlay(overlay) {
+  const changes = overlay?.products ?? {};
+  const removed = new Set(overlay?.removed ?? []);
+  const merged = BASE_PRODUCTS.map((p) => (changes[p.sku] ? { ...p, ...changes[p.sku], sku: p.sku, custom: true } : p));
+  for (const [sku, entry] of Object.entries(changes)) {
+    if (!BASE_PRODUCTS.some((p) => p.sku === sku)) merged.push({ ...entry, sku, custom: true, added: true });
+  }
+  // Removed products still resolve: the index is built from everything.
+  BY_SKU = index(merged);
+  REMOVED = removed;
+  PRODUCTS = merged.filter((p) => !removed.has(p.sku));
+  for (const fn of listeners) fn(PRODUCTS);
+}
+
+/** Call fn whenever the catalogue changes. Returns the unsubscribe. */
+export function onMasterChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+/** Every product, removed ones included - for the page that lets one be restored. */
+export const allProducts = () => [...new Set(BY_SKU.values())];
+export const isRemoved = (sku) => REMOVED.has(sku);
+export const isBaseProduct = (sku) => BASE_PRODUCTS.some((p) => p.sku === sku);
+
+applyMasterOverlay(null);
 
 export const findProduct = (sku) => BY_SKU.get(sku) ?? null;
 /** What a product is grouped under for display: its family, or its own name. */

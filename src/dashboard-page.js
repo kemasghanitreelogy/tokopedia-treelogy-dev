@@ -3800,6 +3800,7 @@ export function renderManual({
         <input type="hidden" name="csrf" value="${escape(csrf)}">
         <input type="hidden" name="view" value="jurnal">
         <input type="hidden" name="action" value="${edit ? 'manual_update' : 'manual_invoice'}">
+        ${edit ? '' : '<input type="hidden" name="back" value="?view=jurnal&amp;add=1">'}
 
         <div class="mx">
           <div class="panel">
@@ -3815,8 +3816,11 @@ export function renderManual({
               <div class="flds">
                 <div class="fld fld--mono">
                   <label for="code">Kode transaksi</label>
+                  <!-- The hyphen is escaped: browsers compile pattern with the v flag, where a bare
+                       trailing "-" in a class is a syntax error and the whole pattern is silently
+                       dropped. Unescaped, this checked nothing, and LB-260921-000011~ got through. -->
                   <input id="code" name="code" value="${escape(edit ? edit.id : code)}" required maxlength="43"
-                         pattern="[A-Za-z]{2}-[A-Za-z0-9-]{1,40}" ${edit ? 'readonly' : 'data-code'}>
+                         pattern="[A-Za-z]{2}-[A-Za-z0-9\\-]{1,40}" ${edit ? 'readonly' : 'data-code'}>
                   ${edit ? '<span class="fld__hint">Kode tidak bisa diubah: ini yang menghubungkan transaksi ini dengan fakturnya di Jurnal.</span>' : ''}
                 </div>
                 <div class="fld">
@@ -4503,6 +4507,66 @@ export function renderManual({
         picks.hidden = false;
         linked.setAttribute('aria-expanded', 'true');
       }
+    });
+  }
+
+  /*
+   * What was typed survives a refusal.
+   *
+   * A sale the server turns down comes back to this form with the reason on top, and it
+   * used to come back empty: the email Ika typed was wrong, and the products, prices and
+   * the 100% discount went with it. The draft is kept in this tab only, written on the
+   * press and dropped the moment a save goes through; the code is not restored, because
+   * a fresh one is reserved for every opening of the form.
+   */
+  var DRAFT = 'mx-draft';
+  var params = new URLSearchParams(location.search);
+  if (form.querySelector('[name="action"]').value === 'manual_invoice') {
+    if (params.has('error')) {
+      var draft = null;
+      try { draft = JSON.parse(sessionStorage.getItem(DRAFT) || 'null'); } catch (e) {}
+      if (draft && draft.source !== 'RS') {
+        var pick = form.querySelector('input[name="source"][value="' + draft.source + '"]');
+        if (pick) { pick.checked = true; pick.dispatchEvent(new Event('change', { bubbles: true })); }
+        ['date', 'shipping', 'buyer', 'buyerPhone', 'buyerEmail', 'shipTo', 'carrier', 'note'].forEach(function (name) {
+          var field = form.querySelector('[name="' + name + '"]:not([type="hidden"])') || form.querySelector('[name="' + name + '"]');
+          if (field && draft.fields && draft.fields[name] !== undefined) field.value = draft.fields[name];
+        });
+        (draft.lines || []).forEach(function (line, index) {
+          if (index > 0) document.getElementById('addln').click();
+          var row = lines.querySelectorAll('[data-row]')[index];
+          if (!row) return;
+          var select = row.querySelector('select');
+          select.value = line.sku;
+          showPicture(row);
+          row.querySelector('[name="qty"]').value = line.qty;
+          row.querySelector('[name="unitPrice"]').value = line.unitPrice;
+          row.querySelector('[name="unitDiscount"]').value = line.unitDiscount;
+          var mode = row.querySelector('.seg__b[data-mode="' + (line.discountMode === 'pct' ? 'pct' : 'rp') + '"]');
+          if (mode) mode.click();
+        });
+        if (dateField.value) refreshCode();
+      }
+    } else {
+      try { sessionStorage.removeItem(DRAFT); } catch (e) {}
+    }
+    form.addEventListener('submit', function () {
+      var source = form.querySelector('input[name="source"]:checked');
+      var fields = {};
+      ['date', 'shipping', 'buyer', 'buyerPhone', 'buyerEmail', 'shipTo', 'carrier', 'note'].forEach(function (name) {
+        var field = form.querySelector('[name="' + name + '"]:not([type="hidden"])') || form.querySelector('[name="' + name + '"]');
+        if (field) fields[name] = field.value;
+      });
+      var kept = Array.prototype.map.call(lines.querySelectorAll('[data-row]'), function (row) {
+        return {
+          sku: row.querySelector('select').value,
+          qty: row.querySelector('[name="qty"]').value,
+          unitPrice: row.querySelector('[name="unitPrice"]').value,
+          unitDiscount: row.querySelector('[name="unitDiscount"]').value,
+          discountMode: row.querySelector('[name="discountMode"]').value,
+        };
+      }).filter(function (l) { return l.sku; });
+      try { sessionStorage.setItem(DRAFT, JSON.stringify({ source: source ? source.value : '', fields: fields, lines: kept })); } catch (e) {}
     });
   }
 

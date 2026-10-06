@@ -1,7 +1,7 @@
 import { SOURCES } from './sources.js';
 import { MANUAL_SOURCES, PREFIXES, isManualSource, sourceShips } from './prefix.js';
 import { findProduct, PRODUCTS } from '../master.js';
-import { InvoiceError } from './invoice.js';
+import { InvoiceError, withoutEmoji } from './invoice.js';
 import { channelDayStart, channelDate, channelToday } from '../clock.js';
 
 /**
@@ -277,9 +277,11 @@ export function buildManualOrder(input) {
   // One customer, typed once. The name on the form is the contact the invoice is raised
   // against in Jurnal and the name on the parcel; left empty, the source itself is the
   // customer, which is what a consignment shop's monthly invoice wants anyway.
-  const buyer = String(input.buyer ?? '').trim();
+  // Names become a Jurnal contact, and Jurnal refuses an emoji in its free text (a memo
+  // with one sank a sale on 24 Sep). The memo was cleaned; the contact name never was.
+  const buyer = withoutEmoji(String(input.buyer ?? '')).trim();
   if (buyer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
-  const customer = String(input.customer ?? '').trim() || buyer || PREFIXES[source].label;
+  const customer = withoutEmoji(String(input.customer ?? '')).trim() || buyer || PREFIXES[source].label;
   if (customer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
   const buyerPhone = String(input.buyerPhone ?? '').trim();
   if (buyerPhone.length > 40) throw new InvoiceError('nomor telepon terlalu panjang');

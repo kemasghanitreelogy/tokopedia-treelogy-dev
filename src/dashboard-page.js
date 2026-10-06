@@ -6804,6 +6804,9 @@ const PF_STYLE = `
 .ct__pubf .ct__mode{flex-direction:row; align-items:center; gap:.45rem; font-size:.8rem; color:var(--fg)}
 .ct__pubf small{font-size:.7rem; color:var(--dim)}
 .ct__note{font-size:.74rem; color:var(--dim)}
+.ct__need{display:flex; flex-direction:column; gap:.4rem; font-size:.74rem; color:var(--muted)}
+.ct__need input{font:inherit; font-size:.84rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; width:100%}
+.ct__dims{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.4rem}
 .pe__pics{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem}
 .pe__pics figure{position:relative; margin:0}
 .pe__pics img{width:84px; height:84px; object-fit:cover; border-radius:10px; border:1px solid var(--line); display:block; background:var(--panel)}
@@ -7001,6 +7004,17 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
             <input type="hidden" name="action" value="product_publish"><input type="hidden" name="sku" value="${escape(product.sku)}">
             <input type="hidden" name="channel" value="${key}">
             ${key === 'shopify' ? '' : `<label><span>Salin kategori &amp; atribut dari</span><select name="template">${list.map((l) => `<option value="${escape(String(l.id))}" ${l.category === product.category ? 'selected' : ''} data-cat="${escape(l.category)}">${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>`}
+            ${(() => {
+              // What the new channel needs that the live listing does not say: Shopify keeps
+              // no box, and Shopee and TikTok require one. Asked here rather than refused.
+              const L0 = listing?.data;
+              const needDims = key !== 'shopify' && !L0?.dims;
+              const needWeight = !L0?.weightGram;
+              if (!needDims && !needWeight) return '';
+              return `<div class="ct__need"><span>Listing sumber belum punya ${[needWeight ? 'berat' : '', needDims ? 'dimensi' : ''].filter(Boolean).join(' &amp; ')}:</span>
+                ${needWeight ? '<input name="weightGram" type="number" min="1" step="1" inputmode="numeric" required placeholder="Berat (g)" aria-label="Berat paket (gram)" class="mono">' : ''}
+                ${needDims ? `<span class="ct__dims">${['dimL:P', 'dimW:L', 'dimH:T'].map((d) => { const [n, ph] = d.split(':'); return `<input name="${n}" type="number" min="1" step="1" inputmode="numeric" required placeholder="${ph} cm" aria-label="${ph === 'P' ? 'Panjang' : ph === 'L' ? 'Lebar' : 'Tinggi'} (cm)" class="mono">`; }).join('')}</span>` : ''}</div>`;
+            })()}
             <label class="ct__mode"><input type="checkbox" name="mode" value="draft"><span>Simpan sebagai draft dulu</span></label>
             <button class="pf__primary" type="submit">Publikasikan</button>
             <small>Judul, deskripsi, foto, berat dan dimensi diambil dari listing yang sedang tayang; stok dari stok induk.</small>

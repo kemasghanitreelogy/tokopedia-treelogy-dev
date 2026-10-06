@@ -187,16 +187,17 @@ const IMAGES_TTL_MS = 5 * 60_000;
  * says elsewhere: the live listing's content and pictures, the master stock, the price it
  * sells for. The example listing is the one given, or one of the same kind.
  */
-async function publishProduct(catalog, sku, channel, { templateId = null, draft = false } = {}) {
+async function publishProduct(catalog, sku, channel, { templateId = null, draft = false, dims = null, weightGram = null } = {}) {
   const product = findProduct(sku);
   if (!product || !Object.hasOwn(CREATORS, channel)) throw new Error('SKU atau kanal tidak valid');
   const entry = catalog.skus.find((e) => e.sku === product.sku);
   if (entry?.[channel]?.rows?.length) throw new Error(`sudah tayang di ${LISTING_CHANNELS[channel].label}`);
   const content = await listingContent(catalog, product.sku);
   if (!content?.data) throw new Error('belum tayang di kanal mana pun - buat lewat Tambah produk');
-  const L = content.data;
-  if (!L.weightGram) throw new Error('berat listing sumber tidak terbaca');
-  if (channel !== 'shopify' && !L.dims) throw new Error('dimensi listing sumber kosong');
+  // What the operator typed in for a box or weight the source does not have wins.
+  const L = { ...content.data, ...(dims ? { dims } : {}), ...(weightGram ? { weightGram } : {}) };
+  if (!L.weightGram) throw new Error('berat listing sumber tidak terbaca - isi beratnya di form publikasi');
+  if (channel !== 'shopify' && !L.dims) throw new Error('dimensi paket belum ada - isi dimensinya di form publikasi');
   let template = /^\d+$/.test(String(templateId ?? '')) ? String(templateId) : null;
   if (channel !== 'shopify' && !template) {
     // One of the same kind if there is one; the first live listing otherwise.
@@ -1133,8 +1134,11 @@ async function handleWrite(form, ip, user, csrf) {
     const sku = String(form.get('sku') ?? '').trim();
     const channel = String(form.get('channel') ?? '');
     const draft = String(form.get('mode') ?? 'live') === 'draft';
+    const n = (k) => Number(form.get(k));
+    const dims = ['dimL', 'dimW', 'dimH'].every((k) => Number.isInteger(n(k)) && n(k) > 0) ? { l: n('dimL'), w: n('dimW'), h: n('dimH') } : null;
     const out = await publishProduct(await readCatalog(), sku, channel, {
       templateId: String(form.get('template') ?? '').trim(), draft,
+      dims, weightGram: Number.isInteger(n('weightGram')) && n('weightGram') > 0 ? n('weightGram') : null,
     });
     invalidate('catalog');
     console.log(`dashboard: product_publish ${sku} -> ${channel} ${out.id}`);

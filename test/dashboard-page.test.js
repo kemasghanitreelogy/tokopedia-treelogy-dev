@@ -794,7 +794,8 @@ test('a free gift is a product the form offers, at nothing', () => {
   // to a WhatsApp order most often.
   const markup = manualPage({ prices: { ...SHOPIFY_PRICES, 'Travel-Pouch': 0, 'Oil-3ml': 0 } }).split('<script>')[0];
   assert.match(markup, /value="Travel-Pouch" data-price="0"/);
-  assert.match(markup, /value="Oil-3ml" data-price="0"/);
+  // Shopee's Oil-3ml is the same bottle as Mystery-Gift, and its price is found under it.
+  assert.match(markup, /value="Mystery-Gift" data-price="0"/);
   // And a row at zero is a finished row, not an unfinished one - only an empty price box
   // is unfinished.
   const script = manualPage({ prices: SHOPIFY_PRICES }).split('<script>').pop();

@@ -60,7 +60,9 @@ export const PRODUCTS = [
 
   // --- Set & aksesori
   { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS', 'Ritual-Set'] },
-  { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop', '47115609438'] },
+  // 1736924837905663963 is TikTok's sku_id for the scoop it gives away: the same scoop off
+  // the same shelf, so like FREE-OMC-* it is this product, not a product of its own.
+  { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop', '47115609438', '1736924837905663963'] },
   { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set', aliases: ['Bamboo Whisk - 120 prongs'] },
   // Named from its SKU: it sold 33 times in the last 30 days but is no longer listed on
   // any channel, so the only description of it left is the code itself. Its orders carried
@@ -70,13 +72,13 @@ export const PRODUCTS = [
 
   // --- Free gift
   { sku: 'Travel-Pouch', name: 'Travel Pouch', category: 'gift', gift: true, aliases: ['GFT-POUCH-001', 'Travel Pouch'] },
-  { sku: 'Mystery-Gift', name: 'Mystery Gift', category: 'gift', gift: true, aliases: ['GFT-MYST-001', 'Mystery Gift'] },
-  { sku: '1736924837905663963', name: 'Bamboo Scoop (free gift)', category: 'gift', gift: true },
-  // Listed on Shopee as "(FREE GIFT - DO NOT ORDER) Treelogy Gift with Purchase / Seed
-  // Oil 3ml", priced at Rp1.000.000 and discounted by exactly the same amount, so it
-  // costs the buyer nothing. Read off the live order, not guessed. Ten Shopee invoices
-  // from 18 to 25 September were refused for want of this line.
-  { sku: 'Oil-3ml', name: 'Moringa Seed Oil (free gift)', variant: '3 ml', category: 'gift', gift: true },
+  // The 3 ml seed oil given with an order. Shopify sells it as GFT-MYST-001 "Moringa Seed
+  // Oil 3ml"; Shopee lists it as Oil-3ml, "(FREE GIFT - DO NOT ORDER) Treelogy Gift with
+  // Purchase / Seed Oil 3ml", priced at Rp1.000.000 and discounted by exactly that, so it
+  // costs the buyer nothing (ten Shopee invoices from 18 to 25 September were refused for
+  // want of that line). One bottle, one card: Tokopedia's Mystery Gift and Shopee's
+  // Oil-3ml carried the same 195 in stock.
+  { sku: 'Mystery-Gift', name: 'Mystery Gift', variant: 'Moringa Seed Oil 3 ml', category: 'gift', gift: true, aliases: ['GFT-MYST-001', 'Mystery Gift', 'Oil-3ml'] },
 
   // --- Bundle: a recipe, so availability can be derived from the parts
   /*

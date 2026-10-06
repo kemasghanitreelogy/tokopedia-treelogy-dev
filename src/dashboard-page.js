@@ -5653,7 +5653,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
   const groups = new Map();
   for (const entry of listed) {
     const product = findProduct(entry.sku);
-    const key = product?.name ?? entry.title ?? entry.sku;
+    const key = (product && familyOf(product)) || entry.title || entry.sku;
     if (!groups.has(key)) {
       groups.set(key, { name: key, category: product?.category ?? 'zz', items: [] });
     }

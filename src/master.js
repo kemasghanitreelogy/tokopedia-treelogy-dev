@@ -61,7 +61,6 @@ export const PRODUCTS = [
   { sku: 'OMO-60-001', name: 'Moringa Seed Oil', variant: '60 ml', category: 'oil', aliases: ['OMO60', '1731010063360886747'] },
 
   // --- Set & aksesori
-  { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS', 'Ritual-Set'] },
   // 1736924837905663963 is TikTok's sku_id for the scoop it gives away: the same scoop off
   // the same shelf, so like FREE-OMC-* it is this product, not a product of its own.
   { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop', '47115609438', '1736924837905663963'] },
@@ -110,18 +109,21 @@ export const PRODUCTS = [
   // Shopify spells these three MRS-002+45gr, MRS-003+90gr and MRS-004+180gr - variants of
   // its "Moringa Ritual Set" product - and until they were aliased here they matched
   // nothing, so the Ritual Set bundles showed no Shopify stock and were never synced to it.
+  // The set on its own sits with the three that add powder to it: one Shopify product with
+  // four variants, so one family on the products and stock pages.
+  { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', family: 'Moringa Ritual Set', category: 'bundle', aliases: ['MRS', 'Ritual-Set'] },
   {
-    sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram · Starter', category: 'bundle',
+    sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram · Starter', family: 'Moringa Ritual Set', category: 'bundle',
     aliases: ['MRS45', 'MRS-002+45', 'MRS-002+45gr'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-45-001', qty: 1 }],
   },
   {
-    sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram · Daily Wellness', category: 'bundle',
+    sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram · Daily Wellness', family: 'Moringa Ritual Set', category: 'bundle',
     aliases: ['MRS90', 'MRS-003+90', 'MRS-003+90gr'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-90-001', qty: 1 }],
   },
   {
-    sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram · Complete', category: 'bundle',
+    sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram · Complete', family: 'Moringa Ritual Set', category: 'bundle',
     aliases: ['MRS180', 'MRS-004+180', 'MRS-004+180gr'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },

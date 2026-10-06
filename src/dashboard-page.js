@@ -3842,7 +3842,11 @@ export function renderManual({
                 </div>
                 <div class="fld">
                   <label for="buyerEmail">Email</label>
-                  <input id="buyerEmail" name="buyerEmail" type="email" maxlength="120" autocomplete="off" value="${escape(edit?.buyerEmail ?? '')}" placeholder="nama@contoh.id">
+                  <!-- The browser calls ika@treelogy a valid address and the server does not, so a typed-in
+                       sale was refused after submit and the whole form lost. The pattern is the
+                       server's own rule (src/mekari/manual.js), caught before anything is sent. -->
+                  <input id="buyerEmail" name="buyerEmail" type="email" maxlength="120" autocomplete="off" value="${escape(edit?.buyerEmail ?? '')}" placeholder="nama@contoh.id"
+                         pattern="[^\\s@]+@[^\\s@]+\\.[^\\s@]+" title="Email lengkap dengan domain, mis. nama@treelogy.com">
                 </div>
                 <div class="fld">
                   <label for="carrier">Kurir</label>

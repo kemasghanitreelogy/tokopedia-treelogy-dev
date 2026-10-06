@@ -796,7 +796,6 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 .card:hover{border-color:var(--brand); background:var(--panel); transform:translateY(-2px);
   box-shadow:0 8px 20px -14px color-mix(in srgb,var(--brand) 70%,transparent)}
 .card:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
-.card--flag{box-shadow:inset 3px 0 0 var(--warn)}
 .card__top{display:flex; align-items:baseline; gap:.35rem; flex-wrap:wrap}
 .card__name{font-size:.82rem; font-weight:500; line-height:1.25}
 .card__sku{font-size:.64rem; color:var(--dim)}
@@ -1216,7 +1215,6 @@ tbody tr:hover{background:var(--panel-2)}
 .bx__head{display:flex; align-items:baseline; justify-content:space-between; gap:.75rem}
 .bx__h{margin:0; font-size:.7rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
 .bx__make{font-size:.78rem; color:var(--muted)}
-.bx__make b{font-size:.95rem; color:var(--fg); font-weight:600; margin-right:.2rem}
 .bx__list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.15rem}
 .bx__row{display:grid; grid-template-columns:44px minmax(0,1fr) auto 4.5rem; align-items:center; gap:.75rem; padding:.4rem .45rem;
   border-radius:10px; color:inherit; text-decoration:none; cursor:pointer; transition:background-color var(--t-fast, 160ms)}
@@ -1231,9 +1229,6 @@ tbody tr:hover{background:var(--panel-2)}
 .bx__stock{display:flex; flex-direction:column; align-items:flex-end; line-height:1.15}
 .bx__stock b{font-size:.95rem; font-weight:600}
 .bx__stock span{font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
-.bx__stock--limit b{color:var(--brand)}
-.bx__warn{display:flex; align-items:center; gap:.4rem; margin:.1rem 0 0; font-size:.78rem; color:var(--bad)}
-.bx__warn .ico{width:15px; height:15px; flex:none}
 @media (max-width:980px){.pd__hero--bx{grid-template-columns:160px minmax(0,1fr)} .pd__hero--bx .bx{grid-column:1/-1} .pd__hero--bx .pd__img{width:160px; height:160px}}
 @media (prefers-reduced-motion:reduce){.bx__row{transition:none}}
 @media (max-width:640px){.pd__hero{grid-template-columns:minmax(0,1fr)} .pd__img{width:100%; height:auto; aspect-ratio:1}}
@@ -6094,7 +6089,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 
   const listedCount = PRODUCTS.filter((p) => live.has(p.sku)).length;
   const missing = PRODUCTS.filter((p) => !live.has(p.sku));
-  const drift = partial ? [] : unmapped(catalog.skus).filter((e) => e.tiktok || e.shopee);
+  const drift = partial ? [] : unmapped(catalog.skus).filter((e) => e.tiktok || e.shopee || e.shopify);
 
   // One table, not one per category: separate tables cannot share column widths, so the
   // numbers drifted out of alignment down the page and the header repeated six times.
@@ -6105,40 +6100,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     const sy = entry?.shopify?.qty ?? null;
     const price = entry?.tiktok?.price ?? entry?.shopee?.price ?? entry?.shopify?.price ?? null;
 
-    let status;
-    let attention = false;
-    if (blindTo.length > 0) {
-      status = `<span class="stop">${escape(blindTo.join(' & '))} tidak terbaca</span>`;
-    } else if (!entry) {
-      status = '<span class="flag">belum tayang</span>';
-      attention = true;
-    } else if (tt === null) {
-      status = '<span class="flag">hanya Shopee</span>';
-      attention = true;
-    } else if (sp === null) {
-      status = '<span class="flag">hanya Tokopedia</span>';
-      attention = true;
-    } else if (tt !== sp || (sy !== null && sy !== tt)) {
-      const values = [tt, sp, sy].filter((v) => v !== null);
-      status = `<span class="flag">stok beda ${Math.max(...values) - Math.min(...values)}</span>`;
-      attention = true;
-    } else {
-      status = '<span class="ok">sinkron</span>';
-    }
-
-    let build = '';
-    if (isBundle(product) && !partial) {
-      const info = buildableFrom(product, stockOf);
-      const listed = stockOf(product.sku);
-      if (info.buildable !== null && listed !== null && listed > info.buildable) {
-        build = `<span class="stop" title="Komponen hanya cukup untuk ${info.buildable}">oversell ${listed - info.buildable}</span>`;
-        attention = true;
-      } else if (info.buildable !== null) {
-        build = `<span class="dim">rakit ${info.buildable}</span>`;
-      }
-    }
-
-    return { entry, tt, sp, sy, price, status, build, attention };
+    return { entry, tt, sp, sy, price };
   };
 
   // A card grid rather than a table: the table spent most of its width on empty space in
@@ -6185,17 +6147,16 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     .join('');
 
   function cardFor(product) {
-    // The status tags ("hanya Shopee", "stok beda", "rakit 152") were taken off the card on
-    // request: the three figures above already say it. A card that needs a look still
-    // carries the flag, which is what "Perlu perhatian" filters on.
-    const { tt, sp, sy, price, attention } = cell(product);
+    // No status tags and no flag, on request: these are display figures rather than a
+    // warehouse count, so a card has nothing to warn about. The three numbers say it all.
+    const { tt, sp, sy, price } = cell(product);
     const qty = (value, failed) =>
       failed ? '<span class="stop">?</span>'
       : value === null ? '<span class="dim">&mdash;</span>'
       : `<b>${value}</b>`;
 
     const picture = images[product.sku];
-    return `<a class="card${attention ? ' card--flag' : ''}" href="?view=products&sku=${encodeURIComponent(product.sku)}">
+    return `<a class="card" href="?view=products&sku=${encodeURIComponent(product.sku)}">
       ${picture?.thumb
         ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="180" decoding="async">`
         : '<span class="card__img card__img--none" aria-hidden="true">tanpa gambar</span>'}
@@ -6247,7 +6208,6 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       ${stat('Belum tayang', partial ? '?' : String(missing.length), missing.length > 0 && !partial ? 'flag' : '')}
       ${stat('Di luar master', partial ? '?' : String(drift.length))}
       <span class="strip__grow"></span>
-      <button class="chip" type="button" id="only">Perlu perhatian</button>
       <input class="search" id="q" type="search" aria-label="Cari produk atau SKU" placeholder="Cari produk atau SKU...">
     </div>`,
     body: `${syncBar}${groups}${driftNote}
@@ -6260,16 +6220,14 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
   var rows = Array.prototype.slice.call(document.querySelectorAll('#rows .card'));
   var groups = Array.prototype.slice.call(document.querySelectorAll('#rows .grp'));
   var shown = document.getElementById('shown');
-  var onlyBtn = document.getElementById('only');
   var search = document.getElementById('q');
-  var state = { only: false, q: '' };
+  var state = { q: '' };
 
   function apply() {
     var n = 0;
     rows.forEach(function (row) {
       var text = row.textContent.toLowerCase();
-      var ok = (!state.only || row.classList.contains('card--flag'))
-        && (state.q === '' || text.indexOf(state.q) !== -1);
+      var ok = state.q === '' || text.indexOf(state.q) !== -1;
       row.hidden = !ok;
       if (ok) n++;
     });
@@ -6288,11 +6246,6 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     shown.textContent = n + ' produk';
   }
 
-  onlyBtn.addEventListener('click', function () {
-    state.only = !state.only;
-    onlyBtn.classList.toggle('is-on', state.only);
-    apply();
-  });
   search.addEventListener('input', function (e) {
     state.q = e.target.value.trim().toLowerCase();
     apply();
@@ -6341,25 +6294,25 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
   };
 
   const bundle = isBundle(product) ? buildableFrom(product, stockOf) : null;
-  const listedQty = stockOf(product.sku);
 
   /*
    * What the bundle is made of, beside its picture rather than under the channel cards.
    *
-   * One row per component: its own picture, what it is, how many go in, and how many the
-   * shelf holds. The summary says how many whole bundles that makes; the warning appears
-   * only when a listing promises more than that, so a quiet panel means nothing is wrong.
+   * One row per component: its own picture, what it is, how many go in, and the figure
+   * its listings show. Nothing here is judged against anything else - no "can be built",
+   * no over-listing warning, no limiting component. These figures are display numbers,
+   * not jars on a shelf (the operator's own word), so a comparison between them would be
+   * an alert about nothing.
    */
   const composition = bundle
     ? `<section class="bx" aria-labelledby="bx-h">
         <header class="bx__head">
           <h2 class="bx__h" id="bx-h">Isi bundle</h2>
-          <span class="bx__make"><b class="mono">${bundle.buildable ?? '?'}</b> bisa dirakit</span>
+          <span class="bx__make">${bundle.parts.length} produk</span>
         </header>
         <ul class="bx__list">${bundle.parts.map((part) => {
           const component = findProduct(part.sku);
           const pic = images[part.sku];
-          const short = part.possible !== null && bundle.buildable !== null && part.possible === bundle.buildable && bundle.parts.length > 1;
           return `<li><a class="bx__row" href="?view=products&sku=${encodeURIComponent(part.sku)}">
             ${pic?.thumb
               ? `<img class="bx__pic" src="${escape(pic.thumb)}" alt="" width="44" height="44" loading="lazy" decoding="async">`
@@ -6369,14 +6322,11 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
               <span class="bx__sku mono">${escape(part.sku)}</span>
             </span>
             <span class="bx__qty mono" aria-label="${part.qty} per bundle">&times;${part.qty}</span>
-            <span class="bx__stock${short ? ' bx__stock--limit' : ''}" title="${short ? 'Komponen ini yang membatasi jumlah rakitan' : ''}">
+            <span class="bx__stock">
               <b class="mono">${part.available ?? '&mdash;'}</b><span>stok</span>
             </span>
           </a></li>`;
         }).join('')}</ul>
-        ${listedQty !== null && bundle.buildable !== null && listedQty > bundle.buildable
-          ? `<p class="bx__warn">${svg('warn')}<span>Listing memasang <b class="mono">${listedQty}</b>, lebih dari yang bisa dirakit.</span></p>`
-          : ''}
       </section>`
     : '';
 

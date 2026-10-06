@@ -183,7 +183,9 @@ const NAMED_SETS = [
  */
 export function matchSku({ productName = '', productUrl = '', variantName = '' } = {}) {
   const named = NAMED_SETS.find(([pattern]) => pattern.test(productName));
-  if (named && findProduct(named[1])) return named[1];
+  // The master's own spelling, so a review lands with the product even when the pattern
+  // names one of its aliases.
+  if (named && findProduct(named[1])) return findProduct(named[1]).sku;
   // A pack the master list does not know is not any one of its parts.
   if (/\b(pack|paket|bundle|bundling)\b/i.test(productName)) return null;
 

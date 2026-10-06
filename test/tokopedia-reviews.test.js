@@ -66,9 +66,9 @@ test('the variant name decides the SKU; the URL id is the fallback for listings 
 });
 
 test('sets are recognised by name before any quantity in the title is read', () => {
-  assert.equal(matchSku({ productName: 'TREELOGY - Inside Out Moringa Protocol 30 Days | Set Suplemen' }), 'The-Inside-&-Out30');
-  assert.equal(matchSku({ productName: 'TREELOGY - Inside Out Moringa Protocol 60 Days | Set Suplemen' }), 'The-Inside-&-Out60');
-  assert.equal(matchSku({ productName: 'Treelogy The Discovery Pack | Minyak, Bubuk & Kapsul Kelor' }), 'The-Discovery-Pack');
+  assert.equal(matchSku({ productName: 'TREELOGY - Inside Out Moringa Protocol 30 Days | Set Suplemen' }), 'Inside-Out-Protocol');
+  assert.equal(matchSku({ productName: 'TREELOGY - Inside Out Moringa Protocol 60 Days | Set Suplemen' }), 'Inside-Out-60-Protocol180+30');
+  assert.equal(matchSku({ productName: 'Treelogy The Discovery Pack | Minyak, Bubuk & Kapsul Kelor' }), 'Discovery-Pack');
   assert.equal(matchSku({ productName: 'TREELOGY The Movement & Relief | Moringa Daun Kelor Premium' }), 'The-Movement-&-Relief');
   assert.equal(matchSku({ productName: 'TREELOGY - Moringa Ritual Set | Komplit Bamboo Set Box & Bubuk 45 gram' }), 'MRS-001');
   assert.equal(matchSku({ productName: '(FREE GIFT - DO NOT ORDER) TREELOGY Moringa Capsule', variantName: 'Capsules 180' }), 'OMC-180-001');

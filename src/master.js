@@ -62,14 +62,11 @@ export const PRODUCTS = [
   { sku: 'MRS-001', name: 'Moringa Ritual Set', variant: 'tanpa powder', category: 'set', aliases: ['MRS', 'Ritual-Set'] },
   { sku: 'Bamboo-Scoop', name: 'Bamboo Scoop', category: 'set', aliases: ['Bamboo Scoop', '47115609438'] },
   { sku: 'Bamboo-Whisk', name: 'Bamboo Whisk', variant: '120 prongs', category: 'set', aliases: ['Bamboo Whisk - 120 prongs'] },
-  { sku: 'The-Inside-&-Out30', name: 'Inside Out Moringa Protocol', variant: '30 hari', category: 'set' },
-  { sku: 'The-Inside-&-Out60', name: 'Inside Out Moringa Protocol', variant: '60 hari', category: 'set' },
   // Named from its SKU: it sold 33 times in the last 30 days but is no longer listed on
   // any channel, so the only description of it left is the code itself. Its orders carried
   // the parent listing's title ("Inside Out Moringa Protocol"), which would make it
   // indistinguishable from the 30- and 60-day entries above.
   { sku: 'The-Movement-&-Relief', name: 'The Movement & Relief', category: 'set', aliases: ['The Movement & Relief', 'The-Movement-Relief'] },
-  { sku: 'The-Discovery-Pack', name: 'The Discovery Pack', variant: 'listing Shopee', category: 'set', aliases: ['The Discovery Pack'] },
 
   // --- Free gift
   { sku: 'Travel-Pouch', name: 'Travel Pouch', category: 'gift', gift: true, aliases: ['GFT-POUCH-001', 'Travel Pouch'] },
@@ -82,8 +79,21 @@ export const PRODUCTS = [
   { sku: 'Oil-3ml', name: 'Moringa Seed Oil (free gift)', variant: '3 ml', category: 'gift', gift: true },
 
   // --- Bundle: a recipe, so availability can be derived from the parts
+  /*
+   * Three cards that were one product each, folded onto it.
+   *
+   * The-Inside-&-Out30 and -60 are Shopee's spelling of the two protocols, read off the
+   * listings themselves: "Bundling Paket 30 Hari: 90 capsules + 30 ml Oil" and "60 Hari:
+   * 180 capsules + 30 ml Oil" - the same contents as Inside-Out-Protocol and
+   * Inside-Out-60-Protocol180+30, which TikTok (The-IO30/IO60) and Shopify already sell,
+   * with the same stock on both. The-Discovery-Pack was a Shopee listing of the Discovery
+   * Pack and is live nowhere now. Kept apart, each sat on the products page as a card
+   * with no picture and a stock figure for one channel only, and its sales counted as a
+   * product of their own. Jurnal already holds the master codes these now post under.
+   */
   {
     sku: 'Discovery-Pack', name: 'The Discovery Pack', category: 'bundle',
+    aliases: ['The-Discovery-Pack', 'The Discovery Pack'],
     components: [
       { sku: 'OMP-45-001', qty: 1 },
       { sku: 'OMO-30-001', qty: 1 },
@@ -106,11 +116,11 @@ export const PRODUCTS = [
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },
   {
-    sku: 'Inside-Out-Protocol', aliases: ['The-IO30-Protocol90+30'], name: 'Inside Out Protocol', category: 'bundle',
+    sku: 'Inside-Out-Protocol', aliases: ['The-IO30-Protocol90+30', 'The-Inside-&-Out30'], name: 'Inside Out Protocol', category: 'bundle',
     components: [{ sku: 'OMC-90-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }],
   },
   {
-    sku: 'Inside-Out-60-Protocol180+30', aliases: ['The-IO60-Protocol180+30'], name: 'Inside Out Protocol 60 Days',
+    sku: 'Inside-Out-60-Protocol180+30', aliases: ['The-IO60-Protocol180+30', 'The-Inside-&-Out60'], name: 'Inside Out Protocol 60 Days',
     variant: 'Caps 180 + Oil 30ml', category: 'bundle',
     components: [{ sku: 'OMC-180-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }],
   },

@@ -68,18 +68,31 @@ export function mapImages(products) {
   const bySku = new Map();
   const unknown = [];
 
-  for (const product of products) {
-    if (product.status !== 'ACTIVE') continue;
+  /*
+   * Live products first, then the rest only where nothing live had a picture.
+   *
+   * A product that is no longer on sale in Shopify is still a product somebody sells
+   * elsewhere: The Movement & Relief is a Draft here and a card on the dashboard with no
+   * picture. A live listing always wins, so a retired one can never replace the photo of
+   * something still selling - the second pass only fills what the first left empty.
+   */
+  const ordered = [
+    ...products.filter((p) => p.status === 'ACTIVE'),
+    ...products.filter((p) => p.status !== 'ACTIVE'),
+  ];
+  for (const product of ordered) {
+    const live = product.status === 'ACTIVE';
     const productImage = product.featuredMedia?.preview?.image ?? null;
     for (const variant of product.variants?.nodes ?? []) {
       if (!variant.sku) continue;
       const master = findProduct(variant.sku);
-      if (!master) { unknown.push(variant.sku); continue; }
+      if (!master) { if (live) unknown.push(variant.sku); continue; }
       const variantImage = variant.media?.nodes?.[0]?.preview?.image ?? null;
       const image = variantImage ?? productImage;
       if (!image?.url) continue;
       // First live variant to claim a master SKU keeps it; a duplicate listing of the
       // same SKU does not get to overwrite a variant-specific picture with a generic one.
+      if (!live && bySku.has(master.sku)) continue;
       const existing = bySku.get(master.sku);
       if (existing && existing.source === 'variant' && !variantImage) continue;
       bySku.set(master.sku, {

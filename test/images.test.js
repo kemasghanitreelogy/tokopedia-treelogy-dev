@@ -27,9 +27,17 @@ test('a channel alias lands on the master SKU, an unknown SKU is reported not gu
   assert.deepEqual(unknown, ['SKU-ASING']);
 });
 
-test('a draft or archived listing contributes nothing', () => {
-  const { images } = mapImages([node({ status: 'DRAFT', featured: img('p.jpg'), variants: [['OMP-45-001', null]] })]);
-  assert.equal(images.size, 0);
+test('a draft or archived listing only fills a picture nothing live has', () => {
+  // The Movement & Relief is a Shopify draft and a card with no picture; its draft photo
+  // is better than none. A live listing still wins whichever order the two arrive in.
+  const alone = mapImages([node({ status: 'DRAFT', featured: img('draft.jpg'), variants: [['The-Movement-&-Relief', null]] })]);
+  assert.match(alone.images.get('The-Movement-&-Relief').url, /draft\.jpg/);
+
+  const both = mapImages([
+    node({ status: 'ARCHIVED', featured: img('old.jpg'), variants: [['OMP-45-001', img('old-variant.jpg')]] }),
+    node({ featured: img('live.jpg'), variants: [['OMP-45-001', null]] }),
+  ]);
+  assert.match(both.images.get('OMP-45-001').url, /live\.jpg/);
 });
 
 test('a generic duplicate listing cannot overwrite a variant-specific picture', () => {

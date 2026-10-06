@@ -6194,12 +6194,13 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
   const driftNote = drift.length > 0
     ? `<p class="sec">Tayang tapi belum ada di data master</p>
        <div class="scroll"><table>
-         <thead><tr><th>SKU</th><th>Judul listing</th><th class="num">Tokped</th><th class="num">Shopee</th></tr></thead>
+         <thead><tr><th>SKU</th><th>Judul listing</th><th class="num">Tokped</th><th class="num">Shopee</th><th class="num">Shopify</th></tr></thead>
          <tbody>${drift.map((e) => `<tr>
            <td class="mono nowrap">${escape(e.sku)}</td>
            <td>${escape(e.title)}</td>
            <td class="num mono">${e.tiktok?.qty ?? '&mdash;'}</td>
            <td class="num mono">${e.shopee?.qty ?? '&mdash;'}</td>
+           <td class="num mono">${e.shopify?.qty ?? '&mdash;'}</td>
          </tr>`).join('')}</tbody>
        </table></div>`
     : '';

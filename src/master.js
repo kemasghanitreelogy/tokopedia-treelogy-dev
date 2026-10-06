@@ -107,19 +107,22 @@ export const PRODUCTS = [
       { sku: 'OMC-90-001', qty: 1 },
     ],
   },
+  // Shopify spells these three MRS-002+45gr, MRS-003+90gr and MRS-004+180gr - variants of
+  // its "Moringa Ritual Set" product - and until they were aliased here they matched
+  // nothing, so the Ritual Set bundles showed no Shopify stock and were never synced to it.
   {
     sku: 'MRS-002', name: 'Moringa Ritual Set + Powder', variant: '45 gram · Starter', category: 'bundle',
-    aliases: ['MRS45', 'MRS-002+45'],
+    aliases: ['MRS45', 'MRS-002+45', 'MRS-002+45gr'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-45-001', qty: 1 }],
   },
   {
     sku: 'MRS-003', name: 'Moringa Ritual Set + Powder', variant: '90 gram · Daily Wellness', category: 'bundle',
-    aliases: ['MRS90', 'MRS-003+90'],
+    aliases: ['MRS90', 'MRS-003+90', 'MRS-003+90gr'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-90-001', qty: 1 }],
   },
   {
     sku: 'MRS-004', name: 'Moringa Ritual Set + Powder', variant: '180 gram · Complete', category: 'bundle',
-    aliases: ['MRS180', 'MRS-004+180'],
+    aliases: ['MRS180', 'MRS-004+180', 'MRS-004+180gr'],
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },
   {

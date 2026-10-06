@@ -1154,3 +1154,12 @@ test('the queue is one table, newest parcel first', () => {
     assert.ok(html.includes(`>${column}<`), `kolom ${column} tidak ada`);
   }
 });
+
+test('a duplicate picks its own listing as the example, even one shared by several SKUs', () => {
+  // The capsules listing on TikTok holds 90, 180 and 270; remembering only the first SKU
+  // seen left a duplicate of the 90 with no example selected, and the create was refused.
+  const row = (sku) => ({ qty: 5, rows: [{ sku, qty: 5, status: 'ACTIVATE', productId: '1731', skuId: sku, title: 'Kapsul' }], conflict: false });
+  const shared = { skus: ['OMC-180-001', 'OMC-90-001', 'OMC-270-001'].map((sku) => ({ sku, title: sku, tiktok: row(sku) })), errors: {} };
+  const html = renderProducts({ catalog: shared, ledger, ...common, creating: true, duplicateOf: { sku: 'OMC-90-001', listing: null } });
+  assert.match(html, /name="template_tiktok"[^>]*>[\s\S]*?<option value="1731"[^>]*selected/, 'listing kapsul terpilih untuk duplikat OMC-90');
+});

@@ -6568,8 +6568,12 @@ function exampleListings(catalog, channel) {
   for (const entry of catalog?.skus ?? []) {
     for (const row of entry[channel]?.rows ?? []) {
       const id = channel === 'tiktok' ? row.productId : row.itemId;
-      if (!id || seen.has(String(id))) continue;
-      seen.set(String(id), { id, title: row.title ?? entry.title, sku: entry.sku, category: findProduct(entry.sku)?.category ?? '' });
+      if (!id) continue;
+      // One listing can carry several SKUs (the capsules listing holds 90, 180 and 270);
+      // every one is remembered, so a duplicate of any of them finds its own listing.
+      const known = seen.get(String(id));
+      if (known) { if (!known.skus.includes(entry.sku)) known.skus.push(entry.sku); continue; }
+      seen.set(String(id), { id, title: row.title ?? entry.title, sku: entry.sku, skus: [entry.sku], category: findProduct(entry.sku)?.category ?? '' });
     }
   }
   return [...seen.values()].sort((a, b) => String(a.title).localeCompare(String(b.title)));
@@ -6600,7 +6604,7 @@ function productForm({ catalog, csrf, duplicateOf = null }) {
         <span class="pf__chname">${label}</span></label>
       <p class="pf__chnote">${note}</p>
       ${options ? `<label class="pf__f"><span>Salin kategori &amp; atribut dari</span>
-        <select name="template_${key}" data-template ${src ? 'data-fixed' : ''}>${list.map((l) => `<option value="${escape(String(l.id))}" data-category="${escape(l.category)}" ${src && l.sku === src.sku ? 'selected' : ''}>${escape(String(l.title).slice(0, 90))}</option>`).join('')}</select></label>` : ''}
+        <select name="template_${key}" data-template ${src ? 'data-fixed' : ''}>${list.map((l) => `<option value="${escape(String(l.id))}" data-category="${escape(l.category)}" ${src && l.skus.includes(src.sku) ? 'selected' : ''}>${escape(String(l.title).slice(0, 90))}</option>`).join('')}</select></label>` : ''}
     </div>`;
   };
   return `<a class="pf-back" href="${src ? `?view=products&amp;sku=${encodeURIComponent(src.sku)}` : '?view=products'}">${svg('chevL')}<span>${src ? escape(src.name) : 'Produk'}</span></a>
@@ -6996,7 +7000,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
             ${hidden}${back}
             <input type="hidden" name="action" value="product_publish"><input type="hidden" name="sku" value="${escape(product.sku)}">
             <input type="hidden" name="channel" value="${key}">
-            ${key === 'shopify' ? '' : `<label><span>Salin kategori &amp; atribut dari</span><select name="template">${list.map((l) => `<option value="${escape(String(l.id))}" ${l.category === product.category ? 'selected' : ''}>${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>`}
+            ${key === 'shopify' ? '' : `<label><span>Salin kategori &amp; atribut dari</span><select name="template">${list.map((l) => `<option value="${escape(String(l.id))}" ${l.category === product.category ? 'selected' : ''} data-cat="${escape(l.category)}">${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>`}
             <label class="ct__mode"><input type="checkbox" name="mode" value="draft"><span>Simpan sebagai draft dulu</span></label>
             <button class="pf__primary" type="submit">Publikasikan</button>
             <small>Judul, deskripsi, foto, berat dan dimensi diambil dari listing yang sedang tayang; stok dari stok induk.</small>

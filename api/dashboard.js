@@ -197,7 +197,7 @@ async function publishProduct(catalog, sku, channel, { templateId = null, draft 
   const L = content.data;
   if (!L.weightGram) throw new Error('berat listing sumber tidak terbaca');
   if (channel !== 'shopify' && !L.dims) throw new Error('dimensi listing sumber kosong');
-  let template = templateId;
+  let template = /^\d+$/.test(String(templateId ?? '')) ? String(templateId) : null;
   if (channel !== 'shopify' && !template) {
     // One of the same kind if there is one; the first live listing otherwise.
     const pool = [];
@@ -1289,7 +1289,7 @@ async function handleWrite(form, ip, user, csrf) {
     const results = [];
     for (const channel of picked) {
       const templateId = channel === 'shopify' ? null : String(form.get(`template_${channel}`) ?? '').trim();
-      if (channel !== 'shopify' && !templateId) { results.push({ channel, status: 'failed', error: 'pilih listing contoh' }); continue; }
+      if (channel !== 'shopify' && !/^\d+$/.test(templateId)) { results.push({ channel, status: 'failed', error: 'pilih listing contoh' }); continue; }
       try {
         const out = await CREATORS[channel](input, images, { templateId, draft });
         results.push({ channel, status: 'ok', id: out.id, warnings: out.warnings });

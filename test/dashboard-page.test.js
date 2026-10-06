@@ -197,7 +197,7 @@ test('a bundle detail shows its components and what they can build', () => {
   assert.ok(html.includes('Isi bundle'), 'the recipe section is missing');
   assert.ok(html.includes('MRS-001'), 'a component is missing');
   assert.ok(html.includes('OMP-45-001'), 'a component is missing');
-  assert.ok(html.includes('Tokopedia + TikTok Shop') && html.includes('Shopee'), 'per-channel cards missing');
+  assert.ok(html.includes('class="cts"') && html.includes('Shopee'), 'per-channel tiles missing');
 });
 
 test('a product with no listing offers no price control', () => {
@@ -244,10 +244,22 @@ test('every page guards number inputs against wheel-scroll edits', () => {
   }
 });
 
-test('a form that writes to a marketplace confirms with the value it will write', () => {
+test('a product page is one editor with one save, and it remembers what it was filled with', () => {
+  // The omnichannel pattern: one form, one "Simpan & sinkronkan", and the server decides
+  // what changed against the values the page was rendered from.
   const html = renderProducts({ catalog, ledger, selected: 'MRS-002', ...common });
-  assert.match(html, /data-confirm="[^"]*\{v\}/, 'the confirmation should quote the value');
+  assert.equal((html.match(/value="product_save"/g) ?? []).length, 1, 'tepat satu form simpan');
+  assert.match(html, /name="before" value="[^"]*qty/, 'nilai awal ikut terkirim');
+  assert.match(html, /data-pe[\s>]/);
+  assert.ok(html.includes('Simpan &amp; sinkronkan'));
   assert.ok(!html.includes('onsubmit='), 'inline handlers cannot show the live value');
+});
+
+test('each channel tile offers the one action that fits where the product stands', () => {
+  const html = renderProducts({ catalog, ledger, selected: 'MRS-002', ...common });
+  assert.match(html, /ct--live[\s\S]*?value="listing_active"[\s\S]*?value="0"/, 'tayang -> nonaktifkan');
+  const none = renderProducts({ catalog, ledger, selected: 'Bamboo-Whisk', ...common });
+  assert.ok(none.includes('ct--none'), 'belum ada -> publikasikan');
 });
 
 test('the products view confirms both the ledger edit and the marketplace write', () => {
@@ -256,7 +268,7 @@ test('the products view confirms both the ledger edit and the marketplace write'
   // itself. What is left to confirm on this page is the master edit.
 
   const detail = renderProducts({ catalog, ledger, plan: withPlan, selected: 'MRS-002', ...common });
-  assert.match(detail, /data-confirm="[^"]*\{v\}/, 'the ledger edit should quote its value');
+  assert.match(detail, /data-confirm="Simpan perubahan MRS-002/, 'the one save asks first');
 });
 
 test('no sync bar waits for approval: the stock follower writes on its own', () => {

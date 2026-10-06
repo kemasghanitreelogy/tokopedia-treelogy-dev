@@ -87,6 +87,8 @@ icon.pencil = '<path d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L
 icon.userPlus = '<path d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM4 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 10.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/>';
 icon.check2 = '<path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>';
 icon.x = '<path d="M6 18 18 6M6 6l12 12"/>';
+icon.grid = '<path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"/>';
+icon.list = '<path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
 icon.image = '<path d="m2.25 15.75 5.16-5.16a2.25 2.25 0 0 1 3.18 0l5.16 5.16m-1.5-1.5 1.41-1.41a2.25 2.25 0 0 1 3.18 0l2.91 2.91m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
 icon.export = '<path d="M12 15V3m0 0L8.5 6.5M12 3l3.5 3.5M20.25 14.25v4.5a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-4.5"/>';
 
@@ -791,6 +793,56 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 .grp--fam .grp__n{font-weight:400; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase}
 .grp[hidden],.card[hidden]{display:none}
 
+.card{position:relative}
+.card__link{display:flex; flex-direction:column; gap:.25rem; color:inherit; text-decoration:none; border-radius:inherit}
+.card__link:focus-visible{outline:2px solid var(--brand); outline-offset:3px}
+.card__pick{position:absolute; top:.95rem; left:.95rem; z-index:2; display:grid; place-items:center; width:28px; height:28px; border-radius:8px; cursor:pointer;
+  background:color-mix(in srgb, var(--panel) 82%, transparent); border:1px solid var(--line); opacity:0; transition:opacity var(--t-fast)}
+.card:hover .card__pick, .card__pick:focus-within, .cards.is-picking .card__pick, .card.is-picked .card__pick{opacity:1}
+.card__pick input{accent-color:var(--brand); width:16px; height:16px; margin:0; cursor:pointer}
+.card.is-picked{border-color:var(--brand); box-shadow:0 0 0 1px var(--brand) inset}
+.card__dots{display:inline-flex; gap:.3rem; align-items:center}
+.dot{width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--dim)}
+.dot--live{background:var(--good, #6fbf73)}
+.dot--off{background:transparent; border:1.5px solid var(--muted)}
+.dot--none{background:transparent; border:1.5px dashed var(--dim)}
+.pl__bar{display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; padding:1rem 1rem 0}
+.pl__filters{display:flex; flex-wrap:wrap; gap:.35rem; flex:1}
+.pl__view{display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden}
+.pl__vbtn{display:grid; place-items:center; width:40px; height:36px; border:0; background:transparent; color:var(--muted); cursor:pointer}
+.pl__vbtn.is-on{background:var(--panel-2); color:var(--fg)}
+.pl__vbtn .ico{width:17px; height:17px}
+.pl__vbtn:focus-visible{outline:2px solid var(--brand); outline-offset:-2px}
+/* Table view: the same cards, laid out as rows - nothing re-rendered, just restyled. */
+.cards.is-table{grid-template-columns:minmax(0,1fr); gap:.3rem}
+.cards.is-table .card{padding:.4rem .6rem .4rem 3rem}
+.cards.is-table .card__pick{top:50%; left:.7rem; transform:translateY(-50%); opacity:1}
+.cards.is-table .card__link{display:grid; grid-template-columns:44px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.6fr) minmax(0,1fr); align-items:center; gap:.9rem}
+.cards.is-table .card__img{width:44px; height:44px; aspect-ratio:1; font-size:0}
+.cards.is-table .card__top{grid-column:2; grid-row:1}
+.cards.is-table .card__sku{grid-column:3; grid-row:1}
+.cards.is-table .card__stock{grid-column:4; grid-row:1; border:0; padding:0; margin:0}
+.cards.is-table .card__foot{grid-column:5; grid-row:1}
+.cards.is-table .card:hover{transform:none}
+.bk{position:sticky; bottom:0; z-index:20; margin:1rem; padding:.75rem .9rem; border:1px solid color-mix(in srgb, var(--brand) 45%, var(--line)); border-radius:var(--radius);
+  background:color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter:blur(var(--blur)); box-shadow:0 18px 40px -24px rgba(0,0,0,.6)}
+.bk__row{display:flex; align-items:center; gap:.45rem; flex-wrap:wrap}
+.bk__n{font-size:.86rem; margin-right:.4rem}
+.bk__btn{font:inherit; font-size:.8rem; min-height:38px; padding:.35rem .8rem; border-radius:999px; border:1px solid var(--line); background:var(--panel-2); color:var(--fg); cursor:pointer;
+  transition:border-color var(--t-fast)}
+.bk__btn:hover{border-color:var(--brand)}
+.bk__btn.is-on{border-color:var(--brand); color:var(--brand)}
+.bk__btn--bad:hover{border-color:var(--bad); color:var(--bad)}
+.bk__btn:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.bk[hidden], .bk__f[hidden]{display:none}
+.bk__f{display:flex; align-items:flex-end; gap:.6rem; flex-wrap:wrap; margin-top:.75rem; padding-top:.75rem; border-top:1px solid var(--line)}
+.bk__in{display:flex; flex-direction:column; gap:.25rem; font-size:.74rem; color:var(--muted)}
+.bk__in input, .bk__in select{font:inherit; font-size:.88rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; min-width:9rem}
+.bk__chs{display:flex; gap:.4rem; flex-wrap:wrap}
+.bk__chs label, .bk__chk{display:inline-flex; align-items:center; gap:.35rem; font-size:.8rem; padding:.35rem .6rem; min-height:40px; border:1px solid var(--line); border-radius:999px; cursor:pointer}
+.bk__chs input, .bk__chk input{accent-color:var(--brand); margin:0}
+.bk__note{font-size:.8rem; color:var(--muted); align-self:center}
+@media (max-width:760px){.cards.is-table .card__link{grid-template-columns:44px minmax(0,1fr); row-gap:.2rem} .cards.is-table .card__sku,.cards.is-table .card__stock,.cards.is-table .card__foot{grid-column:2; grid-row:auto}}
 .card{display:flex; flex-direction:column; gap:.25rem; padding:.55rem .6rem; text-decoration:none;
   color:var(--fg); background:var(--glass-2); border:1px solid var(--glass-line); border-radius:var(--radius-s);
   transition:border-color var(--t-base) var(--ease-out),background var(--t-base) var(--ease-out),transform var(--t-base) var(--ease-out)}
@@ -6051,7 +6103,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
  * makes "Moringa Powder, three sizes" visible again, and what lets a bundle be shown
  * against the components it is actually assembled from.
  */
-export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null, creating = false }) {
+export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null, creating = false, duplicateOf = null }) {
   const live = new Map(catalog.skus.map((e) => [e.sku, e]));
   const stockOf = (sku) => {
     const entry = live.get(sku);
@@ -6070,7 +6122,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 
   if (creating) {
     return shell({ user, csrf, title: 'Tambah produk', range, errors, shopeeShop, generatedAt, view: 'products',
-      hideRangeControls: true, flash, body: productForm({ catalog, csrf }), style: PF_STYLE, script: PF_SCRIPT });
+      hideRangeControls: true, flash, body: productForm({ catalog, csrf, duplicateOf }), style: PF_STYLE, script: PF_SCRIPT });
   }
 
   const detail = selected ? findProduct(selected) : null;
@@ -6085,7 +6137,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       stale: Boolean(catalog.stale),
       staleSince: catalog.savedAt ? wibStamp(catalog.savedAt) : null,
       kpis: '',
-      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images, listing }),
+      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images, listing, templates: { tiktok: exampleListings(catalog, 'tiktok'), shopee: exampleListings(catalog, 'shopee') } }),
       style: PF_STYLE,
       script: PF_SCRIPT,
     });
@@ -6171,7 +6223,15 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       : `<b>${value}</b>`;
 
     const picture = images[product.sku];
-    return `<a class="card" href="?view=products&sku=${encodeURIComponent(product.sku)}">
+    const entry = live.get(product.sku);
+    // Where it stands on each channel, for the dots and for the status filters.
+    const st = (key) => (entry?.[key]?.rows?.length ? 'live'
+      : (entry?.[`${key}_ignored`] ?? entry?.[key]?.ignored ?? []).some((r) => r.status !== 'DELETED') ? 'off' : 'none');
+    const states = { tiktok: st('tiktok'), shopee: st('shopee'), shopify: st('shopify') };
+    const href = `?view=products&sku=${encodeURIComponent(product.sku)}`;
+    return `<div class="card" data-sku="${escape(product.sku)}" data-st="${Object.entries(states).map(([k, v]) => `${k}:${v}`).join(' ')}">
+      <label class="card__pick"><input type="checkbox" data-pick value="${escape(product.sku)}" aria-label="Pilih ${escape(product.name)}${product.variant ? ` ${escape(product.variant)}` : ''}"></label>
+      <a class="card__link" href="${href}">
       ${picture?.thumb
         ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="180" decoding="async">`
         : '<span class="card__img card__img--none" aria-hidden="true">tanpa gambar</span>'}
@@ -6188,11 +6248,59 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       </span>
       <span class="card__foot">
         <span class="mono">${price === null ? '<span class="dim">&mdash;</span>' : escape(rupiah(price))}</span>
+        <span class="card__dots" aria-label="Status kanal">${[['tiktok', 'Tokopedia + TikTok'], ['shopee', 'Shopee'], ['shopify', 'Shopify']].map(([k, label]) =>
+          `<i class="dot dot--${states[k]}" title="${label}: ${states[k] === 'live' ? 'tayang' : states[k] === 'off' ? 'nonaktif' : 'belum ada'}"></i>`).join('')}</span>
       </span>
-    </a>`;
+      </a>
+    </div>`;
   }
 
-  const groups = `<div class="cards" id="rows">${cards}</div>`;
+  /*
+   * Filters by where a product stands, the questions an omnichannel list answers first:
+   * what is not on Shopee yet, what is switched off somewhere.
+   */
+  const FILTERS = [['all', 'Semua'], ['everywhere', 'Tayang di semua'], ['no-tiktok', 'Belum di Tokopedia/TikTok'],
+    ['no-shopee', 'Belum di Shopee'], ['no-shopify', 'Belum di Shopify'], ['off', 'Ada yang nonaktif']];
+  const toolbar = `<div class="pl__bar">
+      <div class="pl__filters" role="group" aria-label="Saring status kanal">${FILTERS.map(([k, label], i) =>
+        `<button class="chip${i === 0 ? ' is-on' : ''}" type="button" data-filter="${k}" aria-pressed="${i === 0}">${label}</button>`).join('')}</div>
+      <div class="pl__view" role="group" aria-label="Tampilan">
+        <button class="pl__vbtn is-on" type="button" data-view="grid" aria-pressed="true" title="Grid">${svg('grid')}<span class="visually-hidden">Grid</span></button>
+        <button class="pl__vbtn" type="button" data-view="table" aria-pressed="false" title="Tabel">${svg('list')}<span class="visually-hidden">Tabel</span></button>
+      </div>
+    </div>`;
+
+  /*
+   * What a selection can do, all at once. Each action asks for its one value, confirms
+   * with the number it will write, and answers with how many listings it reached.
+   */
+  const CH = [['tiktok', 'Tokopedia + TikTok'], ['shopee', 'Shopee'], ['shopify', 'Shopify']];
+  const chSelect = (name) => `<select name="${name}" aria-label="Kanal">${CH.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>`;
+  const chBoxes = () => `<span class="bk__chs">${CH.map(([k, l]) => `<label><input type="checkbox" name="channel" value="${k}" checked><span>${l}</span></label>`).join('')}</span>`;
+  const bulkForm = (action, label, inner, confirmText) => `<form class="bk__f" method="post" data-bulk="${action}" data-confirm="${escape(confirmText)}" hidden>
+      <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="action" value="${action}">${inner}
+      <button class="pf__primary" type="submit">${label}</button><button class="pf__ghost" type="button" data-bulk-close>Batal</button></form>`;
+  const bulkBar = `<div class="bk" data-bk hidden role="region" aria-label="Aksi untuk produk terpilih">
+      <div class="bk__row">
+        <span class="bk__n" aria-live="polite"><b data-bk-n>0</b> dipilih</span>
+        <button class="bk__btn" type="button" data-bulk-open="bulk_price">Ubah harga</button>
+        <button class="bk__btn" type="button" data-bulk-open="bulk_stock">Set stok induk</button>
+        <button class="bk__btn" type="button" data-bulk-open="bulk_active_off">Nonaktifkan</button>
+        <button class="bk__btn" type="button" data-bulk-open="bulk_active_on">Aktifkan</button>
+        <button class="bk__btn" type="button" data-bulk-open="bulk_publish">Publikasikan</button>
+        <button class="bk__btn bk__btn--bad" type="button" data-bulk-open="bulk_remove">Hapus dari daftar</button>
+        <span class="pe__grow"></span>
+        <button class="bk__btn" type="button" data-bk-clear>Batal pilih</button>
+      </div>
+      ${bulkForm('bulk_price', 'Setel harga', `<label class="bk__in"><span>Harga (Rp)</span><input name="price" type="number" min="100" step="1" inputmode="numeric" required class="mono"></label>${chBoxes()}`, 'Setel harga Rp{price} untuk {n} produk di kanal terpilih?')}
+      ${bulkForm('bulk_stock', 'Setel stok', `<label class="bk__in"><span>Stok induk</span><input name="qty" type="number" min="0" step="1" inputmode="numeric" required class="mono"></label>`, 'Setel stok induk {n} produk menjadi {qty}? Semua kanal akan mengikutinya.')}
+      ${bulkForm('bulk_active', 'Nonaktifkan', `<input type="hidden" name="active" value="0"><label class="bk__in"><span>Di kanal</span>${chSelect('channel')}</label>`, 'Nonaktifkan {n} produk di kanal terpilih? Bisa diaktifkan lagi.').replace('data-bulk="bulk_active"', 'data-bulk="bulk_active_off"')}
+      ${bulkForm('bulk_active', 'Aktifkan', `<input type="hidden" name="active" value="1"><label class="bk__in"><span>Di kanal</span>${chSelect('channel')}</label>`, 'Aktifkan lagi {n} produk di kanal terpilih?').replace('data-bulk="bulk_active"', 'data-bulk="bulk_active_on"')}
+      ${bulkForm('bulk_publish', 'Publikasikan', `<label class="bk__in"><span>Ke kanal</span>${chSelect('channel')}</label><label class="bk__chk"><input type="checkbox" name="mode" value="draft"><span>Sebagai draft</span></label>`, 'Publikasikan {n} produk ke kanal terpilih memakai konten & foto listing yang sudah ada?')}
+      ${bulkForm('bulk_remove', 'Hapus dari daftar', '<span class="bk__note">Listing di marketplace tidak disentuh; bisa dikembalikan.</span>', 'Hapus {n} produk dari daftar? Bisa dikembalikan.')}
+    </div>`;
+
+  const groups = `${toolbar}<div class="cards" id="rows">${cards}</div>${bulkBar}`;
 
   const driftNote = drift.length > 0
     ? `<p class="sec">Tayang tapi belum ada di data master</p>
@@ -6209,6 +6317,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     : '';
 
   return shell({ user,
+    style: PF_STYLE,
     csrf,
     title: 'Produk',
     range, errors, shopeeShop, generatedAt,
@@ -6237,13 +6346,32 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
   var groups = Array.prototype.slice.call(document.querySelectorAll('#rows .grp'));
   var shown = document.getElementById('shown');
   var search = document.getElementById('q');
-  var state = { q: '' };
+  var grid = document.getElementById('rows');
+  var state = { q: '', filter: 'all' };
+  var KEYS = ['tiktok', 'shopee', 'shopify'];
+
+  function standing(row) {
+    var map = {};
+    (row.dataset.st || '').split(' ').forEach(function (p) { var kv = p.split(':'); map[kv[0]] = kv[1]; });
+    return map;
+  }
+  function passes(row) {
+    var st = standing(row);
+    switch (state.filter) {
+      case 'everywhere': return KEYS.every(function (k) { return st[k] === 'live'; });
+      case 'no-tiktok': return st.tiktok !== 'live';
+      case 'no-shopee': return st.shopee !== 'live';
+      case 'no-shopify': return st.shopify !== 'live';
+      case 'off': return KEYS.some(function (k) { return st[k] === 'off'; });
+      default: return true;
+    }
+  }
 
   function apply() {
     var n = 0;
     rows.forEach(function (row) {
       var text = row.textContent.toLowerCase();
-      var ok = state.q === '' || text.indexOf(state.q) !== -1;
+      var ok = (state.q === '' || text.indexOf(state.q) !== -1) && passes(row);
       row.hidden = !ok;
       if (ok) n++;
     });
@@ -6265,6 +6393,79 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
   search.addEventListener('input', function (e) {
     state.q = e.target.value.trim().toLowerCase();
     apply();
+  });
+
+  document.querySelectorAll('[data-filter]').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      state.filter = chip.dataset.filter;
+      document.querySelectorAll('[data-filter]').forEach(function (c) {
+        var on = c === chip;
+        c.classList.toggle('is-on', on);
+        c.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      apply();
+    });
+  });
+
+  // Grid or table, remembered per browser.
+  var VIEW = 'omni-products-view';
+  function setView(v) {
+    grid.classList.toggle('is-table', v === 'table');
+    document.querySelectorAll('[data-view]').forEach(function (b) {
+      var on = b.dataset.view === v;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    try { localStorage.setItem(VIEW, v); } catch (e) {}
+  }
+  document.querySelectorAll('[data-view]').forEach(function (b) { b.addEventListener('click', function () { setView(b.dataset.view); }); });
+  try { if (localStorage.getItem(VIEW) === 'table') setView('table'); } catch (e) {}
+
+  // Selection and the bulk bar.
+  var bar = document.querySelector('[data-bk]');
+  var count = document.querySelector('[data-bk-n]');
+  function picked() { return Array.prototype.filter.call(document.querySelectorAll('[data-pick]'), function (c) { return c.checked; }); }
+  function sync() {
+    var list = picked();
+    rows.forEach(function (row) { var c = row.querySelector('[data-pick]'); row.classList.toggle('is-picked', Boolean(c && c.checked)); });
+    grid.classList.toggle('is-picking', list.length > 0);
+    bar.hidden = list.length === 0;
+    count.textContent = list.length;
+  }
+  grid.addEventListener('change', function (e) { if (e.target.matches('[data-pick]')) sync(); });
+  document.querySelector('[data-bk-clear]').addEventListener('click', function () {
+    document.querySelectorAll('[data-pick]').forEach(function (c) { c.checked = false; });
+    closeForms(); sync();
+  });
+  function closeForms() {
+    bar.querySelectorAll('[data-bulk]').forEach(function (f) { f.hidden = true; });
+    bar.querySelectorAll('[data-bulk-open]').forEach(function (b) { b.classList.remove('is-on'); });
+  }
+  bar.querySelectorAll('[data-bulk-open]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var f = bar.querySelector('[data-bulk="' + btn.dataset.bulkOpen + '"]');
+      var open = f.hidden;
+      closeForms();
+      if (open) { f.hidden = false; btn.classList.add('is-on'); var first = f.querySelector('input:not([type=hidden]), select'); if (first) first.focus(); }
+    });
+  });
+  bar.querySelectorAll('[data-bulk-close]').forEach(function (b) { b.addEventListener('click', closeForms); });
+  // Before the confirmation reads it: the chosen SKUs travel as fields, and the question
+  // quotes the count and the value it will write.
+  bar.querySelectorAll('[data-bulk]').forEach(function (f) {
+    f.addEventListener('submit', function () {
+      f.querySelectorAll('input[name="sku"]').forEach(function (i) { i.remove(); });
+      picked().forEach(function (c) {
+        var i = document.createElement('input');
+        i.type = 'hidden'; i.name = 'sku'; i.value = c.value; f.appendChild(i);
+      });
+      var text = f.dataset.confirmTemplate || f.dataset.confirm;
+      f.dataset.confirmTemplate = text;
+      var price = f.querySelector('[name=price]'); var qty = f.querySelector('[name=qty]');
+      f.dataset.confirm = text.replace('{n}', picked().length)
+        .replace('{price}', price ? Number(price.value || 0).toLocaleString('id-ID') : '')
+        .replace('{qty}', qty ? qty.value : '');
+    }, true);
   });
   apply();
 })();`,
@@ -6288,7 +6489,9 @@ const partOptions = (selected, exclude) => PRODUCTS.filter((p) => p.sku !== excl
  * The master's own facts, as fields. Shared by the new-product form and a product's page,
  * so both say the same thing the same way.
  */
-function masterFields(product = null, { idPrefix = 'm' } = {}) {
+function masterFields(product = null, { idPrefix = 'm', fresh = false } = {}) {
+  // `fresh`: a form for a new product, even when filled from another (a duplicate).
+  const locked = Boolean(product?.sku) && !fresh;
   const parts = product?.components?.length ? product.components : [];
   const partRow = (part = { sku: '', qty: 1 }) => `<div class="pf__part" data-part>
       <label class="visually-hidden" for="${idPrefix}-ps-${part.sku || 'new'}">Produk</label>
@@ -6300,8 +6503,8 @@ function masterFields(product = null, { idPrefix = 'm' } = {}) {
   return `<div class="pf__grid">
       <label class="pf__f"><span>SKU <i aria-hidden="true">*</i></span>
         <input name="sku" required pattern="[A-Za-z0-9][A-Za-z0-9+&amp;._\\-]{1,49}" maxlength="50" autocomplete="off" spellcheck="false"
-          value="${escape(product?.sku ?? '')}" ${product ? 'readonly aria-readonly="true"' : 'autofocus'} class="mono" placeholder="mis. OMC-360-001">
-        <small>${product ? 'SKU tidak bisa diubah: ini yang menyambungkan pesanan, stok dan faktur.' : 'Dipakai sebagai SKU penjual di semua kanal.'}</small></label>
+          value="${escape(product?.sku ?? '')}" ${locked ? 'readonly aria-readonly="true"' : 'autofocus'} class="mono" placeholder="mis. OMC-360-001">
+        <small>${locked ? 'SKU tidak bisa diubah: ini yang menyambungkan pesanan, stok dan faktur.' : 'Dipakai sebagai SKU penjual di semua kanal.'}</small></label>
       <label class="pf__f"><span>Kategori <i aria-hidden="true">*</i></span>
         <select name="category" required data-category>${CATEGORY_OPTIONS(product?.category ?? 'capsules')}</select></label>
       <label class="pf__f"><span>Nama produk <i aria-hidden="true">*</i></span>
@@ -6359,6 +6562,19 @@ function removedNote(csrf) {
     </details>`;
 }
 
+/** Live listings on a channel, one per listing, as examples a new listing can copy. */
+function exampleListings(catalog, channel) {
+  const seen = new Map();
+  for (const entry of catalog?.skus ?? []) {
+    for (const row of entry[channel]?.rows ?? []) {
+      const id = channel === 'tiktok' ? row.productId : row.itemId;
+      if (!id || seen.has(String(id))) continue;
+      seen.set(String(id), { id, title: row.title ?? entry.title, sku: entry.sku, category: findProduct(entry.sku)?.category ?? '' });
+    }
+  }
+  return [...seen.values()].sort((a, b) => String(a.title).localeCompare(String(b.title)));
+}
+
 /**
  * A new product, and its listings on the channels ticked.
  *
@@ -6367,18 +6583,15 @@ function removedNote(csrf) {
  * brand, logistics, certificates - come from an example listing picked per channel,
  * defaulted to one of the same kind, so nobody has to know Shopee's category tree.
  */
-function productForm({ catalog, csrf }) {
-  const listings = (channel) => {
-    const seen = new Map();
-    for (const entry of catalog.skus) {
-      for (const row of entry[channel]?.rows ?? []) {
-        const id = channel === 'tiktok' ? row.productId : row.itemId;
-        if (!id || seen.has(String(id))) continue;
-        seen.set(String(id), { id, title: row.title ?? entry.title, sku: entry.sku, category: findProduct(entry.sku)?.category ?? '' });
-      }
-    }
-    return [...seen.values()].sort((a, b) => String(a.title).localeCompare(String(b.title)));
-  };
+function productForm({ catalog, csrf, duplicateOf = null }) {
+  // A duplicate starts from its source: same kind, same family, same listing text and box,
+  // the source's own listing as the example, and its pictures unless replaced. SKU and
+  // variant are left empty - they are what makes it a different product.
+  const src = duplicateOf ? findProduct(duplicateOf.sku) : null;
+  const srcL = duplicateOf?.listing?.data ?? null;
+  const srcEntry = src ? catalog.skus.find((e) => e.sku === src.sku) : null;
+  const seed = src ? { ...src, sku: '', variant: '', aliases: [], family: src.family ?? src.name } : null;
+  const listings = (channel) => exampleListings(catalog, channel);
   const channelCard = (key, label, note, options) => {
     const list = options ?? [];
     const usable = key === 'shopify' || list.length > 0;
@@ -6387,10 +6600,11 @@ function productForm({ catalog, csrf }) {
         <span class="pf__chname">${label}</span></label>
       <p class="pf__chnote">${note}</p>
       ${options ? `<label class="pf__f"><span>Salin kategori &amp; atribut dari</span>
-        <select name="template_${key}" data-template>${list.map((l) => `<option value="${escape(String(l.id))}" data-category="${escape(l.category)}">${escape(String(l.title).slice(0, 90))}</option>`).join('')}</select></label>` : ''}
+        <select name="template_${key}" data-template ${src ? 'data-fixed' : ''}>${list.map((l) => `<option value="${escape(String(l.id))}" data-category="${escape(l.category)}" ${src && l.sku === src.sku ? 'selected' : ''}>${escape(String(l.title).slice(0, 90))}</option>`).join('')}</select></label>` : ''}
     </div>`;
   };
-  return `<a class="pf-back" href="?view=products">${svg('chevL')}<span>Produk</span></a>
+  return `<a class="pf-back" href="${src ? `?view=products&amp;sku=${encodeURIComponent(src.sku)}` : '?view=products'}">${svg('chevL')}<span>${src ? escape(src.name) : 'Produk'}</span></a>
+  ${src ? `<p class="pf__dup">Duplikat dari <b>${escape(src.name)}${src.variant ? ` ${escape(src.variant)}` : ''}</b> <span class="mono dim">${escape(src.sku)}</span>. Isi SKU dan varian baru, sisanya sudah disalin.</p>` : ''}
   <form class="pf" method="post" enctype="multipart/form-data" novalidate data-pf
         data-confirm="Buat produk baru di kanal terpilih?">
     <input type="hidden" name="csrf" value="${escape(csrf)}">
@@ -6400,30 +6614,30 @@ function productForm({ catalog, csrf }) {
 
     <section class="pf__step" aria-labelledby="pf-s1">
       <header><span class="pf__n" aria-hidden="true">1</span><h2 id="pf-s1">Produk</h2><p>Cara dashboard mengenal produk ini: untuk stok, pesanan, faktur, dan label.</p></header>
-      ${masterFields(null, { idPrefix: 'pn' })}
+      ${masterFields(seed, { idPrefix: 'pn', fresh: true })}
     </section>
 
     <section class="pf__step" aria-labelledby="pf-s2">
       <header><span class="pf__n" aria-hidden="true">2</span><h2 id="pf-s2">Listing</h2><p>Yang dilihat pembeli. Sama untuk semua kanal yang dipilih.</p></header>
       <div class="pf__grid">
         <label class="pf__f pf__f--wide"><span>Judul listing <i aria-hidden="true">*</i></span>
-          <input name="title" required minlength="5" maxlength="255" data-listing placeholder="TREELOGY - Organic Moringa Capsules | Kapsul Daun Kelor Premium">
-          <small data-count="title">0 / 255</small></label>
+          <input name="title" required minlength="5" maxlength="255" data-listing placeholder="TREELOGY - Organic Moringa Capsules | Kapsul Daun Kelor Premium" value="${escape(srcL?.title ?? '')}">
+          <small data-count="title">${(srcL?.title ?? '').length} / 255</small></label>
         <label class="pf__f pf__f--wide"><span>Deskripsi <i aria-hidden="true">*</i></span>
-          <textarea name="description" required minlength="20" rows="8" data-listing placeholder="Manfaat, isi, cara pakai, penyimpanan, sertifikasi…"></textarea>
+          <textarea name="description" required minlength="20" rows="8" data-listing placeholder="Manfaat, isi, cara pakai, penyimpanan, sertifikasi…">${escape(srcL?.description ?? '')}</textarea>
           <small>Paragraf dipisah baris kosong.</small></label>
         <label class="pf__f"><span>Harga (Rp) <i aria-hidden="true">*</i></span>
-          <input name="price" type="number" required min="100" step="1" inputmode="numeric" data-listing class="mono" placeholder="525000"></label>
+          <input name="price" type="number" required min="100" step="1" inputmode="numeric" data-listing class="mono" placeholder="525000" value="${escape(String(srcEntry?.tiktok?.price ?? srcEntry?.shopee?.price ?? srcEntry?.shopify?.price ?? ''))}"></label>
         <label class="pf__f"><span>Stok awal <i aria-hidden="true">*</i></span>
           <input name="stock" type="number" required min="1" max="99999" step="1" inputmode="numeric" data-listing class="mono" value="150">
           <small>Menjadi stok induk; semua kanal mengikutinya.</small></label>
         <label class="pf__f"><span>Berat paket (gram) <i aria-hidden="true">*</i></span>
-          <input name="weightGram" type="number" required min="1" step="1" inputmode="numeric" data-listing class="mono" placeholder="600"></label>
+          <input name="weightGram" type="number" required min="1" step="1" inputmode="numeric" data-listing class="mono" placeholder="600" value="${srcL?.weightGram ?? ''}"></label>
         <div class="pf__f"><span>Dimensi paket (cm) <i aria-hidden="true">*</i></span>
           <div class="pf__dims">
-            <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang (cm)" placeholder="P" data-dim class="mono">
-            <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar (cm)" placeholder="L" data-dim class="mono">
-            <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi (cm)" placeholder="T" data-dim class="mono">
+            <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang (cm)" placeholder="P" data-dim class="mono" value="${srcL?.dims?.l ?? ''}">
+            <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar (cm)" placeholder="L" data-dim class="mono" value="${srcL?.dims?.w ?? ''}">
+            <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi (cm)" placeholder="T" data-dim class="mono" value="${srcL?.dims?.h ?? ''}">
           </div>
           <small>Wajib untuk Tokopedia/TikTok dan Shopee.</small></div>
         <div class="pf__f pf__f--wide"><span>Foto <i aria-hidden="true">*</i></span>
@@ -6431,7 +6645,10 @@ function productForm({ catalog, csrf }) {
             <input name="images" type="file" accept="image/jpeg,image/png" multiple data-images>
             ${svg('image')}<b>Pilih atau tarik foto ke sini</b><small>1-9 foto JPG/PNG, maksimal 10 MB per foto. Foto pertama jadi foto utama.</small>
           </label>
-          <div class="pf__thumbs" data-thumbs aria-live="polite"></div></div>
+          <div class="pf__thumbs" data-thumbs aria-live="polite"></div>
+          ${srcL?.images?.length ? `<label class="pf__check pf__reuse"><input type="checkbox" name="photos_from" value="${escape(src.sku)}" checked data-reuse>
+            <span>Pakai ${Math.min(9, srcL.images.length)} foto ${escape(src.name)} bila tidak ada foto baru</span></label>
+            <div class="pe__pics">${srcL.images.slice(0, 9).map((u, i) => `<figure><img src="${escape(u)}" alt="" width="84" height="84" loading="lazy">${i === 0 ? '<figcaption>Utama</figcaption>' : ''}</figure>`).join('')}</div>` : ''}</div>
       </div>
     </section>
 
@@ -6498,6 +6715,8 @@ const PF_STYLE = `
 .pf__drop:hover, .pf__drop.is-over{border-color:var(--brand); background:color-mix(in srgb, var(--brand) 7%, var(--panel-2))}
 .pf__drop .ico{width:26px; height:26px; color:var(--brand)}
 .pf__drop--s{min-height:6rem; padding:.9rem}
+.pf__dup{margin:.8rem 0 0; font-size:.86rem; color:var(--muted)}
+.pf__reuse{margin-top:.4rem}
 .pf__drop b{font-size:.88rem; color:var(--fg); font-weight:500}
 .pf__drop input{position:absolute; inset:0; opacity:0; cursor:pointer}
 .pf__drop:focus-within{outline:2px solid var(--brand); outline-offset:2px}
@@ -6542,6 +6761,56 @@ const PF_STYLE = `
 .pf-gone summary{cursor:pointer; color:var(--muted); min-height:32px}
 .pf-gone ul{list-style:none; margin:.6rem 0 0; padding:0; display:flex; flex-direction:column; gap:.4rem}
 .pf-gone li{display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.45rem .7rem; border:1px solid var(--line); border-radius:10px}
+/* The product page: header actions, channel tiles, the one editor. */
+.pe__head{display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; margin-bottom:.9rem}
+.pe__head form{margin:0}
+.pe__grow{flex:1}
+.pe__name{font-size:1.05rem}
+.pe__chips{display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.55rem}
+.pe__chip{display:inline-flex; align-items:center; gap:.4rem; font-size:.74rem; padding:.25rem .6rem; border-radius:999px; border:1px solid var(--line); color:var(--muted)}
+.pe__chip i{width:8px; height:8px; border-radius:50%; background:var(--dim)}
+.pe__chip--live{color:var(--fg)} .pe__chip--live i{background:var(--good, #6fbf73)}
+.pe__chip--off i{background:transparent; border:1.5px solid var(--muted)}
+.pe__chip--none{opacity:.7} .pe__chip--none i{background:transparent; border:1.5px dashed var(--dim)}
+.cts{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.75rem; margin:1rem 0}
+.ct{display:flex; flex-direction:column; gap:.55rem; padding:.9rem 1rem; border:1px solid var(--line); border-radius:var(--radius-s); background:var(--panel)}
+.ct__top{display:flex; align-items:center; gap:.5rem; font-size:.9rem}
+.ct__dot{width:9px; height:9px; border-radius:50%; background:var(--dim); flex:none}
+.ct--live .ct__dot{background:var(--good, #6fbf73)}
+.ct--off .ct__dot{background:transparent; border:1.5px solid var(--muted)}
+.ct--none .ct__dot{background:transparent; border:1.5px dashed var(--dim)}
+.ct__st{margin-left:auto; font-size:.72rem; color:var(--muted); letter-spacing:.04em; text-transform:uppercase}
+.ct__kv{display:flex; gap:1.25rem; margin:0}
+.ct__kv dt{font-size:.66rem; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
+.ct__kv dd{margin:.1rem 0 0; font-size:.92rem; font-weight:600}
+.ct__title{margin:0; font-size:.76rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.ct__acts{margin-top:auto; display:flex}
+.ct__acts form{margin:0}
+.ct__btn{display:inline-flex; align-items:center; gap:.35rem; font:inherit; font-size:.78rem; min-height:36px; padding:.35rem .75rem; border-radius:8px; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--muted); list-style:none; transition:color var(--t-fast), border-color var(--t-fast)}
+.ct__btn::-webkit-details-marker{display:none}
+.ct__btn:hover{color:var(--fg); border-color:var(--muted)}
+.ct__btn--go{color:var(--brand); border-color:color-mix(in srgb, var(--brand) 45%, var(--line))}
+.ct__btn .ico{width:14px; height:14px}
+.ct__btn:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.ct__pub{width:100%}
+.ct__pubf{display:flex; flex-direction:column; gap:.6rem; margin-top:.7rem}
+.ct__pubf label{display:flex; flex-direction:column; gap:.3rem; font-size:.74rem; color:var(--muted)}
+.ct__pubf select{font:inherit; font-size:.84rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.5rem .6rem; min-height:40px}
+.ct__pubf .ct__mode{flex-direction:row; align-items:center; gap:.45rem; font-size:.8rem; color:var(--fg)}
+.ct__pubf small{font-size:.7rem; color:var(--dim)}
+.ct__note{font-size:.74rem; color:var(--dim)}
+.pe__pics{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem}
+.pe__pics figure{position:relative; margin:0}
+.pe__pics img{width:84px; height:84px; object-fit:cover; border-radius:10px; border:1px solid var(--line); display:block; background:var(--panel)}
+.pe__pics figcaption{position:absolute; top:6px; left:6px; font-size:.6rem; font-weight:600; padding:.1rem .35rem; border-radius:5px; background:var(--brand); color:#fff}
+.pe__bar{align-items:center; flex-wrap:wrap; justify-content:flex-start}
+.pe__bar .chp{flex:1}
+.pe__to{font-size:.74rem; color:var(--muted); margin-right:.5rem; padding:0; float:left; line-height:40px}
+.pe__count{font-size:.8rem; color:var(--muted)}
+.pe__count b{color:var(--fg)}
+.pf__primary:disabled{opacity:.45; cursor:not-allowed; filter:none}
+@media (max-width:860px){.cts{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:860px){.pf__chs{grid-template-columns:minmax(0,1fr)} .pf__mode{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:640px){.pf__grid{grid-template-columns:minmax(0,1fr)} .pf__step{padding:1rem}}
 @media (prefers-reduced-motion:reduce){.pf *{transition:none !important}}
@@ -6593,6 +6862,33 @@ const PF_SCRIPT = `
     }
   });
 
+  // The product editor: count what changed, and keep Save off until something did.
+  var pe = document.querySelector('[data-pe]');
+  if (pe) {
+    var go = pe.querySelector('[data-pe-go]');
+    var counter = pe.querySelector('[data-pe-count]');
+    var watched = Array.prototype.filter.call(pe.elements, function (el) {
+      return el.name && el.type !== 'hidden' && el.type !== 'submit' && el.name !== 'channel';
+    });
+    var initial = new Map(watched.map(function (el) { return [el, el.type === 'checkbox' ? el.checked : el.type === 'file' ? '' : el.value]; }));
+    var recount = function () {
+      var n = 0;
+      // Fields and bundle rows can be added and removed; a different set is a change too.
+      var now = Array.prototype.filter.call(pe.elements, function (el) { return el.name && el.type !== 'hidden' && el.type !== 'submit' && el.name !== 'channel'; });
+      now.forEach(function (el) {
+        var v = el.type === 'checkbox' ? el.checked : el.type === 'file' ? (el.files.length ? 'x' : '') : el.value;
+        if (!initial.has(el) || initial.get(el) !== v) n += 1;
+      });
+      initial.forEach(function (_, el) { if (!el.isConnected) n += 1; });
+      counter.innerHTML = n ? '<b>' + n + '</b> perubahan' : 'Belum ada perubahan';
+      go.disabled = n === 0;
+    };
+    pe.addEventListener('input', recount);
+    pe.addEventListener('change', recount);
+    pe.addEventListener('click', function () { setTimeout(recount, 0); });
+    recount();
+  }
+
   var form = document.querySelector('[data-pf]');
   if (!form) return;
   var err = form.querySelector('[data-pf-err]');
@@ -6603,7 +6899,7 @@ const PF_SCRIPT = `
   // The example listing follows the product's kind: a new capsule copies a capsule.
   var category = form.querySelector('[data-category]');
   function pickTemplates() {
-    form.querySelectorAll('[data-template]').forEach(function (sel) {
+    form.querySelectorAll('[data-template]:not([data-fixed])').forEach(function (sel) {
       var match = Array.prototype.find.call(sel.options, function (o) { return o.dataset.category === category.value; });
       if (match) sel.value = match.value;
     });
@@ -6643,7 +6939,11 @@ const PF_SCRIPT = `
       var marketplace = channels().some(function (c) { return c !== 'shopify'; });
       return say(field, !marketplace || Number(v) >= 1 ? '' : 'Wajib');
     }
-    if (field === images) return say(images, images.files.length >= 1 && images.files.length <= 9 ? '' : 'Pilih 1-9 foto');
+    if (field === images) {
+      var reuse = form.querySelector('[data-reuse]');
+      if (reuse && reuse.checked && images.files.length === 0) return say(images, '');
+      return say(images, images.files.length >= 1 && images.files.length <= 9 ? '' : 'Pilih 1-9 foto');
+    }
     return true;
   }
   form.querySelectorAll('input, textarea').forEach(function (f) { f.addEventListener('blur', function () { if (f.value) check(f); }); });
@@ -6665,194 +6965,150 @@ const PF_SCRIPT = `
 })();
 `;
 
-function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {}, listing = null }) {
+function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {}, listing = null, templates = {} }) {
   const entry = live.get(product.sku);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
+  const back = `<input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">`;
   const ledgerRow = ledger?.skus?.[product.sku];
-
-
+  const LABELS = { tiktok: 'Tokopedia + TikTok', shopee: 'Shopee', shopify: 'Shopify' };
+  const switchedOff = (key) => (entry?.[`${key}_ignored`] ?? entry?.[key]?.ignored ?? []).filter((r) => r.status !== 'DELETED');
+  const state = (key) => (entry?.[key]?.rows?.length ? 'live' : switchedOff(key).length ? 'off' : 'none');
 
   /*
-   * On and off, per channel. Off is reversible on every channel (deactivate, unlist,
-   * archive) and asks first; on is offered only where nothing is live and something was
-   * switched off - never for a listing TikTok has deleted.
+   * Where the product stands on each channel, at a glance and with the one action that
+   * makes sense there: switch a live listing off, switch an inactive one back on, or put
+   * the product on a channel that does not sell it yet.
    */
-  const toggle = (key, label, active) => `<form class="ch__toggle" method="post"
-      data-confirm="${active ? `Nonaktifkan ${escape(product.sku)} di ${escape(label)}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.` : `Aktifkan lagi ${escape(product.sku)} di ${escape(label)}?`}">
-      ${hidden}
-      <input type="hidden" name="action" value="listing_active">
-      <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
-      <input type="hidden" name="sku" value="${escape(product.sku)}">
-      <input type="hidden" name="channel" value="${key}">
-      <input type="hidden" name="active" value="${active ? '0' : '1'}">
-      <button class="ch__btn${active ? '' : ' ch__btn--on'}" type="submit">${svg(active ? 'ban' : 'check2')}<span>${active ? 'Nonaktifkan' : 'Aktifkan lagi'}</span></button>
-    </form>`;
-  const switchedOff = (key) => (entry?.[`${key}_ignored`] ?? entry?.[key]?.ignored ?? []).filter((r) => r.status !== 'DELETED');
-
-  const channelCard = (key, label, row) => {
-    if (!row) {
-      const off = switchedOff(key);
-      return `<div class="ch"><header class="ch__head"><h3>${escape(label)}</h3>${off.length ? `<span class="ch__count">${escape(off[0].status ?? 'nonaktif')}</span>` : ''}</header>
-        <p class="empty">${off.length ? 'Listing sedang nonaktif.' : 'Belum ada listing hidup di kanal ini.'}</p>
-        ${off.length ? toggle(key, label, false) : ''}</div>`;
-    }
-    const ids = key === 'tiktok'
-      ? [['Product ID', row.productId], ['SKU ID', row.skuId], ['Gudang', row.warehouseId]]
-      : key === 'shopify'
-        ? [['Product', row.productId], ['Variant', row.variantId]]
-        : [['Item ID', row.itemId], ['Model ID', row.modelId || '(tanpa varian)']];
-    return `<div class="ch">
-      <header class="ch__head"><h3>${escape(label)}</h3><span class="ch__count">${escape(row.status ?? '')}</span></header>
-      <dl class="kv">
-        <dt>Stok</dt><dd class="mono">${row.qty}</dd>
-        <dt>Harga</dt><dd class="mono">${escape(rupiah(row.price ?? 0))}</dd>
-        ${row.hasPromotion ? `<dt>Promo</dt><dd class="flag mono">${escape(rupiah(row.promoPrice ?? 0))}</dd>` : ''}
-        <dt>Judul</dt><dd>${escape(row.title ?? '')}</dd>
-        ${ids.map(([k, v]) => `<dt>${escape(k)}</dt><dd class="mono dim">${escape(String(v ?? '-'))}</dd>`).join('')}
-      </dl>
-      ${toggle(key, label, true)}
+  const channelTile = (key) => {
+    const st = state(key);
+    const row = entry?.[key]?.rows?.[0];
+    const label = LABELS[key];
+    const ask = (action, active, text, cls = '') => `<form method="post" data-confirm="${escape(text)}">
+        ${hidden}${back}
+        <input type="hidden" name="action" value="${action}"><input type="hidden" name="sku" value="${escape(product.sku)}">
+        <input type="hidden" name="channel" value="${key}"><input type="hidden" name="active" value="${active ? '1' : '0'}">
+        <button class="ct__btn ${cls}" type="submit">${svg(active ? 'check2' : 'ban')}<span>${active ? 'Aktifkan' : 'Nonaktifkan'}</span></button>
+      </form>`;
+    const list = templates[key] ?? [];
+    const publish = key === 'shopify' || list.length
+      ? `<details class="ct__pub"><summary class="ct__btn ct__btn--go">${svg('plus')}<span>Publikasikan</span></summary>
+          <form method="post" class="ct__pubf" data-confirm="Publikasikan ${escape(product.sku)} ke ${escape(label)} memakai konten & foto listing yang sudah ada?">
+            ${hidden}${back}
+            <input type="hidden" name="action" value="product_publish"><input type="hidden" name="sku" value="${escape(product.sku)}">
+            <input type="hidden" name="channel" value="${key}">
+            ${key === 'shopify' ? '' : `<label><span>Salin kategori &amp; atribut dari</span><select name="template">${list.map((l) => `<option value="${escape(String(l.id))}" ${l.category === product.category ? 'selected' : ''}>${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>`}
+            <label class="ct__mode"><input type="checkbox" name="mode" value="draft"><span>Simpan sebagai draft dulu</span></label>
+            <button class="pf__primary" type="submit">Publikasikan</button>
+            <small>Judul, deskripsi, foto, berat dan dimensi diambil dari listing yang sedang tayang; stok dari stok induk.</small>
+          </form></details>`
+      : '<span class="ct__note">Belum ada listing contoh di kanal ini.</span>';
+    return `<div class="ct ct--${st}">
+      <div class="ct__top"><span class="ct__dot" aria-hidden="true"></span><b>${label}</b>
+        <span class="ct__st">${st === 'live' ? 'Tayang' : st === 'off' ? 'Nonaktif' : 'Belum ada'}</span></div>
+      ${row ? `<dl class="ct__kv"><div><dt>Stok</dt><dd class="mono">${row.qty}</dd></div><div><dt>Harga</dt><dd class="mono">${escape(rupiah(row.price ?? 0))}</dd></div></dl>
+        <p class="ct__title" title="${escape(row.title ?? '')}">${escape(row.title ?? '')}</p>` : ''}
+      <div class="ct__acts">${st === 'live'
+        ? ask('listing_active', false, `Nonaktifkan ${product.sku} di ${label}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.`)
+        : st === 'off' ? ask('listing_active', true, `Aktifkan lagi ${product.sku} di ${label}?`, 'ct__btn--go') : publish}</div>
     </div>`;
   };
 
   const bundle = isBundle(product) ? buildableFrom(product, stockOf) : null;
-
-  /*
-   * What the bundle is made of, beside its picture rather than under the channel cards.
-   *
-   * One row per component: its own picture, what it is, how many go in, and the figure
-   * its listings show. Nothing here is judged against anything else - no "can be built",
-   * no over-listing warning, no limiting component. These figures are display numbers,
-   * not jars on a shelf (the operator's own word), so a comparison between them would be
-   * an alert about nothing.
-   */
+  // What the bundle is made of, beside its picture. Display figures only, nothing judged.
   const composition = bundle
     ? `<section class="bx" aria-labelledby="bx-h">
-        <header class="bx__head">
-          <h2 class="bx__h" id="bx-h">Isi bundle</h2>
-          <span class="bx__make">${bundle.parts.length} produk</span>
-        </header>
+        <header class="bx__head"><h2 class="bx__h" id="bx-h">Isi bundle</h2><span class="bx__make">${bundle.parts.length} produk</span></header>
         <ul class="bx__list">${bundle.parts.map((part) => {
           const component = findProduct(part.sku);
           const pic = images[part.sku];
           return `<li><a class="bx__row" href="?view=products&sku=${encodeURIComponent(part.sku)}">
-            ${pic?.thumb
-              ? `<img class="bx__pic" src="${escape(pic.thumb)}" alt="" width="44" height="44" loading="lazy" decoding="async">`
-              : '<span class="bx__pic bx__pic--none" aria-hidden="true"></span>'}
-            <span class="bx__id">
-              <span class="bx__name">${escape(component?.name ?? part.sku)}${component?.variant ? ` <span class="bx__var">${escape(component.variant)}</span>` : ''}</span>
-              <span class="bx__sku mono">${escape(part.sku)}</span>
-            </span>
+            ${pic?.thumb ? `<img class="bx__pic" src="${escape(pic.thumb)}" alt="" width="44" height="44" loading="lazy" decoding="async">` : '<span class="bx__pic bx__pic--none" aria-hidden="true"></span>'}
+            <span class="bx__id"><span class="bx__name">${escape(component?.name ?? part.sku)}${component?.variant ? ` <span class="bx__var">${escape(component.variant)}</span>` : ''}</span>
+              <span class="bx__sku mono">${escape(part.sku)}</span></span>
             <span class="bx__qty mono" aria-label="${part.qty} per bundle">&times;${part.qty}</span>
-            <span class="bx__stock">
-              <b class="mono">${part.available ?? '&mdash;'}</b><span>stok</span>
-            </span>
+            <span class="bx__stock"><b class="mono">${part.available ?? '&mdash;'}</b><span>stok</span></span>
           </a></li>`;
         }).join('')}</ul>
       </section>`
     : '';
 
-  /** The channels a write goes to: the ones that sell this SKU live, all ticked to begin with. */
-  const LABELS = { tiktok: 'Tokopedia + TikTok', shopee: 'Shopee', shopify: 'Shopify' };
-  const channelPicker = (prefix) => `<fieldset class="chp"><legend class="visually-hidden">Kanal</legend>${
-    ['tiktok', 'shopee', 'shopify'].map((key) => {
-      const on = Boolean(entry?.[key]?.rows?.length);
-      return `<label class="chp__opt${on ? '' : ' is-off'}"><input type="checkbox" name="channel" value="${key}" ${on ? 'checked' : 'disabled'} id="${prefix}-${key}">
-        <span>${LABELS[key]}</span></label>`;
-    }).join('')}</fieldset>`;
+  const L = listing?.data ?? null;
+  const liveOn = ['tiktok', 'shopee', 'shopify'].filter((k) => state(k) === 'live');
+  const price = entry?.tiktok?.price ?? entry?.shopee?.price ?? entry?.shopify?.price ?? '';
+  const before = {
+    qty: ledgerRow?.qty ?? null,
+    price: price === '' ? null : price,
+    listing: L ? { title: L.title, description: L.description, weightGram: L.weightGram, dims: L.dims } : {},
+  };
+  const field = (label, html, { wide = false, hint = '' } = {}) => `<label class="pf__f${wide ? ' pf__f--wide' : ''}"><span>${label}</span>${html}${hint ? `<small>${hint}</small>` : ''}</label>`;
 
   /*
-   * The listing's own content, edited once for the channels ticked.
-   *
-   * Filled from the first channel that sells it live (said on the form), and only what is
-   * changed here is sent: descriptions are HTML on two channels and plain text on the
-   * third, so a field nobody touched is never rewritten. On TikTok and Shopee these belong
-   * to the whole listing, every variant on it included - the form says so when there are
-   * several.
+   * One form for the whole product, one save. Each part goes only where it belongs and
+   * only when it changed: the master facts to the catalogue, the stock to the master and
+   * from there to every channel, the price and listing content to the channels ticked.
    */
-  const L = listing?.data ?? null;
-  const before = L ? { title: L.title, description: L.description, weightGram: L.weightGram, dims: L.dims } : {};
-  const editListing = entry ? `<p class="sec">Ubah listing</p>
-    <form class="le" method="post" enctype="multipart/form-data" data-confirm="Kirim perubahan listing ${escape(product.sku)} ke kanal terpilih?">
-      ${hidden}
-      <input type="hidden" name="action" value="listing_edit">
-      <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
-      <input type="hidden" name="sku" value="${escape(product.sku)}">
-      <input type="hidden" name="before" value="${escape(JSON.stringify(before))}">
-      <div class="le__top">
-        ${channelPicker('le')}
-        <span class="note">${L
-          ? `Diisi dari ${escape(LABELS[listing.source])}. Hanya kolom yang diubah yang dikirim.${L.variants > 1 ? ` Berlaku untuk seluruh listing (${L.variants} varian).` : ''}`
-          : listing?.error ? `Isi listing tidak terbaca (${escape(listing.error)}) - kolom kosong tidak dikirim.` : 'Kolom kosong tidak dikirim.'}</span>
-      </div>
-      <div class="le__grid">
-        <label class="le__f le__f--wide"><span>Judul</span>
-          <input name="title" maxlength="255" value="${escape(L?.title ?? '')}" autocomplete="off"></label>
-        <label class="le__f le__f--wide"><span>Deskripsi</span>
-          <textarea name="description" rows="9">${escape(L?.description ?? '')}</textarea></label>
-        <label class="le__f"><span>Berat (gram)</span>
-          <input name="weightGram" type="number" min="1" step="1" inputmode="numeric" value="${L?.weightGram ?? ''}"></label>
-        <div class="le__f"><span>Dimensi paket (cm)</span>
-          <div class="le__dims">
-            <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang" placeholder="P" value="${L?.dims?.l ?? ''}">
-            <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar" placeholder="L" value="${L?.dims?.w ?? ''}">
-            <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi" placeholder="T" value="${L?.dims?.h ?? ''}">
-          </div>
-          <span class="le__hint">Shopify tidak menyimpan dimensi.</span></div>
-        <div class="le__f le__f--wide"><span>Foto</span>
-          ${L?.images?.length ? `<div class="le__pics">${L.images.slice(0, 9).map((u) => `<img src="${escape(u)}" alt="" width="64" height="64" loading="lazy">`).join('')}</div>` : ''}
-          <label class="pf__drop pf__drop--s" data-drop>
-            <input name="images" type="file" accept="image/jpeg,image/png" multiple data-images>
-            ${svg('image')}<b>Ganti foto</b><small>Foto baru <b>mengganti semua foto</b> di kanal terpilih, sesuai urutan dipilih. Maksimal 9 JPG/PNG, 10 MB per foto. Kosongkan bila foto tidak diubah.</small>
-          </label>
+  const editor = `<form class="pf pe" method="post" enctype="multipart/form-data" data-pe
+      data-confirm="Simpan perubahan ${escape(product.sku)} dan sinkronkan ke kanal terpilih?">
+    ${hidden}${back}
+    <input type="hidden" name="action" value="product_save">
+    <input type="hidden" name="before" value="${escape(JSON.stringify(before))}">
+
+    <section class="pf__step"><header><span class="pf__n" aria-hidden="true">1</span><h2>Informasi produk</h2>
+      <p>Cara dashboard mengenal produk ini. Hanya tersimpan di dashboard, tidak dikirim ke kanal.</p></header>
+      ${masterFields(product, { idPrefix: 'pe' })}</section>
+
+    ${liveOn.length ? `<section class="pf__step"><header><span class="pf__n" aria-hidden="true">2</span><h2>Konten listing</h2>
+      <p>${L ? `Diisi dari ${escape(LABELS[listing.source])}.` : listing?.error ? `Isi listing tidak terbaca (${escape(listing.error)}).` : ''} Yang diubah dikirim ke kanal yang dicentang di bawah.${L?.variants > 1 ? ` Berlaku untuk seluruh listing (${L.variants} varian).` : ''}</p></header>
+      <div class="pf__grid">
+        ${field('Judul listing', `<input name="title" maxlength="255" value="${escape(L?.title ?? '')}" autocomplete="off">`, { wide: true })}
+        ${field('Deskripsi', `<textarea name="description" rows="9">${escape(L?.description ?? '')}</textarea>`, { wide: true })}
+        <div class="pf__f pf__f--wide"><span>Foto</span>
+          ${L?.images?.length ? `<div class="pe__pics">${L.images.slice(0, 9).map((u, i) => `<figure><img src="${escape(u)}" alt="" width="84" height="84" loading="lazy">${i === 0 ? '<figcaption>Utama</figcaption>' : ''}</figure>`).join('')}</div>` : ''}
+          <label class="pf__drop pf__drop--s" data-drop><input name="images" type="file" accept="image/jpeg,image/png" multiple data-images>
+            ${svg('image')}<b>Ganti foto</b><small>Foto baru mengganti semua foto di kanal terpilih. 1-9 JPG/PNG, 10 MB per foto.</small></label>
           <div class="pf__thumbs" data-thumbs aria-live="polite"></div></div>
-      </div>
-      <div class="le__go"><button type="submit">Simpan ke kanal terpilih</button></div>
-    </form>` : '';
+      </div></section>` : ''}
+
+    <section class="pf__step"><header><span class="pf__n" aria-hidden="true">${liveOn.length ? 3 : 2}</span><h2>Harga, stok &amp; pengiriman</h2>
+      <p>Stok induk diikuti semua kanal otomatis. Harga dikirim ke kanal yang dicentang.</p></header>
+      <div class="pf__grid">
+        ${liveOn.length ? field('Harga (Rp)', `<input name="price" type="number" min="100" step="1" inputmode="numeric" class="mono" value="${escape(String(price))}">`) : ''}
+        ${field('Stok induk', `<input name="qty" type="number" min="0" step="1" inputmode="numeric" class="mono" value="${ledgerRow?.qty ?? ''}" placeholder="&mdash;">`, { hint: 'Di bawah 100, otomatis ditambah 100.' })}
+        ${liveOn.length ? field('Berat paket (gram)', `<input name="weightGram" type="number" min="1" step="1" inputmode="numeric" class="mono" value="${L?.weightGram ?? ''}">`) : ''}
+        ${liveOn.length ? `<div class="pf__f"><span>Dimensi paket (cm)</span><div class="pf__dims">
+            <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang (cm)" placeholder="P" class="mono" value="${L?.dims?.l ?? ''}">
+            <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar (cm)" placeholder="L" class="mono" value="${L?.dims?.w ?? ''}">
+            <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi (cm)" placeholder="T" class="mono" value="${L?.dims?.h ?? ''}">
+          </div><small>Shopify tidak menyimpan dimensi.</small></div>` : ''}
+      </div></section>
+
+    <div class="pf__bar pe__bar">
+      ${liveOn.length ? `<fieldset class="chp"><legend class="pe__to">Kirim ke</legend>${liveOn.map((k) => `<label class="chp__opt"><input type="checkbox" name="channel" value="${k}" checked><span>${LABELS[k]}</span></label>`).join('')}</fieldset>` : '<span class="pe__to">Belum tayang di kanal mana pun</span>'}
+      <span class="pe__count" data-pe-count aria-live="polite"></span>
+      <button class="pf__primary" type="submit" data-pe-go>Simpan &amp; sinkronkan</button>
+    </div>
+  </form>`;
 
   return `
-    ${picture?.url || composition ? `<div class="pd__hero${composition ? ' pd__hero--bx' : ''}">
-      ${picture?.url
-        ? `<img class="pd__img" src="${escape(picture.thumb || picture.url)}" alt="${escape(picture.alt || product.name)}" width="200" height="200">`
-        : '<span class="pd__img pd__img--none" aria-hidden="true"></span>'}
+    <div class="pe__head">
+      <a class="pf-back" href="?view=products">${svg('chevL')}<span>Produk</span></a>
+      <span class="pe__grow"></span>
+      <a class="pf__ghost" href="?view=products&amp;new=1&amp;from=${encodeURIComponent(product.sku)}">${svg('plus')}<span>Duplikat</span></a>
+      <form method="post" data-confirm="Hapus ${escape(product.sku)} dari daftar produk? Listing di marketplace tidak disentuh, pesanan lama tetap terbaca, dan produk bisa dikembalikan.">
+        ${hidden}<input type="hidden" name="action" value="product_remove"><input type="hidden" name="sku" value="${escape(product.sku)}"><input type="hidden" name="removed" value="1">
+        <button class="pf__ghost" type="submit">${svg('trash')}<span>Hapus dari daftar</span></button></form>
+    </div>
+    <div class="pd__hero${composition ? ' pd__hero--bx' : ''}">
+      ${picture?.url ? `<img class="pd__img" src="${escape(picture.thumb || picture.url)}" alt="${escape(picture.alt || product.name)}" width="200" height="200">` : '<span class="pd__img pd__img--none" aria-hidden="true"></span>'}
       <div class="pd__cap">
-        <b>${escape(product.name)}</b>${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}
+        <b class="pe__name">${escape(product.name)}</b>${product.variant ? `<span class="note">${escape(product.variant)}</span>` : ''}
         <span class="mono dim">${escape(product.sku)}</span>
+        <span class="pe__chips">${['tiktok', 'shopee', 'shopify'].map((k) => `<span class="pe__chip pe__chip--${state(k)}"><i aria-hidden="true"></i>${LABELS[k]}</span>`).join('')}</span>
       </div>
       ${composition}
-    </div>` : ''}
-    <p class="sec">${escape(product.name)}${product.variant ? ' &middot; ' + escape(product.variant) : ''}
-      <span class="mono dim"> ${escape(product.sku)}</span></p>
-    <div class="chs" style="padding:1rem">
-      ${channelCard('tiktok', 'Tokopedia + TikTok Shop', entry?.tiktok?.rows?.[0])}
-      ${channelCard('shopee', 'Shopee', entry?.shopee?.rows?.[0])}
-      ${entry?.shopify || switchedOff('shopify').length ? channelCard('shopify', 'Shopify', entry?.shopify?.rows?.[0]) : ''}
     </div>
-    ${editListing}
-    ${masterEditor(product, csrf)}
-    <p class="sec">Stok &amp; harga</p>
-    <div class="apply">
-      <form class="edit" method="post" data-confirm="Setel stok induk ${escape(product.sku)} menjadi {v}? Semua kanal akan mengikutinya.">
-        ${hidden}
-        <input type="hidden" name="action" value="ledger">
-        <input type="hidden" name="sku" value="${escape(product.sku)}">
-        <label class="dr__lbl" for="qty">Stok induk</label>
-        <input id="qty" name="qty" type="number" min="0" step="1" inputmode="numeric"
-          value="${ledgerRow ? ledgerRow.qty : ''}" placeholder="&mdash;">
-        <button type="submit">Simpan</button>
-      </form>
-      ${entry ? `<form class="edit" method="post" data-confirm="Setel harga ${escape(product.sku)} menjadi Rp{v} di kanal terpilih?">
-        ${hidden}
-        <input type="hidden" name="action" value="price">
-        <input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">
-        <input type="hidden" name="sku" value="${escape(product.sku)}">
-        <label class="dr__lbl" for="price">Harga</label>
-        <input id="price" name="price" type="number" min="1" step="1" inputmode="numeric"
-          value="${entry.tiktok?.price ?? entry.shopee?.price ?? entry.shopify?.price ?? ''}">
-        ${channelPicker('pr')}
-        <button type="submit">Setel harga</button>
-      </form>` : '<span class="note">Belum tayang, harga tidak bisa disetel.</span>'}
-    </div>
-    <div class="foot"><span><a class="plink" href="?view=products">&larr; Kembali ke daftar produk</a></span></div>`;
+    <div class="cts">${['tiktok', 'shopee', 'shopify'].map(channelTile).join('')}</div>
+    ${editor}`;
 }
 
 /**

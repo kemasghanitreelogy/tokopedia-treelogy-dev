@@ -183,6 +183,76 @@ const LEDGER_TTL_MS = 60_000;
 // Pictures change when somebody edits a listing, which is rarely; five minutes is plenty.
 const IMAGES_TTL_MS = 5 * 60_000;
 /**
+ * Put an existing product on a channel that does not sell it yet, from what it already
+ * says elsewhere: the live listing's content and pictures, the master stock, the price it
+ * sells for. The example listing is the one given, or one of the same kind.
+ */
+async function publishProduct(catalog, sku, channel, { templateId = null, draft = false } = {}) {
+  const product = findProduct(sku);
+  if (!product || !Object.hasOwn(CREATORS, channel)) throw new Error('SKU atau kanal tidak valid');
+  const entry = catalog.skus.find((e) => e.sku === product.sku);
+  if (entry?.[channel]?.rows?.length) throw new Error(`sudah tayang di ${LISTING_CHANNELS[channel].label}`);
+  const content = await listingContent(catalog, product.sku);
+  if (!content?.data) throw new Error('belum tayang di kanal mana pun - buat lewat Tambah produk');
+  const L = content.data;
+  if (!L.weightGram) throw new Error('berat listing sumber tidak terbaca');
+  if (channel !== 'shopify' && !L.dims) throw new Error('dimensi listing sumber kosong');
+  let template = templateId;
+  if (channel !== 'shopify' && !template) {
+    // One of the same kind if there is one; the first live listing otherwise.
+    const pool = [];
+    for (const e of catalog.skus) for (const row of e[channel]?.rows ?? []) pool.push({ id: channel === 'tiktok' ? row.productId : row.itemId, category: findProduct(e.sku)?.category });
+    template = (pool.find((x) => x.category === product.category) ?? pool[0])?.id;
+    if (!template) throw new Error(`belum ada listing contoh di ${LISTING_CHANNELS[channel].label}`);
+  }
+  const ledger = await loadLedger().catch(() => null);
+  const price = Math.round(Number(entry?.tiktok?.price || entry?.shopee?.price || entry?.shopify?.price || 0));
+  if (!(price >= 100)) throw new Error('harga sumber tidak terbaca');
+  const stock = Math.max(1, Math.min(99999, Number(ledger?.skus?.[product.sku]?.qty) || entry?.tiktok?.qty || entry?.shopee?.qty || entry?.shopify?.qty || 1));
+  const images = await downloadImages(L.images);
+  if (images.length === 0) throw new Error('foto listing sumber tidak bisa diambil');
+  const out = await CREATORS[channel]({
+    sku: product.sku, title: L.title, description: L.description, price, stock, weightGram: L.weightGram, dims: L.dims ?? { l: 1, w: 1, h: 1 },
+  }, images, { templateId: template, draft });
+  return { ...out, price, stock };
+}
+
+/** Pictures sent with a form, checked the same way everywhere. */
+async function imagesFrom(form) {
+  const files = form.getAll('images').filter((f) => f && typeof f === 'object' && f.size > 0);
+  if (files.length > 9) throw new Error('maksimal 9 foto');
+  const out = [];
+  for (const f of files) {
+    if (!/^image\/(jpeg|png)$/i.test(f.type)) throw new Error(`${f.name}: hanya JPG atau PNG`);
+    if (f.size > 10 * 1024 * 1024) throw new Error(`${f.name}: lebih dari 10 MB`);
+    out.push({ buffer: Buffer.from(await f.arrayBuffer()), name: f.name, type: f.type });
+  }
+  return out;
+}
+
+/**
+ * A live listing's pictures, fetched so another channel can be given the same ones.
+ * Only JPEG and PNG are kept - what every channel's upload takes - and at most nine.
+ */
+async function downloadImages(urls = []) {
+  const out = [];
+  for (const [i, url] of urls.slice(0, 9).entries()) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      let type = String(res.headers.get('content-type') ?? '').split(';')[0];
+      const buffer = Buffer.from(await res.arrayBuffer());
+      // CDNs answer webp to a client that did not ask for it; sniff rather than trust.
+      if (buffer[0] === 0xff && buffer[1] === 0xd8) type = 'image/jpeg';
+      else if (buffer[0] === 0x89 && buffer[1] === 0x50) type = 'image/png';
+      if (!/^image\/(jpeg|png)$/.test(type) || buffer.length > 10 * 1024 * 1024) continue;
+      out.push({ buffer, name: `foto-${i + 1}.${type === 'image/png' ? 'png' : 'jpg'}`, type });
+    } catch { /* one picture that will not come is not a reason to stop */ }
+  }
+  return out;
+}
+
+/**
  * What a listing says now, to fill the edit form: read from the first channel that sells
  * the SKU live, a minute at a time. Never fatal - a page that cannot read the listing
  * still shows everything else, and says the form could not be filled.
@@ -259,6 +329,8 @@ const readCatalogSafely = () =>
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
+  product_save: 'products', product_publish: 'products',
+  bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
   label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', discard_manual: 'jurnal',
@@ -942,6 +1014,238 @@ async function handleWrite(form, ip, user, csrf) {
    * written only once at least one channel accepted the listing, or when no channel was
    * ticked at all - and the results say channel by channel what happened.
    */
+  /*
+   * One save for everything on a product's page, the way an omnichannel tool works: the
+   * master facts, the listing content, the price and the master stock, each sent only when
+   * it changed and only where it belongs. The page carries what it was filled with, so
+   * "changed" is decided here, against that, and nothing untouched is rewritten.
+   */
+  if (action === 'product_save') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const current = findProduct(sku);
+    if (!current || current.sku !== sku) throw new Error(`${sku} tidak ada di master`);
+    let before = {};
+    try { before = JSON.parse(String(form.get('before') ?? '{}')); } catch { before = {}; }
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+    const done = [];
+    const problems = [];
+    const changes = [];
+
+    // 1. The master's own facts.
+    const { entry } = cleanProduct({
+      sku, name: form.get('name'), variant: form.get('variant'), category: form.get('category'),
+      family: form.get('family'), aliases: form.get('aliases'), gift: form.get('gift') === '1',
+      components: form.getAll('part_sku').map((partSku, i) => ({ sku: partSku, qty: form.getAll('part_qty')[i] })),
+    }, { isNew: false });
+    const masterChanged = ['name', 'variant', 'category', 'family', 'aliases', 'components', 'gift']
+      .filter((k) => JSON.stringify(current[k] ?? (k === 'aliases' ? [] : null)) !== JSON.stringify(entry[k] ?? (k === 'aliases' ? [] : null)));
+    if (masterChanged.length) {
+      await saveMasterProduct({ sku, entry });
+      done.push('data master');
+      for (const k of masterChanged) changes.push({ field: k, from: JSON.stringify(current[k] ?? null), to: JSON.stringify(entry[k] ?? null) });
+    }
+
+    // 2. The master stock: one transaction, then every channel follows.
+    const qtyRaw = String(form.get('qty') ?? '').trim();
+    if (qtyRaw !== '') {
+      const qty = Number(qtyRaw);
+      if (!Number.isInteger(qty) || qty < 0) throw new Error('stok induk harus bilangan bulat >= 0');
+      if (qty !== Number(before.qty)) {
+        let was = null;
+        await updateDoc(LEDGER_PATHNAME, (doc) => {
+          const ledger = doc ?? emptyLedger();
+          was = ledger.skus?.[sku]?.qty ?? null;
+          return setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
+        }, emptyLedger());
+        invalidate('ledger');
+        void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
+        done.push('stok induk');
+        changes.push({ field: 'stok induk', from: was, to: qty });
+      }
+    }
+
+    const catalog = picked.length ? await readCatalog() : null;
+
+    // 3. The price, on the channels ticked.
+    const priceRaw = String(form.get('price') ?? '').trim();
+    if (priceRaw !== '' && picked.length && Number(priceRaw) !== Number(before.price)) {
+      const price = Number(priceRaw);
+      if (!Number.isInteger(price) || price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
+      const results = await applyPrice({ catalog, sku, price, channels: picked });
+      const failed = results.filter((r) => r.status === 'failed');
+      if (results.length - failed.length) done.push(`harga di ${results.length - failed.length} listing`);
+      for (const f of failed) problems.push(`harga ${LISTING_CHANNELS[f.channel]?.label ?? f.channel}: ${f.error}`);
+      changes.push({ field: 'harga', from: before.price ?? null, to: price });
+    }
+
+    // 4. The listing content, on the channels ticked.
+    const patch = diffPatch(before.listing ?? {}, {
+      title: form.get('title') ?? undefined,
+      description: form.get('description') ?? undefined,
+      weightGram: form.get('weightGram') ?? '',
+      dims: { l: form.get('dimL'), w: form.get('dimW'), h: form.get('dimH') },
+    });
+    const images = await imagesFrom(form);
+    if ((Object.keys(patch).length || images.length) && picked.length) {
+      const entryLive = catalog.skus.find((e) => e.sku === sku);
+      let ok = 0;
+      for (const channel of picked) {
+        const seen = new Set();
+        for (const row of entryLive?.[channel]?.rows ?? []) {
+          const ref = refOf(channel, row);
+          const key = channel === 'shopee' ? ref?.itemId : channel === 'shopify' ? `${ref?.productId}|${ref?.variantId}` : ref?.productId;
+          if (!ref || seen.has(key)) continue;
+          seen.add(key);
+          try { await LISTING_CHANNELS[channel].edit(ref, patch, images); ok += 1; }
+          catch (error) { problems.push(`${LISTING_CHANNELS[channel].label}: ${error.message}`); }
+        }
+      }
+      if (ok) done.push(`${[...Object.keys(patch).map((k) => ({ title: 'judul', description: 'deskripsi', weightGram: 'berat', dims: 'dimensi' }[k])), ...(images.length ? ['foto'] : [])].join(', ')} di ${ok} listing`);
+      for (const [k, v] of Object.entries(patch)) changes.push({ field: k, from: k === 'dims' ? JSON.stringify(before.listing?.dims ?? null) : before.listing?.[k] ?? null, to: typeof v === 'object' ? JSON.stringify(v) : v });
+      if (images.length) changes.push({ field: 'foto', to: images.map((i) => i.name).join(', ') });
+      invalidate('listing:');
+    }
+
+    invalidate('catalog');
+    if (done.length === 0 && problems.length === 0) {
+      return { view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`, message: 'Tidak ada yang berubah' };
+    }
+    console.log(`dashboard: product_save ${sku} - ${done.join('; ')}${problems.length ? ` | gagal: ${problems.join('; ')}` : ''}`);
+    return {
+      view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`,
+      kind: problems.length && !done.length ? 'error' : 'ok',
+      message: `${sku}: ${done.length ? `disimpan - ${done.join(', ')}` : 'tidak ada yang tersimpan'}${problems.length ? `. Gagal: ${problems.join('; ')}` : ''}`,
+      celebrate: done.length && !problems.length ? 'Tersimpan & tersinkron' : null,
+      audit: {
+        menu: 'products', verb: 'edit', target: sku, status: problems.length && !done.length ? 'failed' : 'ok',
+        summary: `Menyimpan ${sku}: ${done.join(', ') || '-'}${problems.length ? ` (gagal: ${problems.length})` : ''}`,
+        changes: [...changes, ...problems.map((p) => ({ field: 'gagal', to: p }))],
+      },
+    };
+  }
+
+  /*
+   * Put an existing product on a channel that does not sell it yet, from what it already
+   * says elsewhere: the live listing's title, description, box and pictures, the master
+   * stock, the price it sells for. Only the example listing is chosen here.
+   */
+  if (action === 'product_publish') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const channel = String(form.get('channel') ?? '');
+    const draft = String(form.get('mode') ?? 'live') === 'draft';
+    const out = await publishProduct(await readCatalog(), sku, channel, {
+      templateId: String(form.get('template') ?? '').trim(), draft,
+    });
+    invalidate('catalog');
+    console.log(`dashboard: product_publish ${sku} -> ${channel} ${out.id}`);
+    return {
+      view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`,
+      message: `${sku} dipublikasikan${draft ? ' sebagai draft' : ''} di ${LISTING_CHANNELS[channel].label}`,
+      celebrate: 'Dipublikasikan',
+      audit: {
+        menu: 'products', verb: 'add', target: sku,
+        summary: `Mempublikasikan ${sku} ke ${LISTING_CHANNELS[channel].label}${draft ? ' sebagai draft' : ''}`,
+        changes: [{ field: LISTING_CHANNELS[channel].label, to: String(out.id) }, { field: 'harga', to: out.price }, { field: 'stok', to: out.stock }],
+      },
+    };
+  }
+
+  /*
+   * The same actions, for a selection. Each SKU is its own attempt: one that fails is
+   * named in the answer and the rest still go. Capped at fifty a press, so a slip of the
+   * thumb cannot spend a channel's hourly quota.
+   */
+  if (action.startsWith('bulk_')) {
+    const skus = [...new Set(form.getAll('sku').map((v) => String(v).trim()).filter(Boolean))];
+    if (skus.length === 0) throw new Error('belum ada produk yang dipilih');
+    if (skus.length > 50) throw new Error('maksimal 50 produk sekali kirim');
+    for (const sku of skus) if (!findProduct(sku)) throw new Error(`${sku} tidak ada di master`);
+    const results = [];
+    let summary = '';
+
+    if (action === 'bulk_stock') {
+      const qty = Number(form.get('qty'));
+      if (!Number.isInteger(qty) || qty < 0) throw new Error('stok induk harus bilangan bulat >= 0');
+      await updateDoc(LEDGER_PATHNAME, (doc) => {
+        let ledger = doc ?? emptyLedger();
+        for (const sku of skus) ledger = setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
+        return ledger;
+      }, emptyLedger());
+      invalidate('ledger');
+      void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
+      for (const sku of skus) results.push({ sku, ok: true });
+      summary = `stok induk ${qty}`;
+    } else if (action === 'bulk_remove') {
+      for (const sku of skus) {
+        try { await setMasterRemoved(sku, true); results.push({ sku, ok: true }); }
+        catch (error) { results.push({ sku, ok: false, error: error.message }); }
+      }
+      summary = 'dihapus dari daftar';
+    } else {
+      const catalog = await readCatalog();
+      if (action === 'bulk_price') {
+        const price = Number(form.get('price'));
+        if (!Number.isInteger(price) || price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
+        const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+        if (picked.length === 0) throw new Error('pilih minimal satu kanal');
+        for (const sku of skus) {
+          const r = await applyPrice({ catalog, sku, price, channels: picked }).catch((error) => [{ status: 'failed', error: error.message }]);
+          const failed = r.filter((x) => x.status === 'failed');
+          results.push({ sku, ok: failed.length === 0 && r.length > 0, error: failed[0]?.error ?? (r.length ? '' : 'tidak tayang di kanal terpilih') });
+        }
+        summary = `harga Rp${price.toLocaleString('id-ID')}`;
+      } else if (action === 'bulk_active') {
+        const channel = String(form.get('channel') ?? '');
+        const active = String(form.get('active') ?? '') === '1';
+        if (!Object.hasOwn(LISTING_CHANNELS, channel)) throw new Error('kanal tidak valid');
+        for (const sku of skus) {
+          const entry = catalog.skus.find((e) => e.sku === sku);
+          const rows = active
+            ? ((entry?.[channel]?.rows?.length ? [] : (entry?.[`${channel}_ignored`] ?? entry?.[channel]?.ignored ?? []).filter((r) => r.status !== 'DELETED')))
+            : entry?.[channel]?.rows ?? [];
+          if (rows.length === 0) { results.push({ sku, ok: false, error: active ? 'tidak ada listing nonaktif' : 'tidak tayang' }); continue; }
+          try {
+            const seen = new Set();
+            for (const row of rows) {
+              const ref = refOf(channel, row);
+              const key = channel === 'shopee' ? ref?.itemId : ref?.productId;
+              if (!ref || seen.has(key)) continue;
+              seen.add(key);
+              await LISTING_CHANNELS[channel].setActive(ref, active);
+            }
+            results.push({ sku, ok: true });
+          } catch (error) { results.push({ sku, ok: false, error: error.message }); }
+        }
+        summary = `${active ? 'diaktifkan' : 'dinonaktifkan'} di ${LISTING_CHANNELS[channel].label}`;
+      } else if (action === 'bulk_publish') {
+        const channel = String(form.get('channel') ?? '');
+        const draft = String(form.get('mode') ?? 'live') === 'draft';
+        if (!Object.hasOwn(CREATORS, channel)) throw new Error('kanal tidak valid');
+        for (const sku of skus) {
+          try { await publishProduct(catalog, sku, channel, { templateId: null, draft }); results.push({ sku, ok: true }); }
+          catch (error) { results.push({ sku, ok: false, error: error.message }); }
+        }
+        summary = `dipublikasikan${draft ? ' sebagai draft' : ''} di ${LISTING_CHANNELS[channel].label}`;
+      } else {
+        throw new Error('aksi tidak dikenal');
+      }
+    }
+    invalidate('catalog');
+    const ok = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    console.log(`dashboard: ${action} ${skus.length} sku - ${ok.length} ok, ${failed.length} gagal`);
+    return {
+      view: 'products',
+      kind: failed.length && !ok.length ? 'error' : 'ok',
+      message: `${ok.length} produk ${summary}${failed.length ? `; ${failed.length} gagal: ${failed.slice(0, 3).map((f) => `${f.sku} (${f.error})`).join(', ')}${failed.length > 3 ? ', …' : ''}` : ''}`,
+      audit: {
+        menu: 'products', verb: 'edit', target: `${skus.length} produk`, status: failed.length && !ok.length ? 'failed' : 'ok',
+        summary: `Aksi massal: ${skus.length} produk ${summary}`,
+        changes: results.map((r) => ({ field: r.sku, to: r.ok ? 'ok' : 'gagal', note: r.error ?? '' })),
+      },
+    };
+  }
+
   if (action === 'product_create') {
     const { sku, entry } = cleanProduct({
       sku: form.get('sku'), name: form.get('name'), variant: form.get('variant'), category: form.get('category'),
@@ -961,6 +1265,13 @@ async function handleWrite(form, ip, user, csrf) {
       dims: { l: Number(form.get('dimL')), w: Number(form.get('dimW')), h: Number(form.get('dimH')) },
     };
     const files = form.getAll('images').filter((f) => f && typeof f === 'object' && f.size > 0);
+    // A duplicate may reuse the pictures of the product it was copied from.
+    const photosFrom = String(form.get('photos_from') ?? '').trim();
+    let borrowed = [];
+    if (files.length === 0 && photosFrom && picked.length > 0) {
+      const source = await listingContent(await readCatalog(), photosFrom);
+      borrowed = await downloadImages(source?.data?.images ?? []);
+    }
     if (picked.length > 0) {
       if (input.title.length < 5 || input.title.length > 255) throw new Error('judul listing 5-255 karakter');
       if (input.description.length < 20) throw new Error('deskripsi minimal 20 karakter');
@@ -970,15 +1281,10 @@ async function handleWrite(form, ip, user, csrf) {
       if (picked.some((c) => c !== 'shopify') && !['l', 'w', 'h'].every((k) => Number.isInteger(input.dims[k]) && input.dims[k] > 0)) {
         throw new Error('dimensi paket wajib untuk Tokopedia/TikTok dan Shopee');
       }
-      if (files.length < 1) throw new Error('minimal 1 foto');
+      if (files.length + borrowed.length < 1) throw new Error('minimal 1 foto');
       if (files.length > 9) throw new Error('maksimal 9 foto');
     }
-    const images = [];
-    for (const f of files) {
-      if (!/^image\/(jpeg|png)$/i.test(f.type)) throw new Error(`${f.name}: hanya JPG atau PNG`);
-      if (f.size > 10 * 1024 * 1024) throw new Error(`${f.name}: lebih dari 10 MB`);
-      images.push({ buffer: Buffer.from(await f.arrayBuffer()), name: f.name, type: f.type });
-    }
+    const images = files.length ? await imagesFrom(form) : borrowed;
 
     const results = [];
     for (const channel of picked) {
@@ -1680,6 +1986,10 @@ export default async function handler(req, res) {
         images: await imagesByKey(),
         listing: selected ? await listingContent(catalog, selected) : null,
         creating: url.searchParams.get('new') === '1',
+        // Duplicate: the new-product form filled from an existing product and its listing.
+        duplicateOf: url.searchParams.get('new') === '1' && url.searchParams.get('from')
+          ? { sku: url.searchParams.get('from'), listing: await listingContent(catalog, url.searchParams.get('from')) }
+          : null,
       }));
       return;
     }

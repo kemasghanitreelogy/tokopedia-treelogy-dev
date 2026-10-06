@@ -25,6 +25,8 @@ export const CATEGORIES = {
  * @property {string[]} [aliases]  other SKUs the seller uses for the same product
  * @property {{sku: string, qty: number}[]} [components]  what a bundle is assembled from
  * @property {boolean} [gift]      given away, never sold on its own
+ * @property {string} [family]     the product a card is grouped under on the products page,
+ *   when its own name says more than that (the three Inside Out protocols); defaults to name
  */
 
 /** @type {MasterProduct[]} */
@@ -118,17 +120,17 @@ export const PRODUCTS = [
     components: [{ sku: 'MRS-001', qty: 1 }, { sku: 'OMP-180-001', qty: 1 }],
   },
   {
-    sku: 'Inside-Out-Protocol', aliases: ['The-IO30-Protocol90+30', 'The-Inside-&-Out30'], name: 'Inside Out Protocol', category: 'bundle',
+    sku: 'Inside-Out-Protocol', aliases: ['The-IO30-Protocol90+30', 'The-Inside-&-Out30'], name: 'Inside Out Protocol', family: 'Inside Out Protocol', category: 'bundle',
     components: [{ sku: 'OMC-90-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }],
   },
   {
     sku: 'Inside-Out-60-Protocol180+30', aliases: ['The-IO60-Protocol180+30', 'The-Inside-&-Out60'], name: 'Inside Out Protocol 60 Days',
-    variant: 'Caps 180 + Oil 30ml', category: 'bundle',
+    family: 'Inside Out Protocol', variant: 'Caps 180 + Oil 30ml', category: 'bundle',
     components: [{ sku: 'OMC-180-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }],
   },
   {
     sku: 'The-Inside-&-Out180+30', name: 'Inside Out Protocol 60 Days',
-    variant: 'Oil 60ml + Caps 180', category: 'bundle',
+    family: 'Inside Out Protocol', variant: 'Oil 60ml + Caps 180', category: 'bundle',
     components: [{ sku: 'OMO-60-001', qty: 1 }, { sku: 'OMC-180-001', qty: 1 }],
   },
 ];
@@ -140,6 +142,8 @@ for (const product of PRODUCTS) {
 }
 
 export const findProduct = (sku) => BY_SKU.get(sku) ?? null;
+/** What a product is grouped under for display: its family, or its own name. */
+export const familyOf = (product) => product?.family ?? product?.name ?? '';
 export const isBundle = (product) => Array.isArray(product?.components) && product.components.length > 0;
 
 /**

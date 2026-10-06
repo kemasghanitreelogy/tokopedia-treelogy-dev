@@ -6,7 +6,7 @@ import { CHANNEL_LABEL } from './stock-sync.js';
 import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
-import { PRODUCTS, CATEGORIES, groupProducts, findProduct, isBundle, buildableFrom, unmapped } from './master.js';
+import { PRODUCTS, CATEGORIES, groupProducts, findProduct, familyOf, isBundle, buildableFrom, unmapped } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
 import { orderCode, PREFIXES } from './mekari/prefix.js';
 import { defaultSlot } from './shopee/pickup.js';
@@ -786,6 +786,8 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   text-transform:uppercase; color:var(--muted); font-weight:500}
 .grp:first-child{margin-top:0}
 .grp__n{margin-left:.5rem; opacity:.55; letter-spacing:0}
+.grp--fam{margin:.35rem 0 -.2rem; font-size:.84rem; letter-spacing:0; text-transform:none; font-weight:600; color:var(--fg)}
+.grp--fam .grp__n{font-weight:400; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase}
 .grp[hidden],.card[hidden]{display:none}
 
 .card{display:flex; flex-direction:column; gap:.25rem; padding:.55rem .6rem; text-decoration:none;
@@ -6120,6 +6122,13 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     .map((group) => ({
       ...group,
       items: [...group.items].sort((a, b) => {
+        // Products standing alone lead, families with a heading follow: a lone card after
+        // a family reads as one more of its variants (the Discovery Pack looked like a
+        // fourth Ritual Set).
+        const size = (p) => group.items.filter((q) => familyOf(q) === familyOf(p)).length;
+        const grouped = (p) => size(p) > 1 && size(p) < group.items.length;
+        if (grouped(a) !== grouped(b)) return grouped(a) ? 1 : -1;
+        if (familyOf(a) !== familyOf(b)) return familyOf(a).localeCompare(familyOf(b));
         if (a.name !== b.name) return a.name.localeCompare(b.name);
         // Sizes read in numeric order, not alphabetic: 45 before 180.
         const na = Number((String(a.variant ?? '').match(/\d+/) ?? [])[0]);
@@ -6130,37 +6139,55 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
     }))
     .flatMap((group) => [
       `<h3 class="grp">${escape(group.label)}<span class="grp__n">${group.items.length}</span></h3>`,
-      ...group.items.map((product) => {
-        const { tt, sp, sy, price, status, build, attention } = cell(product);
-        const qty = (value, failed) =>
-          failed ? '<span class="stop">?</span>'
-          : value === null ? '<span class="dim">&mdash;</span>'
-          : `<b>${value}</b>`;
-
-        const picture = images[product.sku];
-        return `<a class="card${attention ? ' card--flag' : ''}" href="?view=products&sku=${encodeURIComponent(product.sku)}">
-          ${picture?.thumb
-            ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="180" decoding="async">`
-            : '<span class="card__img card__img--none" aria-hidden="true">tanpa gambar</span>'}
-          <span class="card__top">
-            <span class="card__name">${escape(product.name)}${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}</span>
-            ${isBundle(product) ? '<span class="badge badge--b">bundle</span>' : ''}
-            ${product.gift ? '<span class="badge">gift</span>' : ''}
-          </span>
-          <span class="card__sku mono">${escape(product.sku)}</span>
-          <span class="card__stock mono">
-            <span class="qty"><i>Tokped</i>${qty(tt, errors.tiktok)}</span>
-            <span class="qty"><i>Shopee</i>${qty(sp, errors.shopee)}</span>
-            ${shopifyOn ? `<span class="qty"><i>Shopify</i>${qty(sy, errors.shopify)}</span>` : ''}
-          </span>
-          <span class="card__foot">
-            <span class="mono">${price === null ? '<span class="dim">&mdash;</span>' : escape(rupiah(price))}</span>
-            <span class="card__tags">${build}${status}</span>
-          </span>
-        </a>`;
+      ...group.items.flatMap((product, index, items) => {
+        /*
+         * Variants of one product sit under its name, the way the stock tab reads.
+         *
+         * The three Inside Out protocols and the three Ritual Set + Powder sizes were six
+         * cards in a row with nothing saying which belonged together. A family of one gets
+         * no heading - it would only repeat the card's own name - and neither does a family
+         * that is the whole category, which the category heading already names.
+         */
+        const family = familyOf(product);
+        const size = items.filter((p) => familyOf(p) === family).length;
+        const first = index === 0 || familyOf(items[index - 1]) !== family;
+        const heading = size > 1 && size < items.length && first
+          ? `<h4 class="grp grp--fam">${escape(family)}<span class="grp__n">${size} varian</span></h4>`
+          : '';
+        return [heading, cardFor(product)];
       }),
     ])
     .join('');
+
+  function cardFor(product) {
+    const { tt, sp, sy, price, status, build, attention } = cell(product);
+    const qty = (value, failed) =>
+      failed ? '<span class="stop">?</span>'
+      : value === null ? '<span class="dim">&mdash;</span>'
+      : `<b>${value}</b>`;
+
+    const picture = images[product.sku];
+    return `<a class="card${attention ? ' card--flag' : ''}" href="?view=products&sku=${encodeURIComponent(product.sku)}">
+      ${picture?.thumb
+        ? `<img class="card__img" src="${escape(picture.thumb)}" alt="${escape(picture.alt || product.name)}" loading="lazy" width="240" height="180" decoding="async">`
+        : '<span class="card__img card__img--none" aria-hidden="true">tanpa gambar</span>'}
+      <span class="card__top">
+        <span class="card__name">${escape(product.name)}${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}</span>
+        ${isBundle(product) ? '<span class="badge badge--b">bundle</span>' : ''}
+        ${product.gift ? '<span class="badge">gift</span>' : ''}
+      </span>
+      <span class="card__sku mono">${escape(product.sku)}</span>
+      <span class="card__stock mono">
+        <span class="qty"><i>Tokped</i>${qty(tt, errors.tiktok)}</span>
+        <span class="qty"><i>Shopee</i>${qty(sp, errors.shopee)}</span>
+        ${shopifyOn ? `<span class="qty"><i>Shopify</i>${qty(sy, errors.shopify)}</span>` : ''}
+      </span>
+      <span class="card__foot">
+        <span class="mono">${price === null ? '<span class="dim">&mdash;</span>' : escape(rupiah(price))}</span>
+        <span class="card__tags">${build}${status}</span>
+      </span>
+    </a>`;
+  }
 
   const groups = `<div class="cards" id="rows">${cards}</div>`;
 
@@ -6218,11 +6245,15 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       row.hidden = !ok;
       if (ok) n++;
     });
-    // A category heading with nothing under it is noise, so it hides with its rows.
+    // A heading with nothing under it is noise, so it hides with its rows. A category
+    // reaches to the next category, over its families' headings; a family reaches only
+    // to the next heading of either kind. Only cards count as something under it.
     groups.forEach(function (grp) {
+      var family = grp.classList.contains('grp--fam');
       var any = false;
-      for (var el = grp.nextElementSibling; el && !el.classList.contains('grp'); el = el.nextElementSibling) {
-        if (!el.hidden) { any = true; break; }
+      for (var el = grp.nextElementSibling; el; el = el.nextElementSibling) {
+        if (el.classList.contains('grp') && (family || !el.classList.contains('grp--fam'))) break;
+        if (el.classList.contains('card') && !el.hidden) { any = true; break; }
       }
       grp.hidden = !any;
     });

@@ -1210,6 +1210,32 @@ tbody tr:hover{background:var(--panel-2)}
 .pd__hero{display:grid; grid-template-columns:200px minmax(0,1fr); gap:1.1rem; align-items:start; padding:1rem 1rem 0}
 .pd__cap{display:flex; flex-direction:column; gap:.25rem; font-size:.9rem; padding-top:.2rem}
 .pd__img{width:200px; height:200px; border-radius:12px; object-fit:cover; background:var(--panel-2); border:1px solid var(--line)}
+.pd__hero--bx{grid-template-columns:200px minmax(9rem,.7fr) minmax(0,1.6fr)}
+.bx{align-self:stretch; display:flex; flex-direction:column; gap:.55rem; padding:.85rem .9rem; border:1px solid var(--line);
+  border-radius:var(--radius-s); background:color-mix(in srgb, var(--panel-2) 70%, transparent)}
+.bx__head{display:flex; align-items:baseline; justify-content:space-between; gap:.75rem}
+.bx__h{margin:0; font-size:.7rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.bx__make{font-size:.78rem; color:var(--muted)}
+.bx__make b{font-size:.95rem; color:var(--fg); font-weight:600; margin-right:.2rem}
+.bx__list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.15rem}
+.bx__row{display:grid; grid-template-columns:44px minmax(0,1fr) auto 4.5rem; align-items:center; gap:.75rem; padding:.4rem .45rem;
+  border-radius:10px; color:inherit; text-decoration:none; cursor:pointer; transition:background-color var(--t-fast, 160ms)}
+.bx__row:hover{background:color-mix(in srgb, var(--fg) 5%, transparent)}
+.bx__row:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
+.bx__pic{width:44px; height:44px; border-radius:9px; object-fit:cover; background:var(--panel); border:1px solid var(--line)}
+.bx__id{display:flex; flex-direction:column; min-width:0; gap:.1rem}
+.bx__name{font-size:.86rem; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.bx__var{color:var(--muted); font-weight:400}
+.bx__sku{font-size:.7rem; color:var(--dim)}
+.bx__qty{font-size:.8rem; color:var(--muted); padding:.15rem .45rem; border:1px solid var(--line); border-radius:6px}
+.bx__stock{display:flex; flex-direction:column; align-items:flex-end; line-height:1.15}
+.bx__stock b{font-size:.95rem; font-weight:600}
+.bx__stock span{font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color:var(--dim)}
+.bx__stock--limit b{color:var(--brand)}
+.bx__warn{display:flex; align-items:center; gap:.4rem; margin:.1rem 0 0; font-size:.78rem; color:var(--bad)}
+.bx__warn .ico{width:15px; height:15px; flex:none}
+@media (max-width:980px){.pd__hero--bx{grid-template-columns:160px minmax(0,1fr)} .pd__hero--bx .bx{grid-column:1/-1} .pd__hero--bx .pd__img{width:160px; height:160px}}
+@media (prefers-reduced-motion:reduce){.bx__row{transition:none}}
 @media (max-width:640px){.pd__hero{grid-template-columns:minmax(0,1fr)} .pd__img{width:100%; height:auto; aspect-ratio:1}}
 .ln__pic{width:38px; height:38px; border-radius:7px; object-fit:cover; background:var(--panel-2); border:1px solid var(--line); flex:none}
 .ln__pic[hidden]{display:none}
@@ -6051,7 +6077,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       stale: Boolean(catalog.stale),
       staleSince: catalog.savedAt ? wibStamp(catalog.savedAt) : null,
       kpis: '',
-      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan , picture: images[selected] ?? null }),
+      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images }),
     });
   }
 
@@ -6277,7 +6303,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 }
 
 /** One product: what each channel holds, and the controls to change it. */
-function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null }) {
+function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {} }) {
   const entry = live.get(product.sku);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const ledgerRow = ledger?.skus?.[product.sku];
@@ -6317,39 +6343,53 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
   const bundle = isBundle(product) ? buildableFrom(product, stockOf) : null;
   const listedQty = stockOf(product.sku);
 
-  const bundleBlock = bundle
-    ? `<p class="sec">Isi bundle</p>
-       <div class="scroll"><table>
-         <thead><tr><th>Komponen</th><th class="num">Butuh</th><th class="num">Stok</th><th class="num">Cukup untuk</th></tr></thead>
-         <tbody>${bundle.parts.map((part) => {
-           const component = findProduct(part.sku);
-           return `<tr>
-             <td><a class="plink" href="?view=products&sku=${encodeURIComponent(part.sku)}">${escape(component?.name ?? part.sku)}</a>
-                 ${component?.variant ? `<span class="note"> &middot; ${escape(component.variant)}</span>` : ''}
-                 <span class="note mono"> ${escape(part.sku)}</span></td>
-             <td class="num mono">${part.qty}</td>
-             <td class="num mono">${part.available ?? '&mdash;'}</td>
-             <td class="num mono">${part.possible ?? '&mdash;'}</td>
-           </tr>`;
-         }).join('')}</tbody>
-       </table></div>
-       <div class="apply">
-         <span class="note">
-           Komponen cukup untuk <b>${bundle.buildable ?? '?'}</b> bundle.
-           ${listedQty !== null && bundle.buildable !== null && listedQty > bundle.buildable
-             ? `<span class="stop">Listing memasang ${listedQty} &mdash; lebih besar dari yang bisa dirakit.</span>`
-             : ''}
-         </span>
-       </div>`
+  /*
+   * What the bundle is made of, beside its picture rather than under the channel cards.
+   *
+   * One row per component: its own picture, what it is, how many go in, and how many the
+   * shelf holds. The summary says how many whole bundles that makes; the warning appears
+   * only when a listing promises more than that, so a quiet panel means nothing is wrong.
+   */
+  const composition = bundle
+    ? `<section class="bx" aria-labelledby="bx-h">
+        <header class="bx__head">
+          <h2 class="bx__h" id="bx-h">Isi bundle</h2>
+          <span class="bx__make"><b class="mono">${bundle.buildable ?? '?'}</b> bisa dirakit</span>
+        </header>
+        <ul class="bx__list">${bundle.parts.map((part) => {
+          const component = findProduct(part.sku);
+          const pic = images[part.sku];
+          const short = part.possible !== null && bundle.buildable !== null && part.possible === bundle.buildable && bundle.parts.length > 1;
+          return `<li><a class="bx__row" href="?view=products&sku=${encodeURIComponent(part.sku)}">
+            ${pic?.thumb
+              ? `<img class="bx__pic" src="${escape(pic.thumb)}" alt="" width="44" height="44" loading="lazy" decoding="async">`
+              : '<span class="bx__pic bx__pic--none" aria-hidden="true"></span>'}
+            <span class="bx__id">
+              <span class="bx__name">${escape(component?.name ?? part.sku)}${component?.variant ? ` <span class="bx__var">${escape(component.variant)}</span>` : ''}</span>
+              <span class="bx__sku mono">${escape(part.sku)}</span>
+            </span>
+            <span class="bx__qty mono" aria-label="${part.qty} per bundle">&times;${part.qty}</span>
+            <span class="bx__stock${short ? ' bx__stock--limit' : ''}" title="${short ? 'Komponen ini yang membatasi jumlah rakitan' : ''}">
+              <b class="mono">${part.available ?? '&mdash;'}</b><span>stok</span>
+            </span>
+          </a></li>`;
+        }).join('')}</ul>
+        ${listedQty !== null && bundle.buildable !== null && listedQty > bundle.buildable
+          ? `<p class="bx__warn">${svg('warn')}<span>Listing memasang <b class="mono">${listedQty}</b>, lebih dari yang bisa dirakit.</span></p>`
+          : ''}
+      </section>`
     : '';
 
   return `
-    ${picture?.url ? `<div class="pd__hero">
-      <img class="pd__img" src="${escape(picture.thumb || picture.url)}" alt="${escape(picture.alt || product.name)}" width="200" height="200">
+    ${picture?.url || composition ? `<div class="pd__hero${composition ? ' pd__hero--bx' : ''}">
+      ${picture?.url
+        ? `<img class="pd__img" src="${escape(picture.thumb || picture.url)}" alt="${escape(picture.alt || product.name)}" width="200" height="200">`
+        : '<span class="pd__img pd__img--none" aria-hidden="true"></span>'}
       <div class="pd__cap">
         <b>${escape(product.name)}</b>${product.variant ? ` <span class="note">${escape(product.variant)}</span>` : ''}
         <span class="mono dim">${escape(product.sku)}</span>
       </div>
+      ${composition}
     </div>` : ''}
     <p class="sec">${escape(product.name)}${product.variant ? ' &middot; ' + escape(product.variant) : ''}
       <span class="mono dim"> ${escape(product.sku)}</span></p>
@@ -6358,7 +6398,6 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       ${channelCard('shopee', 'Shopee', entry?.shopee?.rows?.[0])}
       ${entry?.shopify ? channelCard('shopify', 'Shopify', entry.shopify.rows?.[0]) : ''}
     </div>
-    ${bundleBlock}
     <p class="sec">Ubah</p>
     ${syncNote}
     <div class="apply">

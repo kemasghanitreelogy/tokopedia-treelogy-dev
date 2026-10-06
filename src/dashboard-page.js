@@ -4055,6 +4055,7 @@ export function renderManual({
 
   function total() {
     var goods = 0;
+    var complete = 0;
     Array.prototype.forEach.call(lines.querySelectorAll('[data-row]'), function (row) {
       var sku = row.querySelector('select').value;
       var qty = num(row.querySelector('[name="qty"]'));
@@ -4074,6 +4075,7 @@ export function renderManual({
       var net = Math.max(0, price - disc) * qty;
       cell.textContent = rupiah(net);
       goods += net;
+      complete += 1;
     });
 
     var ship = Math.max(0, num(shipField));
@@ -4118,7 +4120,14 @@ export function renderManual({
       form.querySelector('[data-total-field]').value = '0';
       go.disabled = !(hasReplacement() && wrongValue > 0 && linked.value.trim().length > 0);
     } else {
-      go.disabled = goods <= 0;
+      /*
+       * Gated on a finished line, not on a total above zero.
+       *
+       * A sample or a gift is typed in at full price with a 100% discount, so that the
+       * books show what went out and what it was worth; the server and Jurnal both take a
+       * Rp0 invoice. Requiring a positive total kept that one honest entry unsaveable.
+       */
+      go.disabled = complete === 0;
     }
     // The confirmation quotes what is actually about to be written - the house rule for
     // anything that writes - so it is rebuilt whenever the numbers change.

@@ -1209,6 +1209,40 @@ tbody tr:hover{background:var(--panel-2)}
 .pd__hero{display:grid; grid-template-columns:200px minmax(0,1fr); gap:1.1rem; align-items:start; padding:1rem 1rem 0}
 .pd__cap{display:flex; flex-direction:column; gap:.25rem; font-size:.9rem; padding-top:.2rem}
 .pd__img{width:200px; height:200px; border-radius:12px; object-fit:cover; background:var(--panel-2); border:1px solid var(--line)}
+.ch__toggle{margin-top:.75rem; display:flex; justify-content:flex-end}
+.ch__btn{display:inline-flex; align-items:center; gap:.35rem; font:inherit; font-size:.78rem; padding:.4rem .75rem; min-height:34px; cursor:pointer;
+  border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); transition:color var(--t-fast), border-color var(--t-fast)}
+.ch__btn:hover{color:var(--fg); border-color:var(--muted)}
+.ch__btn--on{color:var(--brand); border-color:color-mix(in srgb, var(--brand) 45%, var(--line))}
+.ch__btn .ico{width:14px; height:14px}
+.chp{display:flex; flex-wrap:wrap; gap:.4rem; border:0; margin:0; padding:0}
+.chp__opt{display:inline-flex; align-items:center; gap:.4rem; font-size:.8rem; padding:.35rem .65rem; min-height:34px; border:1px solid var(--line);
+  border-radius:999px; cursor:pointer; background:var(--panel-2)}
+.chp__opt:has(input:checked){border-color:color-mix(in srgb, var(--brand) 55%, var(--line)); color:var(--fg)}
+.chp__opt.is-off{opacity:.45; cursor:not-allowed}
+.chp__opt input, .edit .chp__opt input{accent-color:var(--brand); margin:0; width:15px; height:15px; min-height:0; padding:0; border:0; background:none}
+.le__go button{font:inherit; font-size:.85rem; font-weight:600; padding:.55rem 1.25rem; min-height:42px; border-radius:999px; cursor:pointer;
+  color:#fff; border:1px solid transparent; background:linear-gradient(155deg,var(--cta-a),var(--cta-b));
+  box-shadow:0 1px 0 rgba(255,255,255,.14) inset, 0 12px 26px -14px color-mix(in srgb,var(--cta-a) 85%,transparent); transition:filter var(--t-base) var(--ease-out)}
+.le__go button:hover{filter:brightness(1.08)}
+.le__go button:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.le__f input[type=file]{font-size:.78rem; color:var(--muted)}
+.le{padding:1rem; display:flex; flex-direction:column; gap:1rem}
+.le__top{display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem}
+.le__grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:.85rem 1rem}
+.le__f{display:flex; flex-direction:column; gap:.35rem; font-size:.78rem; color:var(--muted)}
+.le__f > span:first-child{font-weight:500}
+.le__f--wide{grid-column:1/-1}
+.le__f input:not([type=file]), .le__f textarea{font:inherit; font-size:.88rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line);
+  border-radius:10px; padding:.55rem .7rem; min-height:40px}
+.le__f textarea{resize:vertical; line-height:1.55; min-height:12rem}
+.le__f input:focus-visible, .le__f textarea:focus-visible{outline:2px solid var(--brand); outline-offset:1px}
+.le__dims{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.5rem}
+.le__hint{font-size:.72rem; color:var(--dim)}
+.le__pics{display:flex; flex-wrap:wrap; gap:.4rem}
+.le__pics img{width:64px; height:64px; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:var(--panel)}
+.le__go{display:flex; justify-content:flex-end}
+@media (max-width:640px){.le__grid{grid-template-columns:minmax(0,1fr)}}
 .pd__hero--bx{grid-template-columns:200px minmax(9rem,.7fr) minmax(0,1.6fr)}
 .bx{align-self:stretch; display:flex; flex-direction:column; gap:.55rem; padding:.85rem .9rem; border:1px solid var(--line);
   border-radius:var(--radius-s); background:color-mix(in srgb, var(--panel-2) 70%, transparent)}
@@ -6016,7 +6050,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
  * makes "Moringa Powder, three sizes" visible again, and what lets a bundle be shown
  * against the components it is actually assembled from.
  */
-export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null }) {
+export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null }) {
   const live = new Map(catalog.skus.map((e) => [e.sku, e]));
   const stockOf = (sku) => {
     const entry = live.get(sku);
@@ -6072,7 +6106,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       stale: Boolean(catalog.stale),
       staleSince: catalog.savedAt ? wibStamp(catalog.savedAt) : null,
       kpis: '',
-      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images }),
+      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images, listing }),
     });
   }
 
@@ -6256,7 +6290,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
 }
 
 /** One product: what each channel holds, and the controls to change it. */
-function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {} }) {
+function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {}, listing = null }) {
   const entry = live.get(product.sku);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const ledgerRow = ledger?.skus?.[product.sku];
@@ -6271,10 +6305,28 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       </div>`
     : '';
 
+  /*
+   * On and off, per channel. Off is reversible on every channel (deactivate, unlist,
+   * archive) and asks first; on is offered only where nothing is live and something was
+   * switched off - never for a listing TikTok has deleted.
+   */
+  const toggle = (key, label, active) => `<form class="ch__toggle" method="post"
+      data-confirm="${active ? `Nonaktifkan ${escape(product.sku)} di ${escape(label)}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.` : `Aktifkan lagi ${escape(product.sku)} di ${escape(label)}?`}">
+      ${hidden}
+      <input type="hidden" name="action" value="listing_active">
+      <input type="hidden" name="sku" value="${escape(product.sku)}">
+      <input type="hidden" name="channel" value="${key}">
+      <input type="hidden" name="active" value="${active ? '0' : '1'}">
+      <button class="ch__btn${active ? '' : ' ch__btn--on'}" type="submit">${svg(active ? 'ban' : 'check2')}<span>${active ? 'Nonaktifkan' : 'Aktifkan lagi'}</span></button>
+    </form>`;
+  const switchedOff = (key) => (entry?.[`${key}_ignored`] ?? entry?.[key]?.ignored ?? []).filter((r) => r.status !== 'DELETED');
+
   const channelCard = (key, label, row) => {
     if (!row) {
-      return `<div class="ch"><header class="ch__head"><h3>${escape(label)}</h3></header>
-        <p class="empty">Belum ada listing hidup di kanal ini.</p></div>`;
+      const off = switchedOff(key);
+      return `<div class="ch"><header class="ch__head"><h3>${escape(label)}</h3>${off.length ? `<span class="ch__count">${escape(off[0].status ?? 'nonaktif')}</span>` : ''}</header>
+        <p class="empty">${off.length ? 'Listing sedang nonaktif.' : 'Belum ada listing hidup di kanal ini.'}</p>
+        ${off.length ? toggle(key, label, false) : ''}</div>`;
     }
     const ids = key === 'tiktok'
       ? [['Product ID', row.productId], ['SKU ID', row.skuId], ['Gudang', row.warehouseId]]
@@ -6290,6 +6342,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
         <dt>Judul</dt><dd>${escape(row.title ?? '')}</dd>
         ${ids.map(([k, v]) => `<dt>${escape(k)}</dt><dd class="mono dim">${escape(String(v ?? '-'))}</dd>`).join('')}
       </dl>
+      ${toggle(key, label, true)}
     </div>`;
   };
 
@@ -6330,6 +6383,60 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       </section>`
     : '';
 
+  /** The channels a write goes to: the ones that sell this SKU live, all ticked to begin with. */
+  const LABELS = { tiktok: 'Tokopedia + TikTok', shopee: 'Shopee', shopify: 'Shopify' };
+  const channelPicker = (prefix) => `<fieldset class="chp"><legend class="visually-hidden">Kanal</legend>${
+    ['tiktok', 'shopee', 'shopify'].map((key) => {
+      const on = Boolean(entry?.[key]?.rows?.length);
+      return `<label class="chp__opt${on ? '' : ' is-off'}"><input type="checkbox" name="channel" value="${key}" ${on ? 'checked' : 'disabled'} id="${prefix}-${key}">
+        <span>${LABELS[key]}</span></label>`;
+    }).join('')}</fieldset>`;
+
+  /*
+   * The listing's own content, edited once for the channels ticked.
+   *
+   * Filled from the first channel that sells it live (said on the form), and only what is
+   * changed here is sent: descriptions are HTML on two channels and plain text on the
+   * third, so a field nobody touched is never rewritten. On TikTok and Shopee these belong
+   * to the whole listing, every variant on it included - the form says so when there are
+   * several.
+   */
+  const L = listing?.data ?? null;
+  const before = L ? { title: L.title, description: L.description, weightGram: L.weightGram, dims: L.dims } : {};
+  const editListing = entry ? `<p class="sec">Ubah listing</p>
+    <form class="le" method="post" enctype="multipart/form-data" data-confirm="Kirim perubahan listing ${escape(product.sku)} ke kanal terpilih?">
+      ${hidden}
+      <input type="hidden" name="action" value="listing_edit">
+      <input type="hidden" name="sku" value="${escape(product.sku)}">
+      <input type="hidden" name="before" value="${escape(JSON.stringify(before))}">
+      <div class="le__top">
+        ${channelPicker('le')}
+        <span class="note">${L
+          ? `Diisi dari ${escape(LABELS[listing.source])}. Hanya kolom yang diubah yang dikirim.${L.variants > 1 ? ` Berlaku untuk seluruh listing (${L.variants} varian).` : ''}`
+          : listing?.error ? `Isi listing tidak terbaca (${escape(listing.error)}) - kolom kosong tidak dikirim.` : 'Kolom kosong tidak dikirim.'}</span>
+      </div>
+      <div class="le__grid">
+        <label class="le__f le__f--wide"><span>Judul</span>
+          <input name="title" maxlength="255" value="${escape(L?.title ?? '')}" autocomplete="off"></label>
+        <label class="le__f le__f--wide"><span>Deskripsi</span>
+          <textarea name="description" rows="9">${escape(L?.description ?? '')}</textarea></label>
+        <label class="le__f"><span>Berat (gram)</span>
+          <input name="weightGram" type="number" min="1" step="1" inputmode="numeric" value="${L?.weightGram ?? ''}"></label>
+        <div class="le__f"><span>Dimensi paket (cm)</span>
+          <div class="le__dims">
+            <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang" placeholder="P" value="${L?.dims?.l ?? ''}">
+            <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar" placeholder="L" value="${L?.dims?.w ?? ''}">
+            <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi" placeholder="T" value="${L?.dims?.h ?? ''}">
+          </div>
+          <span class="le__hint">Shopify tidak menyimpan dimensi.</span></div>
+        <div class="le__f le__f--wide"><span>Foto</span>
+          ${L?.images?.length ? `<div class="le__pics">${L.images.slice(0, 9).map((u) => `<img src="${escape(u)}" alt="" width="64" height="64" loading="lazy">`).join('')}</div>` : ''}
+          <input name="images" type="file" accept="image/jpeg,image/png" multiple>
+          <span class="le__hint">Foto baru <b>mengganti semua foto</b> di kanal terpilih, sesuai urutan dipilih. Maksimal 9, JPG/PNG, 10 MB per foto. Kosongkan bila foto tidak diubah.</span></div>
+      </div>
+      <div class="le__go"><button type="submit">Simpan ke kanal terpilih</button></div>
+    </form>` : '';
+
   return `
     ${picture?.url || composition ? `<div class="pd__hero${composition ? ' pd__hero--bx' : ''}">
       ${picture?.url
@@ -6346,9 +6453,10 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
     <div class="chs" style="padding:1rem">
       ${channelCard('tiktok', 'Tokopedia + TikTok Shop', entry?.tiktok?.rows?.[0])}
       ${channelCard('shopee', 'Shopee', entry?.shopee?.rows?.[0])}
-      ${entry?.shopify ? channelCard('shopify', 'Shopify', entry.shopify.rows?.[0]) : ''}
+      ${entry?.shopify || switchedOff('shopify').length ? channelCard('shopify', 'Shopify', entry?.shopify?.rows?.[0]) : ''}
     </div>
-    <p class="sec">Ubah</p>
+    ${editListing}
+    <p class="sec">Stok &amp; harga</p>
     ${syncNote}
     <div class="apply">
       <form class="edit" method="post" data-confirm="Setel stok ledger ${escape(product.sku)} menjadi {v}?">
@@ -6360,14 +6468,15 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
           value="${ledgerRow ? ledgerRow.qty : ''}" placeholder="&mdash;">
         <button type="submit">Simpan</button>
       </form>
-      ${entry ? `<form class="edit" method="post" data-confirm="Setel harga ${escape(product.sku)} menjadi Rp{v} di semua kanal?">
+      ${entry ? `<form class="edit" method="post" data-confirm="Setel harga ${escape(product.sku)} menjadi Rp{v} di kanal terpilih?">
         ${hidden}
         <input type="hidden" name="action" value="price">
         <input type="hidden" name="sku" value="${escape(product.sku)}">
         <label class="dr__lbl" for="price">Harga</label>
         <input id="price" name="price" type="number" min="1" step="1" inputmode="numeric"
-          value="${entry.tiktok?.price ?? entry.shopee?.price ?? ''}">
-        <button type="submit">Setel di semua kanal</button>
+          value="${entry.tiktok?.price ?? entry.shopee?.price ?? entry.shopify?.price ?? ''}">
+        ${channelPicker('pr')}
+        <button type="submit">Setel harga</button>
       </form>` : '<span class="note">Belum tayang, harga tidak bisa disetel.</span>'}
     </div>
     <div class="foot"><span><a class="plink" href="?view=products">&larr; Kembali ke daftar produk</a></span></div>`;

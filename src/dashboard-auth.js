@@ -208,15 +208,23 @@ export function csrfValid(session, provided) {
 }
 
 /** Vercel does not parse urlencoded bodies for us, so read the stream directly. */
-export async function readFormBody(req, limitBytes = 4096) {
+export async function readFormBody(req, limitBytes = 4096, { multipartLimitBytes = 0 } = {}) {
+  // A multipart body carries files (product pictures) and is allowed its own, larger cap;
+  // everything else keeps the small one. FormData answers get/getAll exactly as
+  // URLSearchParams does, so callers read fields the same way either way.
+  const type = String(req.headers?.['content-type'] ?? '');
+  const multipart = multipartLimitBytes > 0 && /^multipart\/form-data/i.test(type);
+  const cap = multipart ? multipartLimitBytes : limitBytes;
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > limitBytes) throw new Error('body too large');
+    if (size > cap) throw new Error('body too large');
     chunks.push(chunk);
   }
-  return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+  const raw = Buffer.concat(chunks);
+  if (multipart) return new Response(raw, { headers: { 'content-type': type } }).formData();
+  return new URLSearchParams(raw.toString('utf8'));
 }
 
 /* ------------------------------------------------------ brute-force protection */

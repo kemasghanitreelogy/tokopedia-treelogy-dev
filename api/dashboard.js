@@ -101,6 +101,8 @@ async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
+import { LISTING_CHANNELS, refOf, diffPatch } from '../src/listing.js';
+import { findProduct } from '../src/master.js';
 import { loadLedger, saveLedger, setSku, emptyLedger } from '../src/ledger.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder } from '../src/stock-watch.js';
@@ -177,6 +179,24 @@ const CATALOG_TTL_MS = 60_000;
 const LEDGER_TTL_MS = 60_000;
 // Pictures change when somebody edits a listing, which is rarely; five minutes is plenty.
 const IMAGES_TTL_MS = 5 * 60_000;
+/**
+ * What a listing says now, to fill the edit form: read from the first channel that sells
+ * the SKU live, a minute at a time. Never fatal - a page that cannot read the listing
+ * still shows everything else, and says the form could not be filled.
+ */
+async function listingContent(catalog, sku) {
+  const master = findProduct(sku)?.sku ?? sku;
+  const entry = catalog.skus.find((e) => e.sku === master);
+  const source = ['tiktok', 'shopee', 'shopify'].find((c) => entry?.[c]?.rows?.length);
+  if (!source) return null;
+  try {
+    const data = await cached(`listing:${master}`, 60_000, () => LISTING_CHANNELS[source].read(refOf(source, entry[source].rows[0])));
+    return { source, data };
+  } catch (error) {
+    return { source, error: error.message };
+  }
+}
+
 const imagesByKey = () => cached('images', IMAGES_TTL_MS, () => loadImageManifest().then((m) => m.images ?? {}).catch(() => ({})), SWR);
 
 /**
@@ -235,6 +255,7 @@ const readCatalogSafely = () =>
 /** Which menu each action belongs to, for the activity log and the redirect after a failure. */
 const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
+  listing_edit: 'products', listing_active: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
   label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', discard_manual: 'jurnal',
   manual_update: 'jurnal',
@@ -743,7 +764,9 @@ async function handleWrite(form, ip, user, csrf) {
     if (!Number.isInteger(price) || price <= 0) throw new Error('harga harus bilangan bulat positif');
 
     const catalog = await readCatalog();
-    const results = await applyPrice({ catalog, sku, price });
+    // The channels ticked on the form; a form from before the choice existed meant both.
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+    const results = await applyPrice({ catalog, sku, price, channels: picked.length ? picked : ['tiktok', 'shopee'] });
     invalidate('catalog');
     const ok = results.filter((r) => r.status === 'ok').length;
     const failed = results.filter((r) => r.status === 'failed');
@@ -758,6 +781,135 @@ async function handleWrite(form, ip, user, csrf) {
         menu: 'products', verb: 'edit', target: sku,
         summary: `Mengubah harga ${sku} menjadi Rp${price.toLocaleString('id-ID')} di ${ok} listing${failed.length ? `, ${failed.length} gagal` : ''}`,
         changes: results.map((r) => ({ field: `harga @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status === 'failed' ? r.error : '' })),
+      },
+    };
+  }
+
+  /*
+   * A listing's own content - title, description, pictures, weight, box - on the channels
+   * the operator ticked.
+   *
+   * Only what changed is sent: the form remembers what it was filled from, and a field
+   * left as it was stays out of every request. A SKU can sit on more than one listing on a
+   * channel (Shopify carries OMC-90-001 on two products); each distinct listing is written.
+   */
+  if (action === 'listing_edit') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+    if (!sku) throw new Error('SKU kosong');
+    if (picked.length === 0) throw new Error('pilih minimal satu kanal');
+
+    let before = {};
+    try { before = JSON.parse(String(form.get('before') ?? '{}')); } catch { before = {}; }
+    const patch = diffPatch(before, {
+      title: form.get('title') ?? undefined,
+      description: form.get('description') ?? undefined,
+      weightGram: form.get('weightGram') ?? '',
+      dims: { l: form.get('dimL'), w: form.get('dimW'), h: form.get('dimH') },
+    });
+
+    const files = form.getAll('images').filter((f) => f && typeof f === 'object' && f.size > 0);
+    if (files.length > 9) throw new Error('maksimal 9 foto');
+    const images = [];
+    for (const f of files) {
+      if (!/^image\/(jpeg|png)$/i.test(f.type)) throw new Error(`${f.name}: hanya JPG atau PNG`);
+      if (f.size > 10 * 1024 * 1024) throw new Error(`${f.name}: lebih dari 10 MB`);
+      images.push({ buffer: Buffer.from(await f.arrayBuffer()), name: f.name, type: f.type });
+    }
+    if (Object.keys(patch).length === 0 && images.length === 0) throw new Error('tidak ada yang diubah');
+
+    const catalog = await readCatalog();
+    const entry = catalog.skus.find((e) => e.sku === sku);
+    if (!entry) throw new Error(`${sku} tidak ada di katalog`);
+
+    const results = [];
+    for (const channel of picked) {
+      const rows = entry[channel]?.rows ?? [];
+      if (rows.length === 0) { results.push({ channel, status: 'skipped', error: 'tidak tayang di kanal ini' }); continue; }
+      // One write per listing, not per row: the variants of one listing share its title.
+      // Shopify is the exception for weight, which belongs to the variant - so there each
+      // row is its own write.
+      const seen = new Set();
+      for (const row of rows) {
+        const ref = refOf(channel, row);
+        const key = channel === 'shopee' ? ref?.itemId : channel === 'shopify' ? `${ref?.productId}|${ref?.variantId}` : ref?.productId;
+        if (!ref || seen.has(key)) continue;
+        seen.add(key);
+        try {
+          const out = await LISTING_CHANNELS[channel].edit(ref, patch, images);
+          results.push({ channel, status: 'ok', changed: out.changed, title: row.title });
+        } catch (error) {
+          results.push({ channel, status: 'failed', error: error.message, title: row.title });
+        }
+      }
+    }
+    invalidate('catalog');
+    invalidate('listing:');
+    const ok = results.filter((r) => r.status === 'ok').length;
+    const failed = results.filter((r) => r.status === 'failed');
+    const fields = [...Object.keys(patch), ...(images.length ? [`${images.length} foto`] : [])];
+    console.log(`dashboard: listing_edit ${sku} [${picked.join(',')}] ${fields.join(',')} - ${ok} ok, ${failed.length} gagal`);
+    return {
+      view: 'products',
+      kind: failed.length && !ok ? 'error' : 'ok',
+      message: failed.length
+        ? `${sku}: ${ok} listing diperbarui, ${failed.length} gagal - ${LISTING_CHANNELS[failed[0].channel].label}: ${failed[0].error}`
+        : `${sku}: ${fields.join(', ')} diperbarui di ${ok} listing`,
+      audit: {
+        menu: 'products', verb: 'edit', target: sku,
+        status: failed.length && !ok ? 'failed' : 'ok',
+        summary: `Mengubah listing ${sku} (${fields.join(', ')}) di ${picked.map((c) => LISTING_CHANNELS[c].label).join(', ')}`,
+        changes: [
+          ...Object.entries(patch).map(([field, to]) => ({ field, from: field === 'dims' ? JSON.stringify(before.dims ?? null) : before[field] ?? null, to: typeof to === 'object' ? JSON.stringify(to) : to })),
+          ...(images.length ? [{ field: 'foto', to: images.map((i) => i.name).join(', ') }] : []),
+          ...results.filter((r) => r.status !== 'ok').map((r) => ({ field: LISTING_CHANNELS[r.channel].label, to: r.status, note: r.error })),
+        ],
+      },
+    };
+  }
+
+  /*
+   * Switching a listing off or back on. Off is never a delete: TikTok deactivates (both
+   * Tokopedia and TikTok Shop), Shopee unlists, Shopify archives - each reversible, with
+   * the listing's orders and reviews kept.
+   */
+  if (action === 'listing_active') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const channel = String(form.get('channel') ?? '');
+    const active = String(form.get('active') ?? '') === '1';
+    if (!sku || !Object.hasOwn(LISTING_CHANNELS, channel)) throw new Error('SKU atau kanal tidak valid');
+    const catalog = await readCatalog();
+    const entry = catalog.skus.find((e) => e.sku === sku);
+    if (!entry) throw new Error(`${sku} tidak ada di katalog`);
+    // Off acts on the live listings; on acts on the ones switched off - never on a TikTok
+    // listing that was deleted, which cannot come back.
+    // And only when nothing is live there: a channel already selling the SKU may still hold
+    // an old switched-off duplicate (TikTok's Discovery Pack does), and "on" must not bring
+    // that back beside the live one.
+    if (active && (entry[channel]?.rows?.length ?? 0) > 0) throw new Error(`${sku} sudah aktif di ${LISTING_CHANNELS[channel].label}`);
+    const rows = active
+      ? (entry[`${channel}_ignored`] ?? entry[channel]?.ignored ?? []).filter((r) => r.status !== 'DELETED')
+      : entry[channel]?.rows ?? [];
+    if (rows.length === 0) throw new Error(`${sku} tidak punya listing ${active ? 'nonaktif' : 'aktif'} di ${LISTING_CHANNELS[channel].label}`);
+    const seen = new Set();
+    let done = 0;
+    for (const row of rows) {
+      const ref = refOf(channel, row);
+      const key = channel === 'shopee' ? ref?.itemId : ref?.productId;
+      if (!ref || seen.has(key)) continue;
+      seen.add(key);
+      await LISTING_CHANNELS[channel].setActive(ref, active);
+      done += 1;
+    }
+    invalidate('catalog');
+    console.log(`dashboard: listing_active ${sku} ${channel} -> ${active ? 'aktif' : 'nonaktif'} (${done})`);
+    return {
+      view: 'products',
+      message: `${sku} ${active ? 'diaktifkan lagi' : 'dinonaktifkan'} di ${LISTING_CHANNELS[channel].label} (${done} listing)`,
+      audit: {
+        menu: 'products', verb: 'edit', target: sku,
+        summary: `${active ? 'Mengaktifkan' : 'Menonaktifkan'} ${sku} di ${LISTING_CHANNELS[channel].label}`,
+        changes: [{ field: `status @ ${LISTING_CHANNELS[channel].label}`, to: active ? 'aktif' : 'nonaktif' }],
       },
     };
   }
@@ -1183,7 +1335,9 @@ export default async function handler(req, res) {
       // parcel at roughly thirty bytes each, and the pickup step adds a slot field
       // beside it - four kilobytes ran out at around a hundred parcels, and ran out as
       // "Data formulir terlalu besar" rather than as anything an operator could act on.
-      form = await readFormBody(req, 64 * 1024);
+      // Product pictures arrive as multipart and get forty megabytes: nine pictures at the
+      // channels' own limits. nginx carries the same cap (deploy/nginx-api.conf).
+      form = await readFormBody(req, 64 * 1024, { multipartLimitBytes: 40 * 1024 * 1024 });
     } catch {
       send(400, dashboardError('Permintaan tidak valid', 'Data formulir terlalu besar.'));
       return;
@@ -1370,11 +1524,13 @@ export default async function handler(req, res) {
         ? planSync({ ledger, catalog })
         : null;
       console.log(`dashboard/products: ${catalog.skus.length} skus${catalog.stale ? ' (stale)' : ''}`);
+      const selected = url.searchParams.get('sku') ?? null;
       send(200, renderProducts({ user,
         catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
         generatedAt: Date.now(), csrf, flash,
-        selected: url.searchParams.get('sku') ?? null,
+        selected,
         images: await imagesByKey(),
+        listing: selected ? await listingContent(catalog, selected) : null,
       }));
       return;
     }

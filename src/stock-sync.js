@@ -153,6 +153,7 @@ import { resolveShopeeSession } from './shopee/session.js';
 import { callShopApi } from './shopee/client.js';
 import { writeDoc } from './store/index.js';
 import { adjustVariantStock } from './shopify/inventory.js';
+import { setShopifyPrice } from './listing.js';
 
 /**
  * A hard stop for anything that would change a live listing.
@@ -258,9 +259,12 @@ export async function applyPrice({ catalog, sku, price, channels = ['tiktok', 's
     for (const row of bucket.rows) {
       const ref = channel === 'tiktok'
         ? { productId: row.productId, skuId: row.skuId }
-        : { itemId: row.itemId, modelId: row.modelId };
+        : channel === 'shopify'
+          ? { productId: row.productId, variantId: row.variantId }
+          : { itemId: row.itemId, modelId: row.modelId };
       try {
         if (channel === 'tiktok') await writeTikTokPrice(tiktokConfig, { ref, price });
+        else if (channel === 'shopify') { assertWritable('harga di Shopify'); await setShopifyPrice(ref, price); }
         else await writeShopeePrice(shopee.config, shopee.auth, { ref, price });
         results.push({ sku, channel, from: row.price, to: price, status: 'ok' });
       } catch (error) {

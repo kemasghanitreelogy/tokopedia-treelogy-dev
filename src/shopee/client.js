@@ -76,9 +76,12 @@ async function callShopApiOnce(config, path, { accessToken, shopId }, params = {
   const url = buildShopUrl(config, path, { accessToken, shopId }, params);
   let response;
   try {
-    response = await fetchWithTimeout(url, body
-      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-      : {});
+    // FormData is a file upload (media_space): fetch sets the multipart boundary itself.
+    response = await fetchWithTimeout(url, body instanceof FormData
+      ? { method: 'POST', body }
+      : body
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+        : {});
   } catch (cause) {
     // A DNS blip or a dropped connection is worth another go, not a failed page.
     const error = new Error(`${path} tidak terjangkau: ${cause.message}`);
@@ -129,10 +132,10 @@ export function getOrderList(config, auth, { from, to, days = 14, pageSize = 50,
   });
 }
 
-export function getItemList(config, auth, { offset = 0, pageSize = 50 } = {}) {
+export function getItemList(config, auth, { offset = 0, pageSize = 50, status = 'NORMAL' } = {}) {
   return callShopApi(config, '/api/v2/product/get_item_list', auth, {
     offset,
     page_size: pageSize,
-    item_status: 'NORMAL',
+    item_status: status,
   });
 }

@@ -102,14 +102,19 @@ export async function readTikTokCatalog(config = loadConfig()) {
 export async function readShopeeCatalog() {
   const { config, auth } = await resolveShopeeSession();
 
+  // Unlisted items are read too. They are never written to - mergeCatalog files them
+  // under "ignored" by their status - but a listing switched off from the dashboard has
+  // to stay visible there, or there is nothing left to switch back on.
   const ids = [];
-  let offset = 0;
-  let more = true;
-  while (more) {
-    const { response } = await getItemList(config, auth, { offset, pageSize: 100 });
-    ids.push(...(response.item ?? []).map((i) => i.item_id));
-    more = Boolean(response.has_next_page);
-    offset = response.next_offset;
+  for (const status of ['NORMAL', 'UNLIST']) {
+    let offset = 0;
+    let more = true;
+    while (more) {
+      const { response } = await getItemList(config, auth, { offset, pageSize: 100, status });
+      ids.push(...(response.item ?? []).map((i) => i.item_id));
+      more = Boolean(response.has_next_page);
+      offset = response.next_offset;
+    }
   }
 
   const batches = [];

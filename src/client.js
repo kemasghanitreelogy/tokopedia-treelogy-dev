@@ -35,7 +35,7 @@ export function accessTokenExpired(config) {
   return Math.floor(Date.now() / 1000) >= config.accessTokenExpireAt - EXPIRY_SKEW_SECONDS;
 }
 
-async function sendOnce({ config, method, path, query, bodyText }) {
+async function sendOnce({ config, method, path, query, bodyText, form = null }) {
   const url = buildSignedUrl({
     baseUrl: config.apiBaseUrl,
     path,
@@ -44,13 +44,15 @@ async function sendOnce({ config, method, path, query, bodyText }) {
     appSecret: config.appSecret,
   });
 
-  const headers = { 'Content-Type': 'application/json' };
+  // A multipart upload is signed without its body (TikTok's rule for file uploads) and
+  // sent without a Content-Type, so fetch writes the boundary itself.
+  const headers = form ? {} : { 'Content-Type': 'application/json' };
   if (config.accessToken) headers['x-tts-access-token'] = config.accessToken;
 
   const response = await fetchWithTimeout(url, {
     method,
     headers,
-    body: bodyText || undefined,
+    body: form ?? (bodyText || undefined),
   });
   const text = await response.text();
 
@@ -82,10 +84,11 @@ export async function callApi({
   path,
   query = {},
   body = null,
+  form = null,
   shopCipher = true,
   allowRefresh = true,
 }) {
-  const bodyText = body ? JSON.stringify(body) : '';
+  const bodyText = body && !form ? JSON.stringify(body) : '';
 
   const buildQuery = () => {
     const merged = {
@@ -109,6 +112,7 @@ export async function callApi({
     path,
     query: buildQuery(),
     bodyText,
+    form,
   });
 
   if (TOKEN_INVALID_CODES.has(payload.code) && allowRefresh && config.refreshToken) {
@@ -119,6 +123,7 @@ export async function callApi({
       path,
       query: buildQuery(),
       bodyText,
+      form,
     }));
   }
 

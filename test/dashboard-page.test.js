@@ -1163,3 +1163,19 @@ test('a duplicate picks its own listing as the example, even one shared by sever
   const html = renderProducts({ catalog: shared, ledger, ...common, creating: true, duplicateOf: { sku: 'OMC-90-001', listing: null } });
   assert.match(html, /name="template_tiktok"[^>]*>[\s\S]*?<option value="1731"[^>]*selected/, 'listing kapsul terpilih untuk duplikat OMC-90');
 });
+
+test('Shopify is never offered for editing, adding or removing: the team does that in Shopify', () => {
+  const row = (sku, status) => ({ qty: 5, rows: [{ sku, qty: 5, status, productId: 'gid://shopify/Product/42', variantId: 'v', itemId: 7, skuId: 's', title: 'X', price: 1000 }], conflict: false, price: 1000 });
+  const both = { skus: [{ sku: 'OMP-45-001', title: 'P', tiktok: row('OMP-45-001', 'ACTIVATE'), shopee: row('OMP-45-001', 'NORMAL'), shopify: row('OMP-45-001', 'ACTIVE') }], errors: {} };
+  const page = renderProducts({ catalog: both, ledger, ...common, selected: 'OMP-45-001', shopifyAdmin: 'https://shop.myshopify.com/admin/products/' });
+  assert.ok(!/name="channel" value="shopify"/.test(page), 'tidak ada pilihan kirim ke Shopify');
+  assert.ok(!/value="shopify"><input type="hidden" name="active"/.test(page), 'tidak ada tombol nonaktifkan Shopify');
+  assert.match(page, /href="https:\/\/shop\.myshopify\.com\/admin\/products\/42"[^>]*>[\s\S]*?Kelola di Shopify/, 'tautan ke Shopify');
+
+  const add = renderProducts({ catalog: both, ledger, ...common, creating: true });
+  assert.ok(!/name="channel" value="shopify"/.test(add), 'form tambah tanpa Shopify');
+
+  const list = renderProducts({ catalog: both, ledger, ...common });
+  const bulk = list.slice(list.indexOf('data-bk'));
+  assert.ok(!/value="shopify"/.test(bulk), 'aksi massal tanpa Shopify');
+});

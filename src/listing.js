@@ -295,6 +295,17 @@ export const LISTING_CHANNELS = {
   shopify: { label: 'Shopify', read: readShopify, edit: editShopify, setActive: activeShopify, dims: false },
 };
 
+/**
+ * The channels the dashboard may change a product on.
+ *
+ * Shopify is not one of them, by the team's own rule: its products are edited, added and
+ * removed in Shopify itself. The dashboard still reads Shopify and the stock follower
+ * still keeps its stock on the master figure - that is sync, not editing.
+ */
+export const MANAGED_CHANNELS = ['tiktok', 'shopee'];
+export const isManaged = (channel) => MANAGED_CHANNELS.includes(channel);
+export const UNMANAGED_MESSAGE = 'Shopify dikelola langsung di Shopify';
+
 /** A catalogue row as the ref each channel's calls need. */
 export function refOf(channel, row) {
   if (!row) return null;

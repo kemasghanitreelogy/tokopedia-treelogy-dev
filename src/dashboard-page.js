@@ -87,6 +87,7 @@ icon.pencil = '<path d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L
 icon.userPlus = '<path d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM4 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 10.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/>';
 icon.check2 = '<path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>';
 icon.x = '<path d="M6 18 18 6M6 6l12 12"/>';
+icon.ext = '<path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>';
 icon.grid = '<path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"/>';
 icon.list = '<path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
 icon.image = '<path d="m2.25 15.75 5.16-5.16a2.25 2.25 0 0 1 3.18 0l5.16 5.16m-1.5-1.5 1.41-1.41a2.25 2.25 0 0 1 3.18 0l2.91 2.91m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
@@ -6103,7 +6104,7 @@ export function renderStock({ catalog, ledger, plan, errors, range, shopeeShop, 
  * makes "Moringa Powder, three sizes" visible again, and what lets a bundle be shown
  * against the components it is actually assembled from.
  */
-export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null, creating = false, duplicateOf = null }) {
+export function renderProducts({ catalog, ledger, plan, errors, range, shopeeShop, generatedAt, csrf, flash, selected, images = {}, user = null, listing = null, creating = false, duplicateOf = null, shopifyAdmin = null }) {
   const live = new Map(catalog.skus.map((e) => [e.sku, e]));
   const stockOf = (sku) => {
     const entry = live.get(sku);
@@ -6137,7 +6138,7 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
       stale: Boolean(catalog.stale),
       staleSince: catalog.savedAt ? wibStamp(catalog.savedAt) : null,
       kpis: '',
-      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images, listing, templates: { tiktok: exampleListings(catalog, 'tiktok'), shopee: exampleListings(catalog, 'shopee') } }),
+      body: productDetail({ product: detail, live, ledger, stockOf, csrf, plan, picture: images[detail.sku] ?? images[selected] ?? null, images, listing, templates: { tiktok: exampleListings(catalog, 'tiktok'), shopee: exampleListings(catalog, 'shopee') }, shopifyAdmin }),
       style: PF_STYLE,
       script: PF_SCRIPT,
     });
@@ -6274,7 +6275,8 @@ export function renderProducts({ catalog, ledger, plan, errors, range, shopeeSho
    * What a selection can do, all at once. Each action asks for its one value, confirms
    * with the number it will write, and answers with how many listings it reached.
    */
-  const CH = [['tiktok', 'Tokopedia + TikTok'], ['shopee', 'Shopee'], ['shopify', 'Shopify']];
+  // Shopify is edited in Shopify, so no bulk action offers it.
+  const CH = [['tiktok', 'Tokopedia + TikTok'], ['shopee', 'Shopee']];
   const chSelect = (name) => `<select name="${name}" aria-label="Kanal">${CH.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>`;
   const chBoxes = () => `<span class="bk__chs">${CH.map(([k, l]) => `<label><input type="checkbox" name="channel" value="${k}" checked><span>${l}</span></label>`).join('')}</span>`;
   const bulkForm = (action, label, inner, confirmText) => `<form class="bk__f" method="post" data-bulk="${action}" data-confirm="${escape(confirmText)}" hidden>
@@ -6657,15 +6659,14 @@ function productForm({ catalog, csrf, duplicateOf = null }) {
     </section>
 
     <section class="pf__step" aria-labelledby="pf-s3">
-      <header><span class="pf__n" aria-hidden="true">3</span><h2 id="pf-s3">Kanal</h2><p>Hapus centang kanal yang tidak dipakai. Tanpa kanal, produk hanya masuk ke master.</p></header>
+      <header><span class="pf__n" aria-hidden="true">3</span><h2 id="pf-s3">Kanal</h2><p>Hapus centang kanal yang tidak dipakai. Tanpa kanal, produk hanya masuk ke master. Produk Shopify dibuat langsung di Shopify; begitu SKU-nya sama, dashboard menyambungkannya sendiri.</p></header>
       <div class="pf__chs">
         ${channelCard('tiktok', 'Tokopedia + TikTok', 'Tayang di Tokopedia dan TikTok Shop sekaligus. Sertifikat BPOM ikut disalin dari listing contoh.', listings('tiktok'))}
         ${channelCard('shopee', 'Shopee', 'Jasa kirim, brand, dan atribut wajib ikut disalin dari listing contoh.', listings('shopee'))}
-        ${channelCard('shopify', 'Shopify', 'Produk tunggal dengan stok di lokasi Shopify yang aktif.', null)}
       </div>
       <fieldset class="pf__mode"><legend>Setelah dibuat</legend>
         <label><input type="radio" name="mode" value="live" checked><span><b>Tayangkan sekarang</b><small>Langsung bisa dibeli (TikTok tetap melewati review).</small></span></label>
-        <label><input type="radio" name="mode" value="draft"><span><b>Simpan sebagai draft</b><small>Tidak terlihat pembeli: draft di TikTok, nonaktif di Shopee, draft di Shopify.</small></span></label>
+        <label><input type="radio" name="mode" value="draft"><span><b>Simpan sebagai draft</b><small>Tidak terlihat pembeli: draft di TikTok, nonaktif di Shopee.</small></span></label>
       </fieldset>
     </section>
 
@@ -6730,7 +6731,7 @@ const PF_STYLE = `
 .pf__thumbs figcaption{font-size:.66rem; color:var(--dim); margin-top:.2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .pf__thumbs figure:first-child::after{content:'Utama'; position:absolute; top:6px; left:6px; font-size:.6rem; font-weight:600; letter-spacing:.04em;
   padding:.1rem .35rem; border-radius:5px; background:var(--brand); color:#fff}
-.pf__chs{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.8rem}
+.pf__chs{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:.8rem}
 .pf__ch{display:flex; flex-direction:column; gap:.6rem; padding:.95rem 1rem; border:1px solid var(--line); border-radius:var(--radius-s); background:var(--panel-2);
   transition:border-color var(--t-fast), opacity var(--t-fast)}
 .pf__ch:has([data-ch-toggle]:checked){border-color:color-mix(in srgb, var(--brand) 55%, var(--line))}
@@ -6972,7 +6973,9 @@ const PF_SCRIPT = `
 })();
 `;
 
-function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {}, listing = null, templates = {} }) {
+function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = null, images = {}, listing = null, templates = {}, shopifyAdmin = null }) {
+  // Shopify is read here, never changed: the team edits, adds and removes it in Shopify.
+  const MANAGED = ['tiktok', 'shopee'];
   const entry = live.get(product.sku);
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
   const back = `<input type="hidden" name="back" value="?view=products&amp;sku=${encodeURIComponent(product.sku)}">`;
@@ -7025,9 +7028,17 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
         <span class="ct__st">${st === 'live' ? 'Tayang' : st === 'off' ? 'Nonaktif' : 'Belum ada'}</span></div>
       ${row ? `<dl class="ct__kv"><div><dt>Stok</dt><dd class="mono">${row.qty}</dd></div><div><dt>Harga</dt><dd class="mono">${escape(rupiah(row.price ?? 0))}</dd></div></dl>
         <p class="ct__title" title="${escape(row.title ?? '')}">${escape(row.title ?? '')}</p>` : ''}
-      <div class="ct__acts">${st === 'live'
-        ? ask('listing_active', false, `Nonaktifkan ${product.sku} di ${label}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.`)
-        : st === 'off' ? ask('listing_active', true, `Aktifkan lagi ${product.sku} di ${label}?`, 'ct__btn--go') : publish}</div>
+      <div class="ct__acts">${key === 'shopify'
+        ? (() => {
+          const gid = row?.productId ?? switchedOff('shopify')[0]?.productId ?? '';
+          const id = String(gid).split('/').pop();
+          return id && shopifyAdmin
+            ? `<a class="ct__btn" href="${escape(shopifyAdmin + id)}" target="_blank" rel="noopener">${svg('ext')}<span>Kelola di Shopify</span></a>`
+            : '<span class="ct__note">Dikelola langsung di Shopify.</span>';
+        })()
+        : st === 'live'
+          ? ask('listing_active', false, `Nonaktifkan ${product.sku} di ${label}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.`)
+          : st === 'off' ? ask('listing_active', true, `Aktifkan lagi ${product.sku} di ${label}?`, 'ct__btn--go') : publish}</div>
     </div>`;
   };
 
@@ -7051,8 +7062,8 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
     : '';
 
   const L = listing?.data ?? null;
-  const liveOn = ['tiktok', 'shopee', 'shopify'].filter((k) => state(k) === 'live');
-  const price = entry?.tiktok?.price ?? entry?.shopee?.price ?? entry?.shopify?.price ?? '';
+  const liveOn = MANAGED.filter((k) => state(k) === 'live');
+  const price = entry?.tiktok?.price ?? entry?.shopee?.price ?? '';
   const before = {
     qty: ledgerRow?.qty ?? null,
     price: price === '' ? null : price,
@@ -7088,7 +7099,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       </div></section>` : ''}
 
     <section class="pf__step"><header><span class="pf__n" aria-hidden="true">${liveOn.length ? 3 : 2}</span><h2>Harga, stok &amp; pengiriman</h2>
-      <p>Stok induk diikuti semua kanal otomatis. Harga dikirim ke kanal yang dicentang.</p></header>
+      <p>Stok induk diikuti semua kanal otomatis, Shopify termasuk. Harga dikirim ke kanal yang dicentang; harga Shopify diubah di Shopify.</p></header>
       <div class="pf__grid">
         ${liveOn.length ? field('Harga (Rp)', `<input name="price" type="number" min="100" step="1" inputmode="numeric" class="mono" value="${escape(String(price))}">`) : ''}
         ${field('Stok induk', `<input name="qty" type="number" min="0" step="1" inputmode="numeric" class="mono" value="${ledgerRow?.qty ?? ''}" placeholder="&mdash;">`, { hint: 'Di bawah 100, otomatis ditambah 100.' })}
@@ -7097,7 +7108,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
             <input name="dimL" type="number" min="1" step="1" inputmode="numeric" aria-label="Panjang (cm)" placeholder="P" class="mono" value="${L?.dims?.l ?? ''}">
             <input name="dimW" type="number" min="1" step="1" inputmode="numeric" aria-label="Lebar (cm)" placeholder="L" class="mono" value="${L?.dims?.w ?? ''}">
             <input name="dimH" type="number" min="1" step="1" inputmode="numeric" aria-label="Tinggi (cm)" placeholder="T" class="mono" value="${L?.dims?.h ?? ''}">
-          </div><small>Shopify tidak menyimpan dimensi.</small></div>` : ''}
+          </div><small>Dikirim ke Tokopedia/TikTok dan Shopee. Shopify diubah langsung di Shopify.</small></div>` : ''}
       </div></section>
 
     <div class="pf__bar pe__bar">

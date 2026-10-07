@@ -101,8 +101,9 @@ async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
-import { LISTING_CHANNELS, refOf, diffPatch } from '../src/listing.js';
+import { LISTING_CHANNELS, refOf, diffPatch, isManaged, UNMANAGED_MESSAGE } from '../src/listing.js';
 import { findProduct, isBaseProduct } from '../src/master.js';
+import { loadShopifyConfig } from '../src/shopify/config.js';
 import { cleanProduct, saveMasterProduct, setMasterRemoved } from '../src/master-store.js';
 import { CREATORS } from '../src/listing-create.js';
 import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.js';
@@ -190,6 +191,7 @@ const IMAGES_TTL_MS = 5 * 60_000;
 async function publishProduct(catalog, sku, channel, { templateId = null, draft = false, dims = null, weightGram = null } = {}) {
   const product = findProduct(sku);
   if (!product || !Object.hasOwn(CREATORS, channel)) throw new Error('SKU atau kanal tidak valid');
+  if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
   const entry = catalog.skus.find((e) => e.sku === product.sku);
   if (entry?.[channel]?.rows?.length) throw new Error(`sudah tayang di ${LISTING_CHANNELS[channel].label}`);
   const content = await listingContent(catalog, product.sku);
@@ -857,7 +859,7 @@ async function handleWrite(form, ip, user, csrf) {
 
     const catalog = await readCatalog();
     // The channels ticked on the form; a form from before the choice existed meant both.
-    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
     const results = await applyPrice({ catalog, sku, price, channels: picked.length ? picked : ['tiktok', 'shopee'] });
     invalidate('catalog');
     const ok = results.filter((r) => r.status === 'ok').length;
@@ -887,7 +889,7 @@ async function handleWrite(form, ip, user, csrf) {
    */
   if (action === 'listing_edit') {
     const sku = String(form.get('sku') ?? '').trim();
-    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
     if (!sku) throw new Error('SKU kosong');
     if (picked.length === 0) throw new Error('pilih minimal satu kanal');
 
@@ -970,6 +972,7 @@ async function handleWrite(form, ip, user, csrf) {
     const channel = String(form.get('channel') ?? '');
     const active = String(form.get('active') ?? '') === '1';
     if (!sku || !Object.hasOwn(LISTING_CHANNELS, channel)) throw new Error('SKU atau kanal tidak valid');
+    if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
     const catalog = await readCatalog();
     const entry = catalog.skus.find((e) => e.sku === sku);
     if (!entry) throw new Error(`${sku} tidak ada di katalog`);
@@ -1027,7 +1030,7 @@ async function handleWrite(form, ip, user, csrf) {
     if (!current || current.sku !== sku) throw new Error(`${sku} tidak ada di master`);
     let before = {};
     try { before = JSON.parse(String(form.get('before') ?? '{}')); } catch { before = {}; }
-    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
     const done = [];
     const problems = [];
     const changes = [];
@@ -1190,7 +1193,7 @@ async function handleWrite(form, ip, user, csrf) {
       if (action === 'bulk_price') {
         const price = Number(form.get('price'));
         if (!Number.isInteger(price) || price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
-        const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c));
+        const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
         if (picked.length === 0) throw new Error('pilih minimal satu kanal');
         for (const sku of skus) {
           const r = await applyPrice({ catalog, sku, price, channels: picked }).catch((error) => [{ status: 'failed', error: error.message }]);
@@ -1202,6 +1205,7 @@ async function handleWrite(form, ip, user, csrf) {
         const channel = String(form.get('channel') ?? '');
         const active = String(form.get('active') ?? '') === '1';
         if (!Object.hasOwn(LISTING_CHANNELS, channel)) throw new Error('kanal tidak valid');
+        if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
         for (const sku of skus) {
           const entry = catalog.skus.find((e) => e.sku === sku);
           const rows = active
@@ -1225,6 +1229,7 @@ async function handleWrite(form, ip, user, csrf) {
         const channel = String(form.get('channel') ?? '');
         const draft = String(form.get('mode') ?? 'live') === 'draft';
         if (!Object.hasOwn(CREATORS, channel)) throw new Error('kanal tidak valid');
+        if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
         for (const sku of skus) {
           try { await publishProduct(catalog, sku, channel, { templateId: null, draft }); results.push({ sku, ok: true }); }
           catch (error) { results.push({ sku, ok: false, error: error.message }); }
@@ -1256,7 +1261,7 @@ async function handleWrite(form, ip, user, csrf) {
       family: form.get('family'), aliases: form.get('aliases'), gift: form.get('gift') === '1',
       components: form.getAll('part_sku').map((partSku, i) => ({ sku: partSku, qty: form.getAll('part_qty')[i] })),
     }, { isNew: true });
-    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(CREATORS, c));
+    const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(CREATORS, c) && isManaged(c));
     const draft = String(form.get('mode') ?? 'live') === 'draft';
 
     const input = {
@@ -1990,6 +1995,8 @@ export default async function handler(req, res) {
         images: await imagesByKey(),
         listing: selected ? await listingContent(catalog, selected) : null,
         creating: url.searchParams.get('new') === '1',
+        // Shopify is edited in Shopify; its tile links straight to the product there.
+        shopifyAdmin: loadShopifyConfig().domain ? `https://${loadShopifyConfig().domain}/admin/products/` : null,
         // Duplicate: the new-product form filled from an existing product and its listing.
         duplicateOf: url.searchParams.get('new') === '1' && url.searchParams.get('from')
           ? { sku: url.searchParams.get('from'), listing: await listingContent(catalog, url.searchParams.get('from')) }

@@ -3603,6 +3603,8 @@ export function renderPicklist({ picklist, orders = [], images = {}, range, erro
         ${stat('Unit dipetik', String(picklist.unitCount))}
         ${stat('SKU', String(picklist.skuCount))}
         ${stat('Pesanan', String(picklist.orderCount))}
+        <span class="strip__grow"></span>
+        <a class="pk__hist" href="?view=picklist&amp;history=1">${svg('history')}<span>Riwayat picklist</span></a>
       </div>`,
     body: `<div id="pick-live" data-live="${escape(pickKeys.join(','))}">${picklist.items.length === 0
       ? '<p class="empty">Tidak ada pesanan yang menunggu dipetik.</p>'
@@ -3628,6 +3630,9 @@ const PICK_STYLE = `
 .pick__live{display:inline-flex; align-items:center; gap:.35rem; color:var(--dim); font-size:.74rem}
 .pick__live .ico{width:13px; height:13px}
 .pick__live.is-new{color:var(--brand)}
+.pk__hist{display:inline-flex; align-items:center; gap:.4rem; align-self:center; font-size:.84rem; min-height:42px; padding:.4rem 1rem; border-radius:999px; border:1px solid var(--line); color:var(--fg); text-decoration:none; background:var(--panel); transition:border-color .15s, color .15s}
+.pk__hist:hover{border-color:var(--brand); color:var(--brand)}
+.pk__hist .ico{width:16px; height:16px}
 .pk__tabs{display:inline-flex; gap:.25rem; padding:.25rem; margin:0 0 .9rem; border:1px solid var(--line); border-radius:999px; background:var(--panel)}
 .pk__tab{font:inherit; font-size:.84rem; min-height:40px; padding:.35rem 1rem; border-radius:999px; border:0; background:none; color:var(--muted); cursor:pointer; transition:background .15s, color .15s}
 .pk__tab span{font-size:.72rem; opacity:.7; margin-left:.2rem}

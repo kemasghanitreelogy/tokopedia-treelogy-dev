@@ -99,7 +99,7 @@ async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
   };
 }
 import { priceBySku } from '../src/shopify/prices.js';
-import { buildPicklist } from '../src/picklist.js';
+import { buildPicklist, readyToPick } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { LISTING_CHANNELS, refOf, diffPatch, isManaged, UNMANAGED_MESSAGE } from '../src/listing.js';
 import { findProduct, isBaseProduct } from '../src/master.js';
@@ -114,6 +114,7 @@ import { warehouseAfterOrder, loadWarehouse, recordMove, saveRecipe, withPrintTi
 import { awaitingPick } from '../src/warehouse.js';
 import { ordersForPrinting } from '../src/orders-by-id.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
+import { renderPickHistory } from '../src/pages/pick-history.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
@@ -2370,12 +2371,22 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (view === 'picklist' && url.searchParams.get('history') === '1') {
+      // Every confirmation by day, from the warehouse's own history: read fresh, never
+      // from the cache, so a confirmation made a moment ago is already here.
+      const warehouse = await loadWarehouse();
+      console.log(`dashboard/picklist-history: ${(warehouse.picks ?? []).length} konfirmasi`);
+      send(200, renderPickHistory({ user, warehouse, images: await imagesByKey(), date: String(url.searchParams.get('date') ?? ''), range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash }));
+      return;
+    }
+
     if (view === 'picklist') {
       // The same settling as the process view, sharing its cooldown: these three pages
       // are drawn from one set of rows, so whichever is opened first pays for all of
       // them. A picker sent after a parcel that was cancelled an hour ago has walked the
       // shelves for nothing.
-      const picking = await settleWorklist(data, await arrangedOrders().catch(() => ({})));
+      const arrangedNow = await arrangedOrders().catch(() => ({}));
+      const picking = await settleWorklist(data, arrangedNow);
       data = picking.data;
       // Started over at the migration, like the warehouse: an order that left before the
       // sheet's last update (printed then, or created then and never printed here) was
@@ -2383,7 +2394,11 @@ export default async function handler(req, res) {
       // What is left to pick: from after the migration and not yet confirmed. Confirming
       // is what takes an order off the shelf, and a confirmed order leaves this list.
       const shelf = await cached('warehouse', 15_000, () => loadWarehouse(), SWR);
-      const waiting = (await withPrintTimes(data.orders)).filter((order) => awaitingPick(shelf, order));
+      // An order that still needs "Atur pengiriman" on the Proses page is not picked yet:
+      // it joins the list the moment it is arranged. One that needs no arranging joins
+      // straight away. The same rule the Proses page uses, so the two never disagree.
+      const waiting = (await withPrintTimes(data.orders))
+        .filter((order) => readyToPick(order, { shelf, arranged: arrangedNow }));
       data = { ...data, orders: waiting };
       const picklist = buildPicklist(data.orders);
       console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);

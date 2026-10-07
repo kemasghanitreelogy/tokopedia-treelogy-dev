@@ -1,5 +1,5 @@
 import { updateDoc, readDoc } from './store/index.js';
-import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, awaitingPick } from './warehouse.js';
+import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, awaitingPick, recordPick } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
 import { printedLabels } from './shopify/label.js';
@@ -71,7 +71,7 @@ export async function confirmPicked(orders, { by = '', now = Date.now(), update 
     const result = applyOrders(opened, fresh, { now, admit: true, by });
     const taken = [...waiting].filter((key) => result.doc.orders[key] && !result.doc.orders[key].undone);
     out = { moved: result.moved, taken, skipped: fresh.map((o) => `${o.channel}|${o.id}`).filter((k) => !taken.includes(k)) };
-    return result.doc;
+    return recordPick(result.doc, { at: Math.floor(now / 1000), by, taken });
   }, emptyWarehouse());
   invalidate('warehouse');
   return out;

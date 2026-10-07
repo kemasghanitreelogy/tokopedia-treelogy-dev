@@ -169,3 +169,42 @@ test('a picklist confirmation naming no valid order is refused before anything i
   const f = new URLSearchParams([['action', 'wh_pick'], ['order', 'nope'], ['order', 'shopee:<script>']]);
   await assert.rejects(() => handleWrite(f, '127.0.0.1', { name: 'qa', email: 'qa@x', role: 'owner', status: 'active' }, 'csrf'), /tidak ada pesanan/);
 });
+
+test('the picklist holds only orders with nothing left to arrange on the Proses page', async () => {
+  const { readyToPick } = await import('../src/picklist.js');
+  const shelf = opened();
+  const at = OPENING_AT + 600;
+  const o = (channel, status, extra = {}) => ({ id: `${channel}-${status}`, channel, stage: 'to_ship', status, createdAt: at, lines: [{ sku: 'OMC-90-001', qty: 1 }], ...extra });
+  const cases = [
+    [o('shopee', 'READY_TO_SHIP'), false, 'Shopee belum diatur'],
+    [o('shopee', 'PROCESSED'), true, 'Shopee sudah diatur'],
+    [o('tokopedia', 'AWAITING_SHIPMENT'), false, 'Tokopedia belum diatur'],
+    [o('tokopedia', 'AWAITING_COLLECTION'), true, 'Tokopedia sudah diatur'],
+    [o('shopify', 'PAID/UNFULFILLED', { id: '#1' }), false, 'Shopify belum diatur'],
+    [o('shopify', 'PAID/UNFULFILLED', { id: '#2' }), true, 'Shopify sudah diatur'],
+    [o('manual', 'x', { source: 'OFFLINE' }), true, 'transaksi tanpa kurir'],
+  ];
+  const arranged = { '#2': { at } };
+  for (const [order, want, why] of cases) assert.equal(readyToPick(order, { shelf, arranged }), want, why);
+  assert.equal(readyToPick({ ...o('shopee', 'PROCESSED'), stage: 'shipping' }, { shelf, arranged }), false, 'sudah dikirim bukan picklist');
+});
+
+test('each confirmation lands in the picklist history with its orders, in the same write', async () => {
+  const { confirmPicked } = await import('../src/warehouse-run.js');
+  let state = null;
+  const update = async (_k, fn, empty) => { state = fn(structuredClone(state ?? empty)); return state; };
+  await confirmPicked([order('H1', 'to_ship', [['MRS-001', 1]]), order('H2', 'to_ship', [['OMC-90-001', 2]])], { update, printed: {}, by: 'ika', now: (OPENING_AT + 7200) * 1000 });
+  await confirmPicked([order('H1', 'to_ship', [['MRS-001', 1]])], { update, printed: {}, by: 'rindang', now: (OPENING_AT + 7300) * 1000 });
+  assert.equal(state.picks.length, 1, 'a confirmation that took nothing new leaves no run');
+  assert.deepEqual(state.picks[0].orders.map((x) => [x.key, x.units]), [['shopee|H1', 4], ['shopee|H2', 2]]);
+  assert.equal(state.picks[0].by, 'ika');
+});
+
+test('a document confirmed before the history existed gets it from its orders', () => {
+  const old = opened();
+  old.orders = { 'shopee|A': { at: 1, picked: OPENING_AT + 99, by: 'Kemas', lines: { 'OMC-90-001': 1 }, items: { 'M-036': 1 } }, 'shopee|B': { at: 1, picked: OPENING_AT + 99, by: 'Kemas', lines: {}, items: { 'M-038': 2 } } };
+  delete old.picks;
+  const doc = openWarehouse(old);
+  assert.equal(doc.picks.length, 1);
+  assert.deepEqual([doc.picks[0].by, doc.picks[0].orders.length, doc.picks[0].orders[1].units], ['Kemas', 2, 2]);
+});

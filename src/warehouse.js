@@ -208,6 +208,7 @@ export function openWarehouse(doc, { now = Date.now(), by = 'migrasi sheet' } = 
   }
   if (!next.opened_at) next.opened_at = Math.floor(now / 1000);
   forgetUntracked(next);
+  if (!Array.isArray(next.picks)) next.picks = picksFromOrders(next.orders);
   return next;
 }
 
@@ -433,4 +434,38 @@ export function awaitingPick(doc, order) {
   if (!order?.id || !order.channel || UNDONE.has(order.stage) || !afterOpening(order)) return false;
   const seen = doc?.orders?.[`${order.channel}|${order.id}`];
   return !seen || Boolean(seen.undone);
+}
+
+/** Picklist confirmations kept for the history; older ones fall off the front. */
+const MAX_PICKS = 3000;
+
+/**
+ * The picklist history from the orders themselves, for a document confirmed before the
+ * history was kept: one run per moment and person, which is what a confirmation is.
+ */
+function picksFromOrders(orders = {}) {
+  const runs = new Map();
+  for (const [key, o] of Object.entries(orders)) {
+    if (!o?.picked) continue;
+    const id = `${o.picked}-${o.by ?? ''}`;
+    const run = runs.get(id) ?? { id, at: o.picked, by: o.by ?? '', orders: [] };
+    run.orders.push({ key, lines: o.lines ?? {}, units: Object.values(o.items ?? {}).reduce((n, q) => n + q, 0) });
+    runs.set(id, run);
+  }
+  return [...runs.values()].sort((a, b) => a.at - b.at);
+}
+
+/**
+ * One picklist confirmation, written into the history: when, who, and each order taken
+ * with its lines. Pure; called inside the same transaction as the shelf movement, so the
+ * history and the stock never disagree about what was picked.
+ */
+export function recordPick(doc, { at, by = '', taken = [] }) {
+  if (!taken.length) return doc;
+  const orders = taken.map((key) => {
+    const o = doc.orders?.[key] ?? {};
+    return { key, lines: o.lines ?? {}, units: Object.values(o.items ?? {}).reduce((n, q) => n + q, 0) };
+  });
+  const run = { id: `${at}-${by}-${taken.length}-${taken[0]}`, at, by, orders };
+  return { ...doc, picks: [...(doc.picks ?? []), run].slice(-MAX_PICKS) };
 }

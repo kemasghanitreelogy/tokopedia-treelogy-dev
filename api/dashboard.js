@@ -2376,7 +2376,7 @@ export default async function handler(req, res) {
       const picklist = buildPicklist(data.orders);
       console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);
       send(200, renderPicklist({ user,
-        ...data, range, picklist, csrf, flash,
+        ...data, range, picklist, csrf, flash, images: await imagesByKey(),
         readAt: picking.readAt, settleFailed: picking.failed,
       }));
       return;

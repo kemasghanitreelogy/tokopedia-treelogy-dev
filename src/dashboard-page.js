@@ -3522,7 +3522,7 @@ const testButton = (csrf) => `<button class="chip" type="button" id="alerttest" 
   title="Bunyikan alert uji lewat server, seperti pesanan sungguhan">&#128276; Tes bunyi alert</button>`;
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, orders = [], range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false }) {
+export function renderPicklist({ picklist, orders = [], images = {}, range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
   const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee', shopify: 'Shopify', manual: 'Manual' })
@@ -3530,12 +3530,27 @@ export function renderPicklist({ picklist, orders = [], range, errors, shopeeSho
     .map(([key, label]) => `<span class="mini" style="--chip:${CHANNELS[key]?.accent ?? 'var(--muted)'}">${label} ${by[key]}</span>`)
     .join('');
 
+  // The product's photo, by its own SKU or the master SKU a channel alias stands for; a
+  // bundle without one shows its first part. The picker matches the jar, not the code.
+  const photoOf = (sku) => {
+    const product = findProduct(sku);
+    const hit = images[sku] ?? (product && images[product.sku])
+      ?? (product?.components ?? []).map((c) => images[c.sku] ?? images[findProduct(c.sku)?.sku]).find(Boolean);
+    return hit?.thumb || hit?.url || '';
+  };
+  const thumb = (sku, name, cls = 'pk__img') => {
+    const src = photoOf(sku);
+    return src
+      ? `<img class="${cls}" src="${escape(src)}" alt="${escape(name ?? sku)}" loading="lazy" decoding="async" width="56" height="56">`
+      : `<span class="${cls} ${cls}--none" aria-hidden="true">${svg('cube')}</span>`;
+  };
   const rows = picklist.items
     .map((i) => `<tr>
       <td class="pick__q mono">${i.qty}</td>
       <td>
+        <div class="pk__prod">${thumb(i.sku, i.name)}<div class="pk__pt">
         <span class="pick__n">${escape(i.name)}${i.variant ? ` <span class="note">${escape(i.variant)}</span>` : ''}</span>
-        <span class="pick__s mono">${escape(i.sku)}</span>
+        <span class="pick__s mono">${escape(i.sku)}</span></div></div>
       </td>
       <td class="pick__c">${split(i.byChannel)}</td>
       <td class="num dim nowrap">${i.orders} order</td>
@@ -3558,7 +3573,7 @@ export function renderPicklist({ picklist, orders = [], range, errors, shopeeSho
         <span class="dim nowrap pk__when">${escape(dateTime(o.createdAt, o.channel))}</span>
         <span class="pk__units mono">${units} unit</span>
       </div>
-      <ul class="pk__lines">${(o.lines ?? []).map((l) => `<li><b class="mono">${Number(l.qty) || 0}×</b><span>${escape(l.name ?? l.sku)}${l.variant ? ` <span class="note">${escape(l.variant)}</span>` : ''}</span><span class="mono dim pk__sku">${escape(l.sku ?? '')}</span></li>`).join('')}</ul>
+      <ul class="pk__lines">${(o.lines ?? []).map((l) => `<li>${thumb(l.sku, l.name, 'pk__mini')}<b class="mono">${Number(l.qty) || 0}×</b><span class="pk__ln">${escape(l.name ?? l.sku)}${l.variant ? ` <span class="note">${escape(l.variant)}</span>` : ''}<span class="mono dim pk__sku">${escape(l.sku ?? '')}</span></span></li>`).join('')}</ul>
     </li>`;
   }).join('');
   const tabs = `<div class="pk__tabs" role="tablist" aria-label="Tampilan picklist">
@@ -3619,7 +3634,7 @@ const PICK_STYLE = `
 .pk__tab[aria-selected="true"]{background:var(--brand); color:var(--bg); font-weight:600}
 .pk__tab:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .pk__pane[hidden]{display:none}
-.pk__orders{list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(22rem, 1fr)); gap:.7rem}
+.pk__orders{list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(24rem, 1fr)); gap:.7rem}
 .pk__o{border:1px solid var(--line); border-radius:var(--radius-s); background:var(--panel); padding:.8rem .95rem; display:flex; flex-direction:column; gap:.6rem}
 .pk__oh{display:flex; align-items:center; flex-wrap:wrap; gap:.45rem .6rem}
 .pk__code{font-size:.84rem; font-weight:600}
@@ -3628,10 +3643,21 @@ const PICK_STYLE = `
 .pk__when{font-size:.74rem}
 .pk__units{font-size:.72rem; padding:.12rem .5rem; border-radius:999px; border:1px solid var(--line); color:var(--muted)}
 .pk__lines{list-style:none; margin:0; padding:.55rem 0 0; border-top:1px dashed var(--line); display:flex; flex-direction:column; gap:.4rem}
-.pk__lines li{display:grid; grid-template-columns:2.4rem minmax(0,1fr) auto; gap:.5rem; align-items:baseline; font-size:.86rem}
+.pk__lines li{display:grid; grid-template-columns:44px 2.2rem minmax(0,1fr); gap:.6rem; align-items:center; font-size:.86rem; line-height:1.35}
+.pk__ln{display:flex; flex-direction:column; min-width:0}
+.pk__ln .pk__sku{display:block; margin-top:.1rem}
+.pk__prod{display:flex; align-items:center; gap:.85rem; min-width:0}
+.pk__pt{display:flex; flex-direction:column; min-width:0}
+.pk__img, .pk__mini{flex:none; object-fit:cover; border-radius:10px; background:#fff; border:1px solid var(--line)}
+.pk__img{width:56px; height:56px}
+.pk__mini{width:44px; height:44px; border-radius:8px}
+.pk__img--none, .pk__mini--none{display:inline-grid; place-items:center; background:var(--panel-2); color:var(--dim)}
+.pk__img--none .ico{width:22px; height:22px} .pk__mini--none .ico{width:18px; height:18px}
+.pick__q{font-size:1.5rem}
 .pk__lines b{font-size:.95rem; text-align:right}
 .pk__sku{font-size:.7rem}
-@media (max-width:700px){.pick__go{width:100%; justify-content:center} .pk__orders{grid-template-columns:minmax(0,1fr)} .pk__sku{display:none} .pk__lines li{grid-template-columns:2.2rem minmax(0,1fr)}}
+.pk__lines b{font-size:1.05rem}
+@media (max-width:700px){.pick__go{width:100%; justify-content:center} .pk__orders{grid-template-columns:minmax(0,1fr)} .pk__lines li{grid-template-columns:40px 2rem minmax(0,1fr)} .pk__mini{width:40px; height:40px} .pk__img{width:48px; height:48px}}
 `;
 
 /*

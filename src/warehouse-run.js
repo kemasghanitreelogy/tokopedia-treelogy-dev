@@ -1,7 +1,22 @@
 import { updateDoc, readDoc } from './store/index.js';
-import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse } from './warehouse.js';
+import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, awaitingPick } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
+import { printedLabels } from './shopify/label.js';
+
+/**
+ * The first time each order's label came out of the printer, onto the order. Read from
+ * the print ledger; an order with no entry was never printed here.
+ */
+export async function withPrintTimes(orders, printed) {
+  const ledger = printed ?? await printedLabels().catch(() => ({}));
+  return (orders ?? []).map((order) => {
+    const entry = ledger[`${order.channel}:${order.id}`] ?? ledger[order.id] ?? null;
+    // A backlog marked printed without printing says nothing about when it left.
+    const at = entry && !entry.marked ? Number(entry.first ?? entry.at) : 0;
+    return at > 0 ? { ...order, printedAt: at } : order;
+  });
+}
 
 /**
  * The warehouse, run. Only ever touches warehouse/stock.json - never a marketplace and
@@ -14,7 +29,8 @@ export async function loadWarehouse() {
 }
 
 /** Count these orders against the shelf. Idempotent: an order already counted is skipped. */
-export async function syncWarehouse(orders, { now = Date.now(), update = updateDoc } = {}) {
+export async function syncWarehouse(orders, { now = Date.now(), update = updateDoc, printed } = {}) {
+  orders = await withPrintTimes(orders, printed);
   let moved = [];
   await update(WAREHOUSE_DOC, (current) => {
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
@@ -35,6 +51,27 @@ export async function recordMove(input, { now = Date.now(), update = updateDoc }
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
     out = manualMove(opened, input, { now });
     return out.doc;
+  }, emptyWarehouse());
+  invalidate('warehouse');
+  return out;
+}
+
+/**
+ * The picklist confirmed: these orders, read fresh, leave the shelf now - once each.
+ * Orders already confirmed, cancelled since, or from before the migration move nothing.
+ *
+ * @returns {{moved: Array, taken: string[], skipped: string[]}}
+ */
+export async function confirmPicked(orders, { by = '', now = Date.now(), update = updateDoc, printed } = {}) {
+  const fresh = await withPrintTimes(orders, printed);
+  let out = { moved: [], taken: [], skipped: [] };
+  await update(WAREHOUSE_DOC, (current) => {
+    const opened = openWarehouse(current ?? emptyWarehouse(), { now });
+    const waiting = new Set(fresh.filter((o) => awaitingPick(opened, o)).map((o) => `${o.channel}|${o.id}`));
+    const result = applyOrders(opened, fresh, { now, admit: true, by });
+    const taken = [...waiting].filter((key) => result.doc.orders[key] && !result.doc.orders[key].undone);
+    out = { moved: result.moved, taken, skipped: fresh.map((o) => `${o.channel}|${o.id}`).filter((k) => !taken.includes(k)) };
+    return result.doc;
   }, emptyWarehouse());
   invalidate('warehouse');
   return out;
@@ -77,3 +114,4 @@ export function warehouseAfterOrder(order, options = {}) {
 }
 
 export function resetWarehouseRun() { running = null; queued = []; }
+

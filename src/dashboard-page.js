@@ -3522,12 +3522,12 @@ const testButton = (csrf) => `<button class="chip" type="button" id="alerttest" 
   title="Bunyikan alert uji lewat server, seperti pesanan sungguhan">&#128276; Tes bunyi alert</button>`;
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, range, errors, shopeeShop, generatedAt, user = null, csrf = null, readAt = null, settleFailed = false }) {
+export function renderPicklist({ picklist, orders = [], range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
-  const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee' })
+  const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee', shopify: 'Shopify', manual: 'Manual' })
     .filter(([key]) => by[key] > 0)
-    .map(([key, label]) => `<span class="mini" style="--chip:${CHANNELS[key].accent}">${label} ${by[key]}</span>`)
+    .map(([key, label]) => `<span class="mini" style="--chip:${CHANNELS[key]?.accent ?? 'var(--muted)'}">${label} ${by[key]}</span>`)
     .join('');
 
   const rows = picklist.items
@@ -3542,33 +3542,90 @@ export function renderPicklist({ picklist, range, errors, shopeeShop, generatedA
     </tr>`)
     .join('');
 
+  // The orders behind these lines, exactly; confirming sends this list, so what is taken
+  // off the shelf is what the picker was looking at.
+  const pickKeys = orders.filter((o) => o.stage === 'to_ship').map((o) => `${o.channel}:${o.id}`);
+  const confirm = csrf && pickKeys.length ? `<form method="post" class="pick__confirm" data-confirm="Konfirmasi ${picklist.orderCount} pesanan (${picklist.unitCount} unit) sudah dipetik? Stok gudang berkurang sesuai isi produknya.">
+      <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="action" value="wh_pick"><input type="hidden" name="view" value="picklist"><input type="hidden" name="back" value="?view=picklist">
+      ${pickKeys.map((k) => `<input type="hidden" name="order" value="${escape(k)}">`).join('')}
+      <div class="pick__confirm-t"><b>Sudah dipetik semua?</b><span>Konfirmasi mengurangi stok gudang sesuai isi tiap produk. Pesanan yang sudah dikonfirmasi hilang dari daftar ini.</span></div>
+      <button type="submit" class="pick__go">${svg('check2')}<span>Konfirmasi ${picklist.orderCount} pesanan</span></button>
+    </form>` : '';
+
   return shell({ user,
-    csrf,
+    csrf, flash,
     title: 'Picklist',
     range,
     errors,
     shopeeShop,
     generatedAt,
     view: 'picklist',
-    hideRangeControls: true, scope: 'semua yang perlu dipetik',
+    hideRangeControls: true, scope: 'semua yang perlu dipetik sejak 06 Okt 17.16',
     readAt, settleFailed,
+    style: PICK_STYLE, script: PICK_SCRIPT,
     kpis: `
-      <div class="strip">
+      <div class="strip" id="pick-kpis">
         ${stat('Unit dipetik', String(picklist.unitCount))}
         ${stat('SKU', String(picklist.skuCount))}
         ${stat('Pesanan', String(picklist.orderCount))}
       </div>`,
-    body: picklist.items.length === 0
+    body: `<div id="pick-live" data-live="${escape(pickKeys.join(','))}">${picklist.items.length === 0
       ? '<p class="empty">Tidak ada pesanan yang menunggu dipetik.</p>'
-      : `<div class="scroll"><table class="dense">
+      : `${confirm}<div class="scroll"><table class="dense">
           <thead><tr>
             <th class="num">Qty</th><th>Produk</th><th>Kanal</th><th class="num">Pesanan</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
-        <div class="foot"><span>${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span></div>`,
+        <div class="foot"><span>${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span><span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span></div>`}</div>`,
   });
 }
+
+const PICK_STYLE = `
+.pick__confirm{display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin:0 0 1rem; padding:.9rem 1.1rem; border-radius:var(--radius); border:1px solid color-mix(in srgb, var(--brand) 45%, var(--line)); background:color-mix(in srgb, var(--brand) 9%, var(--panel))}
+.pick__confirm-t{display:flex; flex-direction:column; gap:.2rem; min-width:0}
+.pick__confirm-t b{font-size:.95rem}
+.pick__confirm-t span{font-size:.8rem; color:var(--muted)}
+.pick__go{display:inline-flex; align-items:center; gap:.45rem; font:inherit; font-size:.9rem; font-weight:600; min-height:46px; padding:.5rem 1.3rem; border-radius:999px; border:1px solid var(--brand); background:var(--brand); color:var(--bg); cursor:pointer; transition:filter .15s}
+.pick__go:hover{filter:brightness(1.08)}
+.pick__go:focus-visible{outline:2px solid var(--brand); outline-offset:3px}
+.pick__go .ico{width:18px; height:18px}
+.pick__live{display:inline-flex; align-items:center; gap:.35rem; color:var(--dim); font-size:.74rem}
+.pick__live .ico{width:13px; height:13px}
+.pick__live.is-new{color:var(--brand)}
+@media (max-width:700px){.pick__go{width:100%; justify-content:center}}
+`;
+
+/*
+ * New orders reach the picklist without a reload: the page reads itself every 20 seconds
+ * and swaps the list in. Never while a confirmation is being asked or sent, so the list a
+ * picker confirms is the one they are looking at.
+ */
+const PICK_SCRIPT = `
+(function () {
+  var busy = false;
+  // Only the submit that really goes (after the confirmation was answered yes).
+  document.addEventListener('submit', function (e) { if (e.target.dataset.confirmed === '1') busy = true; }, true);
+  function tick() {
+    if (busy || document.hidden || document.querySelector('dialog[open], .ask.is-open')) return;
+    fetch(location.pathname + '?view=picklist', { credentials: 'same-origin', headers: { 'x-requested-with': 'picklist' } })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (html) {
+        if (!html || busy) return;
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var live = doc.getElementById('pick-live'), here = document.getElementById('pick-live');
+        var kpis = doc.getElementById('pick-kpis'), hereK = document.getElementById('pick-kpis');
+        if (!live || !here || live.dataset.live === here.dataset.live) return;
+        here.replaceWith(live);
+        if (kpis && hereK) hereK.replaceWith(kpis);
+        var badge = document.querySelector('.pick__live');
+        if (badge) { badge.classList.add('is-new'); badge.lastChild.textContent = ' daftar baru saja diperbarui'; }
+      })
+      .catch(function () {});
+  }
+  setInterval(tick, 20000);
+})();
+`;
 
 /** Stock view: the ledger is the master, and every deviation is named. */
 

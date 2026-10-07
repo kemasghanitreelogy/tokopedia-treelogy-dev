@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openWarehouse, applyOrders, setRecipe, recipeOf, verifyWarehouse, emptyWarehouse, OPENING_AT } from '../src/warehouse.js';
+import { openWarehouse, applyOrders as readOrders, setRecipe, recipeOf, verifyWarehouse, emptyWarehouse, OPENING_AT } from '../src/warehouse.js';
+// Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
+// what happens once it is taken.
+const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
 import { handleWrite } from '../api/dashboard.js';
 
 /**
@@ -112,4 +115,57 @@ test('packaging held from before is forgotten whole: item, movements, recipe men
   assert.deepEqual(doc.orders['shopee|X'].items, { 'M-087': 1 });
   assert.deepEqual(verifyWarehouse(doc), []);
   assert.throws(() => setRecipe(doc, { sku: 'MRS-001', parts: [{ code: 'M-049', qty: 1 }] }), /tidak ada/);
+});
+
+test('nothing leaves the shelf until the picklist is confirmed; the sheet era never does', async () => {
+  const { awaitingPick, afterOpening } = await import('../src/warehouse.js');
+  const old = { ...order('OLD', 'to_ship', [['OMC-90-001', 1]]), createdAt: OPENING_AT - 9000, printedAt: OPENING_AT - 600 };
+  const late = { ...order('LATE', 'to_ship', [['OMC-90-001', 2]]), createdAt: OPENING_AT - 9000, printedAt: OPENING_AT + 60 };
+  const fresh = order('NEW', 'to_ship', [['OMC-90-001', 1]]);
+  // Arriving, printing and shipping move nothing on their own.
+  let { doc } = readOrders(opened(), [old, late, fresh, { ...fresh, stage: 'shipping' }]);
+  assert.equal(qty(doc, 'M-036'), 248);
+  assert.deepEqual([old, late, fresh].map((o) => awaitingPick(doc, o)), [false, true, true]);
+  assert.deepEqual([old, late, fresh].map(afterOpening), [false, true, true]);
+  // Confirmed: taken once, even confirmed again, and off the waiting list.
+  ({ doc } = readOrders(doc, [old, late, fresh], { admit: true, by: 'ika' }));
+  ({ doc } = readOrders(doc, [late, fresh], { admit: true }));
+  assert.equal(qty(doc, 'M-036'), 245);
+  assert.equal(doc.moves.at(-1).by, 'ika');
+  assert.deepEqual([late, fresh].map((o) => awaitingPick(doc, o)), [false, false]);
+  // Cancelled after picking: back on the shelf automatically, and waiting again if revived.
+  ({ doc } = readOrders(doc, [{ ...late, stage: 'cancelled' }]));
+  assert.equal(qty(doc, 'M-036'), 247);
+  assert.equal(awaitingPick(doc, late), true);
+  ({ doc } = readOrders(doc, [late]));
+  assert.equal(qty(doc, 'M-036'), 247, 'revived but not confirmed again: stays');
+  assert.deepEqual(verifyWarehouse(doc), []);
+});
+
+test('two pickers confirming the same list at once take it off once', async () => {
+  const { confirmPicked } = await import('../src/warehouse-run.js');
+  let state = null;
+  // A store that makes the second writer collide and retry on the fresh document.
+  const update = async (_key, fn, empty) => { const base = structuredClone(state ?? empty); await new Promise((r) => setImmediate(r)); state = fn(structuredClone(state ?? base)); return state; };
+  const list = [order('P1', 'to_ship', [['MRS-001', 1]]), order('P2', 'to_ship', [['OMO-30-001', 3]])];
+  const [a, b] = await Promise.all([confirmPicked(list, { update, printed: {} }), confirmPicked(list, { update, printed: {} })]);
+  assert.equal(a.taken.length + b.taken.length, 2);
+  assert.deepEqual([state.items['M-093'].qty, state.items['M-038'].qty], [217, 55]);
+  assert.deepEqual(verifyWarehouse(state), []);
+});
+
+test('print times come from the ledger, and a backlog marked printed without printing does not count', async () => {
+  const { withPrintTimes } = await import('../src/warehouse-run.js');
+  const printed = {
+    'shopee:A': { at: OPENING_AT + 100, first: OPENING_AT + 50 },
+    'B': { at: OPENING_AT + 70 },
+    'shopee:C': { at: OPENING_AT + 80, first: OPENING_AT + 80, marked: true },
+  };
+  const out = await withPrintTimes([order('A', 'to_ship', []), order('B', 'to_ship', []), order('C', 'to_ship', []), order('D', 'to_ship', [])], printed);
+  assert.deepEqual(out.map((o) => o.printedAt), [OPENING_AT + 50, OPENING_AT + 70, undefined, undefined]);
+});
+
+test('a picklist confirmation naming no valid order is refused before anything is read', async () => {
+  const f = new URLSearchParams([['action', 'wh_pick'], ['order', 'nope'], ['order', 'shopee:<script>']]);
+  await assert.rejects(() => handleWrite(f, '127.0.0.1', { name: 'qa', email: 'qa@x', role: 'owner', status: 'active' }, 'csrf'), /tidak ada pesanan/);
 });

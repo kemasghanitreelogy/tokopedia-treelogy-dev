@@ -413,8 +413,9 @@ export async function printedLabels() {
  * enough boundary that "same timestamp, same person" would eventually merge two runs.
  *
  * @param {string[]} ids order keys, exactly as the print path writes them
+ * @param {{marked?: boolean}} options `marked` when nothing was actually printed
  */
-export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1000), batch = `${at}-${randomUUID().slice(0, 8)}` } = {}) {
+export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1000), batch = `${at}-${randomUUID().slice(0, 8)}`, marked = false } = {}) {
   if (ids.length === 0) return batch;
   await updateDoc(PRINTED_DOC, (current) => {
     const next = current ?? structuredClone(EMPTY);
@@ -425,6 +426,9 @@ export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1
         // A reprint does not rewrite history; it counts.
         first: existing?.first ?? at,
         times: (existing?.times ?? 0) + 1,
+        // Marked as printed without printing (a backlog cleared): no label came out now,
+        // so the warehouse does not read this as goods leaving.
+        ...((marked && !existing) || existing?.marked ? { marked: true } : {}),
       };
     }
     return next;

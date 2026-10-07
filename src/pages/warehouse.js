@@ -121,7 +121,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     .sort((a, b) => productLabel(a).localeCompare(productLabel(b)));
   const can = `<section class="wh__grp wh__grp--can" id="isi"><div class="wh__hrow"><h2 class="wh__h">Isi produk<span>${sets.length}</span></h2>
       <button type="button" class="wh__btn wh__btn--add" data-open-new aria-expanded="false">${svg('plus')}<span>Atur isi produk</span></button></div>
-    <p class="wh__sub">Setiap produk yang dikirim mengurangi semua barang di dalamnya.</p>
+    <p class="wh__sub">Setiap produk yang keluar mengurangi semua barang di dalamnya.</p>
     <div class="rc__new" hidden data-new>
       <label class="wh__in rc__pick"><span>Produk</span><select data-pick><option value="">Pilih produk…</option>${unlisted.map((p) => `<option value="${escape(p.sku)}">${escape(productLabel(p))}</option>`).join('')}</select></label>
       ${unlisted.map((p) => `<div data-new-for="${escape(p.sku)}" hidden>${editor(p.sku, recipeOf(p.sku, edited), false, productLabel(p))}</div>`).join('')}
@@ -157,7 +157,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   </section>`;
 
   const body = `<div class="wh">
-    <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Pesanan yang dikirim mengurangi stok di sini otomatis sesuai isi produknya.</p>
+    <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Pesanan mengurangi stok di sini otomatis sesuai isi produknya saat labelnya dicetak, atau saat dikirim kalau labelnya tidak dicetak dari dashboard.</p>
     <div class="wh__cols"><div>${shelf}</div><div>${can}</div></div>
     ${history}
   </div>`;

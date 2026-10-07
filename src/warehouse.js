@@ -11,8 +11,9 @@ import { numberOrNull } from './numbers.js';
  * marketplace reads this.
  *
  * Three things move it:
- *   an order leaving - when it first reaches a shipped stage, its lines come off by the
+ *   an order confirmed on the picklist - only then do its lines come off, by the
  *   product's recipe (a Ritual Set is a bowl, a whisk, a scoop and a wooden box), once;
+ *   nothing leaves on an order arriving, a label printing or a parcel shipping;
  *   the same order cancelled or returned after that - the recipe goes back on, once;
  *   a person - goods received, goods out for another reason, or a count (stock opname).
  */
@@ -20,10 +21,25 @@ import { numberOrNull } from './numbers.js';
 export const WAREHOUSE_DOC = 'warehouse/stock.json';
 
 /**
- * The sheet's Current Stock at its last update, 06/10/2026 17:16:20 WIB. Orders created
- * before this were the sheet's to count; only later ones come off here.
+ * The sheet's Current Stock at its last update, 06/10/2026 17:16:20 WIB. The sheet took
+ * an order off when its label was printed, so an order printed before this was the
+ * sheet's to count and one printed after is ours. An order never printed here falls back
+ * to when it was created.
  */
 export const OPENING_AT = Math.floor(Date.parse('2026-10-06T17:16:20+07:00') / 1000);
+
+/**
+ * When an order left the shelf, for the opening cutoff: its first label print, else when
+ * it was created. The picklist and the warehouse both read it, so they agree on which
+ * orders belong to the sheet's era and which are ours.
+ */
+export function leftAtOf(order) {
+  const printedAt = Number(order?.printedAt);
+  return printedAt > 0 ? printedAt : Number(order?.createdAt);
+}
+
+/** Whether an order belongs after the migration (not counted by the sheet). */
+export const afterOpening = (order) => leftAtOf(order) >= OPENING_AT;
 
 /** Shelf groups, in the order the page shows them. */
 export const GROUPS = {
@@ -138,7 +154,6 @@ function itemsForLines(lines, edited = {}) {
   return { items, unknown };
 }
 
-const SHIPPED = new Set(['shipping', 'delivered', 'completed']);
 const UNDONE = new Set(['cancelled', 'returned']);
 /** Kept this long; a cancellation later than this is not put back. */
 export const REMEMBER_DAYS = 45;
@@ -234,11 +249,13 @@ const move = (doc, entry) => {
 };
 
 /**
- * Take shipped orders off the shelf and put undone ones back. Pure.
+ * Read orders against the shelf. Pure. With `admit` (a picklist confirmation) a new
+ * order is taken off; without it only orders already taken move - a cancel puts back
+ * what was taken, an edit moves the difference.
  *
  * @returns {{doc, moved: Array}}
  */
-export function applyOrders(doc, orders, { now = Date.now() } = {}) {
+export function applyOrders(doc, orders, { now = Date.now(), admit = false, by = '' } = {}) {
   const next = { ...doc, items: { ...doc.items }, moves: [...doc.moves], orders: { ...(doc.orders ?? {}) }, folded: { ...(doc.folded ?? {}) } };
   const at = Math.floor(now / 1000);
   const moved = [];
@@ -246,7 +263,7 @@ export function applyOrders(doc, orders, { now = Date.now() } = {}) {
   // edit, a cancel and a re-send) never reuses an id.
   const post = (key, rev, code, delta, kind, note) => {
     if (!delta) return;
-    const r = move(next, { id: `${key}|${rev}|${code}`, at, code, kind, delta, ref: key, note });
+    const r = move(next, { id: `${key}|${rev}|${code}`, at, code, kind, delta, ref: key, note, ...(by ? { by } : {}) });
     if (r) moved.push(r);
   };
   const apply = (key, rev, items, sign, kind, note) => {
@@ -258,7 +275,6 @@ export function applyOrders(doc, orders, { now = Date.now() } = {}) {
     const key = `${order.channel}|${order.id}`;
     const seen = next.orders[key];
     const label = `${order.channel === 'manual' ? '' : `${order.channel} `}${order.id}`;
-    const shipped = SHIPPED.has(order.stage);
     const undone = UNDONE.has(order.stage);
     const lines = linesOf(order);
     const read = itemsForLines(lines, next.recipes);
@@ -267,9 +283,11 @@ export function applyOrders(doc, orders, { now = Date.now() } = {}) {
     const known = Object.keys(read.items).length > 0 || read.unknown.length > 0;
 
     if (!seen) {
-      if (!shipped || !known || !(Number(order.createdAt) >= OPENING_AT)) continue;
-      next.orders[key] = { at, rev: 1, lines, items: read.items, unknown: read.unknown };
-      apply(key, 1, read.items, -1, 'order', `Pesanan ${label}`);
+      // Only a picklist confirmation (`admit`) takes a new order off the shelf, and only
+      // one from after the migration; anything else is just read.
+      if (!admit || undone || !known || !afterOpening(order)) continue;
+      next.orders[key] = { at, rev: 1, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}) };
+      apply(key, 1, read.items, -1, 'order', `Picklist ${label}`);
       continue;
     }
     const rev = (seen.rev ?? 1) + 1;
@@ -278,13 +296,13 @@ export function applyOrders(doc, orders, { now = Date.now() } = {}) {
       next.orders[key] = { ...seen, rev, undone: at };
       continue;
     }
-    if (shipped && seen.undone && known) {
-      // Cancelled and then sent after all: it leaves the shelf again.
-      apply(key, rev, read.items, -1, 'order', `Dikirim ulang ${label}`);
-      next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown };
+    if (admit && !undone && seen.undone && known) {
+      // Cancelled, put back, and confirmed on the picklist again: it leaves again.
+      apply(key, rev, read.items, -1, 'order', `Picklist ulang ${label}`);
+      next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}) };
       continue;
     }
-    if (shipped && !seen.undone && known && seen.lines && !sameItems(seen.lines, lines)) {
+    if (!undone && !seen.undone && known && seen.lines && !sameItems(seen.lines, lines)) {
       // The order's lines changed after it was counted - a typed-in sale edited, a line
       // cancelled on the platform. Only the change in lines moves, priced by today's
       // recipes on both sides, so a recipe edited since never re-counts what already left;
@@ -405,4 +423,14 @@ export function setRecipe(doc, { sku, parts, remove = false, by = '' }, { now = 
     next.recipeLog = [...(doc.recipeLog ?? []), { at: Math.floor(now / 1000), sku: product.sku, from: before, to: after, by }].slice(-200);
   }
   return { doc: changed ? next : doc, recipe: after, changed };
+}
+
+/**
+ * Whether an order is still waiting for its picklist confirmation: from after the
+ * migration, not cancelled, and not already taken (or taken and put back by a cancel).
+ */
+export function awaitingPick(doc, order) {
+  if (!order?.id || !order.channel || UNDONE.has(order.stage) || !afterOpening(order)) return false;
+  const seen = doc?.orders?.[`${order.channel}|${order.id}`];
+  return !seen || Boolean(seen.undone);
 }

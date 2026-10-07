@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recipeOf, itemsForOrder, openWarehouse, applyOrders, manualMove, makeable, emptyWarehouse, OPENING_AT, OPENING_ITEMS } from '../src/warehouse.js';
+import { recipeOf, itemsForOrder, openWarehouse, applyOrders as readOrders, manualMove, makeable, emptyWarehouse, OPENING_AT, OPENING_ITEMS } from '../src/warehouse.js';
+// Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
+// what happens once it is taken.
+const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
 
 /**
  * The real warehouse, migrated from the sheet on 7 Oct 2026 and kept apart from every
@@ -38,8 +41,8 @@ test('a shipped order comes off the shelf once, however often it is pushed', () 
   assert.equal(qty(doc, 'M-035'), 40);
 });
 
-test('an order still to ship has not left the shelf', () => {
-  const { doc } = applyOrders(opened(), [order('A', 'to_ship', [['OMC-90-001', 5]])]);
+test('an order that is not confirmed on the picklist has not left the shelf, shipped or not', () => {
+  const { doc } = readOrders(opened(), [order('A', 'to_ship', [['OMC-90-001', 5]]), order('B', 'completed', [['OMC-90-001', 5]])]);
   assert.equal(qty(doc, 'M-036'), 248);
 });
 

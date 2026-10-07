@@ -2631,7 +2631,7 @@ export function renderDashboard({
       ${filters}
       <form class="searchform" method="get" role="search">
         ${searchHidden}
-        <input class="search" id="q" name="q" type="search" value="${escape(q)}" aria-label="Cari pesanan berdasarkan order ID, pembeli atau nomor resi" placeholder="Cari order ID, pembeli, resi..." autocomplete="off">
+        <input class="search" id="q" name="q" type="search" value="${escape(q)}" aria-label="Cari pesanan berdasarkan order ID, pembeli, nomor telepon atau nomor resi" placeholder="Cari order ID, pembeli, telepon, resi..." autocomplete="off">
         <button type="submit" aria-label="Cari">${svg('search')}</button>
         ${q ? `<a class="chip" href="${escape(link({ q: '' }))}">Hapus pencarian</a>` : ''}
       </form>

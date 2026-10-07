@@ -101,3 +101,21 @@ test('jurnal and reviews page the same way', () => {
   assert.match(html, /Menampilkan <b>101&ndash;120<\/b> dari <b>120<\/b> ulasan/);
   assert.match(html, /href="\?view=reviews&amp;channel=shopee&amp;page=2" rel="prev"/);
 });
+
+test('an order is found by the buyer\'s phone, however either side wrote it', async () => {
+  const { filterOrders } = await import('../src/omni.js');
+  const orders = [
+    { id: '#11283', channel: 'shopify', stage: 'to_ship', buyer: 'July Ri', buyerPhone: '081398151516' },
+    { id: 'A1', channel: 'manual', stage: 'completed', buyer: 'Ika', buyerPhone: '+62 812-1111-2222' },
+    { id: 'SP1', channel: 'shopee', stage: 'shipping', buyer: 'a***o', buyerPhone: '******16' },
+    { id: '2610', channel: 'tokopedia', stage: 'shipping', buyer: 'Budi', buyerPhone: '' },
+  ];
+  const ids = (q) => filterOrders(orders, { q }).map((o) => o.id);
+  assert.deepEqual(ids('081398151516'), ['#11283']);
+  assert.deepEqual(ids('+62 813 9815 1516'), ['#11283']);
+  assert.deepEqual(ids('6281398151516'), ['#11283']);
+  assert.deepEqual(ids('9815 1516'), ['#11283'], 'sebagian nomor');
+  assert.deepEqual(ids('0812-1111-2222'), ['A1']);
+  assert.deepEqual(ids('2610'), ['2610'], 'angka pendek tetap order ID, bukan telepon');
+  assert.deepEqual(ids('july'), ['#11283'], 'nama tetap bisa');
+});

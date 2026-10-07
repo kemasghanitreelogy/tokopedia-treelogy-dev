@@ -26,7 +26,6 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   const moves = [...(warehouse.moves ?? [])].reverse();
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
   const isToday = (at) => new Date(at * 1000 + 7 * 3600_000).toISOString().slice(0, 10) === today;
-  const lastOf = (code) => moves.find((m) => m.code === code);
   const units = Object.values(items).reduce((n, i) => n + Math.max(0, i.qty), 0);
 
   const kpis = `<section class="strip" aria-label="Ringkasan gudang">
@@ -47,12 +46,10 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
 
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="view" value="stock"><input type="hidden" name="back" value="?view=stock">`;
   const row = (code, it) => {
-    const last = lastOf(code);
     return `<li class="wh__row" data-code="${escape(code)}" data-text="${escape(`${code} ${it.name}`.toLowerCase())}">
       <span class="wh__code mono">${escape(code)}</span>
       <span class="wh__name">${escape(it.name)}</span>
       <span class="wh__qty"><b class="mono${it.qty <= 0 ? ' is-zero' : ''}">${fmt(it.qty)}</b><small>${escape(it.uom)}</small></span>
-      <span class="wh__last">${last ? `${escape(KIND[last.kind]?.[0] ?? last.kind)} <span class="mono">${last.delta > 0 ? '+' : ''}${fmt(last.delta)}</span> · ${escape(when(last.at))}` : ''}</span>
       <span class="wh__acts">
         <a class="wh__hist" href="?view=stock&amp;item=${encodeURIComponent(code)}#riwayat" title="Riwayat ${escape(it.name)}">${svg('history')}<span class="visually-hidden">Riwayat</span></a>
         <button class="wh__btn" type="button" data-move="${escape(code)}" aria-expanded="false">Catat</button>
@@ -126,7 +123,7 @@ const STYLE = `
 .wh__h span{opacity:.6; letter-spacing:0}
 .wh__sub{margin:-.35rem 0 .75rem; font-size:.76rem; color:var(--dim)}
 .wh__list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column}
-.wh__row{display:grid; grid-template-columns:4.2rem minmax(0,1fr) 6rem minmax(0,11rem) auto; align-items:center; gap:.75rem; padding:.55rem .35rem; border-top:1px solid var(--line)}
+.wh__row{display:grid; grid-template-columns:4.2rem minmax(0,1fr) 6rem auto; align-items:center; gap:.75rem; padding:.55rem .35rem; border-top:1px solid var(--line)}
 .wh__row:first-child{border-top:0}
 .wh__row[hidden]{display:none}
 .wh__code{font-size:.74rem; color:var(--dim)}
@@ -135,7 +132,6 @@ const STYLE = `
 .wh__qty b{font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums}
 .wh__qty b.is-zero{color:var(--dim)}
 .wh__qty small{font-size:.66rem; color:var(--dim)}
-.wh__last{font-size:.72rem; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .wh__acts{display:flex; align-items:center; gap:.35rem}
 .wh__hist{display:inline-grid; place-items:center; width:36px; height:36px; border-radius:9px; color:var(--muted); border:1px solid transparent}
 .wh__hist:hover{color:var(--fg); border-color:var(--line)}
@@ -187,8 +183,8 @@ const STYLE = `
   .strip:has(.wh__ok) .strip__grow{display:none}
   .strip:has(.wh__ok) .wh__ok, .strip:has(.wh__ok) .search{grid-column:1/-1; width:100%}
   .wh__row{grid-template-columns:minmax(0,1fr) auto; row-gap:.2rem}
-  .wh__code{grid-column:1} .wh__name{grid-column:1; white-space:normal} .wh__qty{grid-column:2; grid-row:1 / span 2}
-  .wh__last{grid-column:1} .wh__acts{grid-column:2}
+  .wh__code{grid-column:1} .wh__name{grid-column:1; white-space:normal} .wh__qty{grid-column:2; grid-row:1}
+  .wh__acts{grid-column:2; grid-row:2}
   .wh__log li{grid-template-columns:minmax(0,1fr) auto; row-gap:.15rem}
   .wh__t{grid-column:1} .wh__k{grid-column:2; grid-row:1} .wh__lname{grid-column:1} .wh__d{grid-column:2} .wh__after{display:none} .wh__note{grid-column:1/-1}
 }

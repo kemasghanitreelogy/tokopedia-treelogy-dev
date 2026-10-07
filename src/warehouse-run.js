@@ -1,8 +1,10 @@
 import { updateDoc, readDoc } from './store/index.js';
-import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, awaitingPick, recordPick } from './warehouse.js';
+import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, recordPick } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
-import { printedLabels } from './shopify/label.js';
+import { printedLabels, arrangedOrders } from './shopify/label.js';
+import { nextAction } from './fulfillment.js';
+import { ordersInRange } from './db/orders.js';
 
 /**
  * The first time each order's label came out of the printer, onto the order. Read from
@@ -29,17 +31,47 @@ export async function loadWarehouse() {
 }
 
 /** Count these orders against the shelf. Idempotent: an order already counted is skipped. */
-export async function syncWarehouse(orders, { now = Date.now(), update = updateDoc, printed } = {}) {
+/**
+ * Whether an order has reached the picklist - and so leaves the shelf now: paid and with
+ * nothing left to do on the Proses page (the same nextAction that page reads), or gone
+ * further already (packed, shipped, delivered, done) without ever having been counted.
+ */
+export function onPicklist(arranged = {}) {
+  return (order) => (order.stage === 'to_ship' && !nextAction(order, arranged)) || LEFT.has(order.stage);
+}
+const LEFT = new Set(['shipping', 'delivered', 'completed']);
+
+/**
+ * Count these orders against the shelf, in one transaction: an order that has reached
+ * the picklist is taken off once, a cancel puts back what was taken, an edit moves the
+ * difference. Idempotent - run it as often as orders arrive.
+ */
+export async function syncWarehouse(orders, { now = Date.now(), update = updateDoc, printed, arranged } = {}) {
   orders = await withPrintTimes(orders, printed);
+  const ready = onPicklist(arranged ?? await arrangedOrders().catch(() => ({})));
   let moved = [];
   await update(WAREHOUSE_DOC, (current) => {
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
-    const out = applyOrders(opened, orders, { now });
+    const before = new Set(Object.entries(opened.orders).filter(([, o]) => !o.undone).map(([k]) => k));
+    const out = applyOrders(opened, orders, { now, admit: ready, by: 'otomatis' });
     moved = out.moved;
-    return out.doc;
+    const taken = Object.entries(out.doc.orders).filter(([k, o]) => !o.undone && !before.has(k) && o.picked === Math.floor(now / 1000)).map(([k]) => k);
+    return recordPick(out.doc, { at: Math.floor(now / 1000), by: 'otomatis', taken });
   }, emptyWarehouse());
   if (moved.length) invalidate('warehouse');
   return { moved };
+}
+
+/**
+ * Something on the Proses page changed (an order arranged): read the week's orders and
+ * count whatever reached the picklist. Never throws, never awaited by its caller.
+ */
+export function warehouseSweep() {
+  const now = Math.floor(Date.now() / 1000);
+  return ordersInRange({ since: now - 7 * 86400, until: now })
+    .then((orders) => syncWarehouse(orders))
+    .then(({ moved }) => { if (moved.length) console.log(`gudang: ${moved.length} gerakan setelah atur pengiriman`); })
+    .catch((error) => console.warn(`gudang: sapuan gagal - ${error.message}`));
 }
 
 /** A person's movement, in one transaction. */
@@ -51,27 +83,6 @@ export async function recordMove(input, { now = Date.now(), update = updateDoc }
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
     out = manualMove(opened, input, { now });
     return out.doc;
-  }, emptyWarehouse());
-  invalidate('warehouse');
-  return out;
-}
-
-/**
- * The picklist confirmed: these orders, read fresh, leave the shelf now - once each.
- * Orders already confirmed, cancelled since, or from before the migration move nothing.
- *
- * @returns {{moved: Array, taken: string[], skipped: string[]}}
- */
-export async function confirmPicked(orders, { by = '', now = Date.now(), update = updateDoc, printed } = {}) {
-  const fresh = await withPrintTimes(orders, printed);
-  let out = { moved: [], taken: [], skipped: [] };
-  await update(WAREHOUSE_DOC, (current) => {
-    const opened = openWarehouse(current ?? emptyWarehouse(), { now });
-    const waiting = new Set(fresh.filter((o) => awaitingPick(opened, o)).map((o) => `${o.channel}|${o.id}`));
-    const result = applyOrders(opened, fresh, { now, admit: true, by });
-    const taken = [...waiting].filter((key) => result.doc.orders[key] && !result.doc.orders[key].undone);
-    out = { moved: result.moved, taken, skipped: fresh.map((o) => `${o.channel}|${o.id}`).filter((k) => !taken.includes(k)) };
-    return recordPick(result.doc, { at: Math.floor(now / 1000), by, taken });
   }, emptyWarehouse());
   invalidate('warehouse');
   return out;

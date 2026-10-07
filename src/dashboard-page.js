@@ -3546,7 +3546,7 @@ const testButton = (csrf) => `<button class="chip" type="button" id="alerttest" 
   title="Bunyikan alert uji lewat server, seperti pesanan sungguhan">&#128276; Tes bunyi alert</button>`;
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, orders = [], images = {}, range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false }) {
+export function renderPicklist({ picklist, orders = [], images = {}, batch = null, range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
   const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee', shopify: 'Shopify', manual: 'Manual' })
@@ -3604,12 +3604,24 @@ export function renderPicklist({ picklist, orders = [], images = {}, range, erro
       <button type="button" role="tab" class="pk__tab" data-pane="items" aria-selected="true">Per produk <span>${picklist.skuCount}</span></button>
       <button type="button" role="tab" class="pk__tab" data-pane="orders" aria-selected="false">Per transaksi <span>${pickable.length}</span></button>
     </div>`;
-  const confirm = csrf && pickKeys.length ? `<form method="post" class="pick__confirm" data-confirm="Konfirmasi ${picklist.orderCount} pesanan (${picklist.unitCount} unit) sudah dipetik? Stok gudang berkurang sesuai isi produknya.">
-      <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="action" value="wh_pick"><input type="hidden" name="view" value="picklist"><input type="hidden" name="back" value="?view=picklist">
-      ${pickKeys.map((k) => `<input type="hidden" name="order" value="${escape(k)}">`).join('')}
-      <div class="pick__confirm-t"><b>Sudah dipetik semua?</b><span>Konfirmasi mengurangi stok gudang sesuai isi tiap produk. Pesanan yang sudah dikonfirmasi hilang dari daftar ini.</span></div>
-      <button type="submit" class="pick__go">${svg('check2')}<span>Konfirmasi ${picklist.orderCount} pesanan</span></button>
-    </form>` : '';
+  // A batch closes at 15:00 WITA; the one closing next is live and refreshes itself.
+  const WITA_DAY = (d, opts) => new Date(`${d}T00:00:00Z`).toLocaleDateString('id-ID', { ...opts, timeZone: 'UTC' });
+  const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
+  const isLive = !batch || batch.date === batch.current;
+  const batchHref = (d) => `?view=picklist${d === batch?.current ? '' : `&amp;batch=${d}`}`;
+  const batchNav = batch ? `<div class="pb">
+      <div class="pb__bar">
+        <a class="pb__nav" href="${batchHref(shiftDay(batch.date, -1))}" aria-label="Batch sebelumnya">${svg('chevL')}</a>
+        <form method="get" class="pb__pick"><input type="hidden" name="view" value="picklist"><label><span class="visually-hidden">Tanggal batch</span><input type="date" name="batch" value="${batch.date}" max="${batch.current}" data-autosubmit></label></form>
+        <a class="pb__nav${batch.date >= batch.current ? ' is-off' : ''}" href="${batchHref(shiftDay(batch.date, 1))}" aria-label="Batch berikutnya"${batch.date >= batch.current ? ' aria-disabled="true" tabindex="-1"' : ''}>${svg('chevR')}</a>
+        <div class="pb__t"><b>Batch ${escape(WITA_DAY(batch.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</b>
+          <span>${escape(WITA_DAY(shiftDay(batch.date, -1), { day: 'numeric', month: 'short' }))} 15.00 &ndash; ${escape(WITA_DAY(batch.date, { day: 'numeric', month: 'short' }))} 15.00 WITA${isLive ? ' &middot; <em class="pb__live">berjalan</em>' : ''}</span></div>
+        ${isLive ? '' : `<a class="pb__now" href="?view=picklist">Batch berjalan</a>`}
+      </div>
+      ${batch.list.length ? `<nav class="pb__chips" aria-label="Batch lain">${batch.list.slice(0, 10).map(([d, n]) => `<a class="pb__chip${d === batch.date ? ' is-on' : ''}" href="${batchHref(d)}"><span>${escape(d === batch.current ? 'Berjalan' : WITA_DAY(d, { weekday: 'short', day: 'numeric', month: 'short' }))}</span><b class="mono">${n}</b></a>`).join('')}</nav>` : ''}
+      <p class="pb__note">${svg('check2')}<span>Stok gudang berkurang otomatis saat pesanan masuk picklist: langsung bila tidak perlu diproses, atau begitu diatur pengirimannya. Batal atau retur kembali ke rak dengan sendirinya.</span></p>
+    </div>` : '';
+  const confirm = '';
 
   return shell({ user,
     csrf, flash,
@@ -3619,7 +3631,7 @@ export function renderPicklist({ picklist, orders = [], images = {}, range, erro
     shopeeShop,
     generatedAt,
     view: 'picklist',
-    hideRangeControls: true, scope: 'semua yang perlu dipetik sejak 06 Okt 17.16',
+    hideRangeControls: true, scope: batch ? `batch ${new Date(`${batch.date}T00:00:00Z`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' })} · tutup 15.00 WITA` : 'semua yang perlu dipetik',
     readAt, settleFailed,
     style: PICK_STYLE, script: PICK_SCRIPT,
     kpis: `
@@ -3627,18 +3639,17 @@ export function renderPicklist({ picklist, orders = [], images = {}, range, erro
         ${stat('Unit dipetik', String(picklist.unitCount))}
         ${stat('SKU', String(picklist.skuCount))}
         ${stat('Pesanan', String(picklist.orderCount))}
-        <span class="strip__grow"></span>
-        <a class="pk__hist" href="?view=picklist&amp;history=1">${svg('history')}<span>Riwayat picklist</span></a>
+
       </div>`,
-    body: `<div id="pick-live" data-live="${escape(pickKeys.join(','))}">${picklist.items.length === 0
-      ? '<p class="empty">Tidak ada pesanan yang menunggu dipetik.</p>'
+    body: `${batchNav}<div id="pick-live" data-live="${escape(pickKeys.join(','))}"${isLive ? '' : ' data-static'}>${picklist.items.length === 0
+      ? `<p class="empty">${isLive ? 'Belum ada pesanan di batch ini.' : 'Batch ini tidak berisi pesanan.'}</p>`
       : `${confirm}${tabs}<div class="pk__pane" data-pane-body="orders" hidden><ol class="pk__orders">${byOrder}</ol></div><div class="pk__pane scroll" data-pane-body="items"><table class="dense">
           <thead><tr>
             <th class="num">Qty</th><th>Produk</th><th>Kanal</th><th class="num">Pesanan</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
-        <div class="foot"><span>${picklist.orderCount} pesanan &middot; ${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span><span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span></div>`}</div>`,
+        <div class="foot"><span>${picklist.orderCount} pesanan &middot; ${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span>${isLive ? `<span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span>` : ''}</div>`}</div>`,
   });
 }
 
@@ -3654,6 +3665,28 @@ const PICK_STYLE = `
 .pick__live{display:inline-flex; align-items:center; gap:.35rem; color:var(--dim); font-size:.74rem}
 .pick__live .ico{width:13px; height:13px}
 .pick__live.is-new{color:var(--brand)}
+.pb{display:flex; flex-direction:column; gap:.7rem; margin:0 0 1rem}
+.pb__bar{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap}
+.pb__nav{display:inline-grid; place-items:center; width:42px; height:42px; border-radius:12px; border:1px solid var(--line); color:var(--fg); background:var(--panel)}
+.pb__nav:hover{border-color:var(--brand); color:var(--brand)}
+.pb__nav.is-off{opacity:.35; pointer-events:none}
+.pb__nav .ico{width:18px; height:18px}
+.pb__pick{margin:0}
+.pb__pick input{font:inherit; font-size:.9rem; color:var(--fg); background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:.5rem .75rem; min-height:42px; color-scheme:dark light; cursor:pointer}
+.pb__t{display:flex; flex-direction:column; margin-left:.4rem}
+.pb__t b{font-size:1.05rem}
+.pb__t span{font-size:.78rem; color:var(--muted)}
+.pb__live{font-style:normal; color:var(--brand); font-weight:600}
+.pb__now{font-size:.8rem; color:var(--brand); margin-left:auto}
+.pb__chips{display:flex; gap:.4rem; overflow-x:auto; padding-bottom:.2rem}
+.pb__chip{flex:none; display:inline-flex; align-items:center; gap:.5rem; font-size:.8rem; min-height:38px; padding:.3rem .85rem; border-radius:999px; border:1px solid var(--line); color:var(--muted); text-decoration:none; background:var(--panel)}
+.pb__chip b{font-size:.74rem; color:var(--fg); padding:.05rem .45rem; border-radius:999px; background:color-mix(in srgb, var(--fg) 8%, transparent)}
+.pb__chip:hover{color:var(--fg); border-color:var(--brand)}
+.pb__chip.is-on{background:var(--brand); border-color:var(--brand); color:var(--bg); font-weight:600}
+.pb__chip.is-on b{background:color-mix(in srgb, var(--bg) 18%, transparent); color:var(--bg)}
+.pb__note{display:flex; gap:.5rem; align-items:flex-start; margin:0; font-size:.8rem; color:var(--muted)}
+.pb__note .ico{width:16px; height:16px; color:var(--good); flex:none; margin-top:.1rem}
+.pb__nav:focus-visible, .pb__chip:focus-visible, .pb__pick input:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .pk__hist{display:inline-flex; align-items:center; gap:.4rem; align-self:center; font-size:.84rem; min-height:42px; padding:.4rem 1rem; border-radius:999px; border:1px solid var(--line); color:var(--fg); text-decoration:none; background:var(--panel); transition:border-color .15s, color .15s}
 .pk__hist:hover{border-color:var(--brand); color:var(--brand)}
 .pk__hist .ico{width:16px; height:16px}
@@ -3704,6 +3737,9 @@ const PICK_SCRIPT = `
     document.querySelectorAll('.pk__tab').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.pane === name)); });
     document.querySelectorAll('[data-pane-body]').forEach(function (b) { b.hidden = b.dataset.paneBody !== name; });
   }
+  document.querySelectorAll('.pb [data-autosubmit]').forEach(function (input) {
+    input.addEventListener('change', function () { if (input.value) input.form.submit(); });
+  });
   document.addEventListener('click', function (e) {
     var t = e.target.closest('.pk__tab'); if (!t) return;
     show(t.dataset.pane);
@@ -3714,6 +3750,8 @@ const PICK_SCRIPT = `
   // Only the submit that really goes (after the confirmation was answered yes).
   document.addEventListener('submit', function (e) { if (e.target.dataset.confirmed === '1') busy = true; }, true);
   function tick() {
+    var live0 = document.getElementById('pick-live');
+    if (live0 && live0.hasAttribute('data-static')) return;
     if (busy || document.hidden || document.querySelector('dialog[open], .ask.is-open')) return;
     fetch(location.pathname + '?view=picklist', { credentials: 'same-origin', headers: { 'x-requested-with': 'picklist' } })
       .then(function (r) { return r.ok ? r.text() : null; })

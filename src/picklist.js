@@ -1,6 +1,7 @@
 import { CHANNELS , MANUAL_CHANNEL } from './omni.js';
 import { nextAction } from './fulfillment.js';
-import { awaitingPick } from './warehouse.js';
+import { awaitingPick, batchOf } from './warehouse.js';
+import { findProduct } from './master.js';
 
 /**
  * Whether an order belongs on the picklist now: still to be picked from the shelf (after
@@ -70,4 +71,45 @@ export function ordersForSku(orders, sku, { stages = PICKABLE_STAGES } = {}) {
       qty: (o.lines ?? []).filter((l) => l.sku === sku).reduce((n, l) => n + l.qty, 0),
       createdAt: o.createdAt,
     }));
+}
+
+/**
+ * One picklist batch, from the warehouse's own record of what it took: every order that
+ * reached the picklist (and so left the shelf) inside the batch's window, minus those
+ * cancelled or returned since. `live` lends the current order (buyer, lines as titled on
+ * the channel) where it is still at hand; otherwise the lines are named from the master.
+ */
+export function batchOrders(doc, date, live = []) {
+  const byKey = new Map(live.map((o) => [`${o.channel}|${o.id}`, o]));
+  const out = [];
+  for (const [key, row] of Object.entries(doc?.orders ?? {})) {
+    if (!row?.picked || row.undone || batchOf(row.picked) !== date) continue;
+    const at = key.indexOf('|');
+    const channel = key.slice(0, at);
+    const id = key.slice(at + 1);
+    const current = byKey.get(key);
+    const lines = current?.lines?.length ? current.lines : Object.entries(row.lines ?? {}).map(([sku, qty]) => {
+      const p = findProduct(sku);
+      return { sku, qty, name: p?.name ?? sku, variant: p?.variant ?? '' };
+    });
+    out.push({
+      channel, id, stage: 'to_ship', lines,
+      buyer: current?.buyer ?? row.buyer ?? '',
+      createdAt: current?.createdAt ?? row.created ?? row.picked,
+      pickedAt: row.picked,
+      gateways: current?.gateways,
+    });
+  }
+  return out.sort((a, b) => a.pickedAt - b.pickedAt || a.createdAt - b.createdAt);
+}
+
+/** The batches the record holds, newest first, with how many orders each took. */
+export function batchesIn(doc) {
+  const counts = new Map();
+  for (const row of Object.values(doc?.orders ?? {})) {
+    if (!row?.picked || row.undone) continue;
+    const d = batchOf(row.picked);
+    counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[0].localeCompare(a[0]));
 }

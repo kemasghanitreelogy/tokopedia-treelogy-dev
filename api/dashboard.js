@@ -99,7 +99,7 @@ async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
   };
 }
 import { priceBySku } from '../src/shopify/prices.js';
-import { buildPicklist, readyToPick } from '../src/picklist.js';
+import { buildPicklist, batchOrders, batchesIn } from '../src/picklist.js';
 import { readCatalog } from '../src/inventory.js';
 import { LISTING_CHANNELS, refOf, diffPatch, isManaged, UNMANAGED_MESSAGE } from '../src/listing.js';
 import { findProduct, isBaseProduct } from '../src/master.js';
@@ -111,9 +111,8 @@ import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
-import { warehouseAfterOrder, loadWarehouse, recordMove, saveRecipe, withPrintTimes, confirmPicked } from '../src/warehouse-run.js';
-import { awaitingPick } from '../src/warehouse.js';
-import { ordersForPrinting } from '../src/orders-by-id.js';
+import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, saveRecipe } from '../src/warehouse-run.js';
+import { batchOf } from '../src/warehouse.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
 import { renderPickHistory } from '../src/pages/pick-history.js';
 import { resolveRange } from '../src/range.js';
@@ -377,7 +376,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
   product_save: 'products', product_publish: 'products',
-  wh_move: 'stock', wh_recipe: 'stock', wh_pick: 'picklist',
+  wh_move: 'stock', wh_recipe: 'stock',
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
@@ -657,6 +656,8 @@ export async function handleWrite(form, ip, user, csrf) {
     const succeeded = results.filter((r) => r.status === 'ok').length;
     const failed = results.filter((r) => r.status === 'failed');
     console.log(`dashboard: mass_arrange ${succeeded} ok, ${failed.length} failed of ${wanted.length} selected`);
+    // Arranged is on the picklist, and on the picklist is off the shelf - counted now.
+    if (succeeded) void warehouseSweep();
 
     return {
       view: 'process',
@@ -692,6 +693,7 @@ export async function handleWrite(form, ip, user, csrf) {
 
     if (result.status === 'failed') throw new Error(`${id}: ${result.error}`);
     console.log(`dashboard: ${op} ${channel}/${id} ok`);
+    void warehouseSweep();
     const tracking = String(form.get('tracking') ?? '').trim();
     return {
       view: 'process', message: `${id} berhasil diproses`,
@@ -1099,37 +1101,6 @@ export async function handleWrite(form, ip, user, csrf) {
       view: 'stock',
       message: remove ? `${name}: isi dihapus - tidak lagi mengurangi stok gudang` : `${name}: ${reset ? 'kembali ke isi bawaan' : 'isi disimpan'} - ${fmtRecipe(recipe)}`,
       audit: { menu: 'stock', verb: 'edit', target: product.sku, summary: `Isi produk ${name}: ${remove ? 'dihapus' : `${fmtRecipe(recipe)}${reset ? ' (bawaan)' : ''}`}`, changes: [{ field: 'isi', from: before ? fmtRecipe(before) : 'bawaan', to: fmtRecipe(recipe) }] },
-    };
-  }
-
-  /**
-   * The picklist confirmed as picked: the only thing that takes an order off the shelf.
-   * The page sends the orders it was showing, so what is confirmed is what was seen; each
-   * is read fresh, and one confirmed twice (two pickers, a double press) counts once.
-   */
-  if (action === 'wh_pick') {
-    const PICK_SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify|manual):([A-Za-z0-9_#-]{1,64})$/;
-    const keys = [...new Set(form.getAll('order').map(String).filter((value) => PICK_SELECTION.test(value)))];
-    if (keys.length === 0) throw new Error('tidak ada pesanan di picklist');
-    if (keys.length > 500) throw new Error('terlalu banyak sekaligus');
-    const rows = keys.map((key) => { const at = key.indexOf(':'); return { channel: key.slice(0, at), id: key.slice(at + 1) }; });
-    const { orders } = await ordersForPrinting(rows);
-    if (orders.length === 0) throw new Error('pesanan picklist tidak terbaca, coba lagi');
-    const by = user.name || user.email;
-    const { moved, taken, skipped } = await confirmPicked(orders, { by });
-    const units = moved.reduce((n, m) => n - Math.min(0, m.delta), 0);
-    const unread = keys.length - orders.length;
-    const extra = [skipped.length ? `${skipped.length} sudah dikonfirmasi atau batal` : '', unread ? `${unread} tidak terbaca` : ''].filter(Boolean).join(', ');
-    return {
-      view: 'picklist',
-      message: taken.length
-        ? `${taken.length} pesanan dikonfirmasi - stok gudang berkurang ${units} unit${extra ? ` (${extra})` : ''}`
-        : `tidak ada yang dikurangi${extra ? ` - ${extra}` : ''}`,
-      audit: taken.length ? {
-        menu: 'stock', verb: 'edit', target: `${taken.length} pesanan`,
-        summary: `Konfirmasi picklist ${taken.length} pesanan: stok gudang -${units} unit`,
-        changes: taken.map((key) => ({ field: key.replace('|', ' '), to: 'dipetik' })),
-      } : undefined,
     };
   }
 
@@ -2461,29 +2432,24 @@ export default async function handler(req, res) {
     }
 
     if (view === 'picklist') {
-      // The same settling as the process view, sharing its cooldown: these three pages
-      // are drawn from one set of rows, so whichever is opened first pays for all of
-      // them. A picker sent after a parcel that was cancelled an hour ago has walked the
-      // shelves for nothing.
+      // The same settling as the process view, sharing its cooldown: a picker sent after
+      // a parcel cancelled an hour ago has walked the shelves for nothing.
       const arrangedNow = await arrangedOrders().catch(() => ({}));
       const picking = await settleWorklist(data, arrangedNow);
       data = picking.data;
-      // Started over at the migration, like the warehouse: an order that left before the
-      // sheet's last update (printed then, or created then and never printed here) was
-      // picked in the sheet's era and is not asked for again.
-      // What is left to pick: from after the migration and not yet confirmed. Confirming
-      // is what takes an order off the shelf, and a confirmed order leaves this list.
-      const shelf = await cached('warehouse', 15_000, () => loadWarehouse(), SWR);
-      // An order that still needs "Atur pengiriman" on the Proses page is not picked yet:
-      // it joins the list the moment it is arranged. One that needs no arranging joins
-      // straight away. The same rule the Proses page uses, so the two never disagree.
-      const waiting = (await withPrintTimes(data.orders))
-        .filter((order) => readyToPick(order, { shelf, arranged: arrangedNow }));
-      data = { ...data, orders: waiting };
-      const picklist = buildPicklist(data.orders);
-      console.log(`dashboard/picklist: ${picklist.unitCount} units across ${picklist.skuCount} skus (${took()})`);
+      // Whatever has reached the picklist leaves the shelf now - counted here as well as
+      // on every push and sweep, so the list and the stock can never disagree. Idempotent.
+      await syncWarehouse(data.orders, { arranged: arrangedNow }).catch((error) => console.warn(`dashboard/picklist: gudang tidak tercatat - ${error.message}`));
+      const shelf = await loadWarehouse();
+      const current = batchOf(Math.floor(Date.now() / 1000));
+      const asked = String(url.searchParams.get('batch') ?? '');
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(asked) ? asked : current;
+      const orders = batchOrders(shelf, date, data.orders);
+      const picklist = buildPicklist(orders);
+      console.log(`dashboard/picklist: batch ${date} ${picklist.orderCount} pesanan, ${picklist.unitCount} unit (${took()})`);
       send(200, renderPicklist({ user,
-        ...data, range, picklist, csrf, flash, images: await imagesByKey(),
+        ...data, orders, range, picklist, csrf, flash, images: await imagesByKey(),
+        batch: { date, current, list: batchesIn(shelf) },
         readAt: picking.readAt, settleFailed: picking.failed,
       }));
       return;

@@ -4,7 +4,7 @@ import { openWarehouse, applyOrders as readOrders, manualMove, verifyWarehouse, 
 // Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
 // what happens once it is taken.
 const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
-import { confirmPicked, recordMove } from '../src/warehouse-run.js';
+import { syncWarehouse, recordMove } from '../src/warehouse-run.js';
 import { applyOrders as followOrders } from '../src/stock-follow.js';
 
 /**
@@ -162,7 +162,7 @@ test('200 writers at once - orders, receipts, double presses - land exactly once
     if (i % 4 === 0) jobs.push(recordMove({ code: 'M-094', kind: 'in', qty: 2, by: 'qa', token }, { now, update: store.update.bind(store) })); // the double press
   }
   const orders = Array.from({ length: 50 }, (_, i) => ({ id: `RC${i}`, channel: 'tiktok', stage: 'shipping', createdAt: OPENING_AT + 10, lines: [{ sku: 'MRS-001', qty: 1 }] }));
-  for (const o of orders) { jobs.push(confirmPicked([o], { now, update: store.update.bind(store), printed: {} })); jobs.push(confirmPicked([o], { now, update: store.update.bind(store), printed: {} })); }
+  for (const o of orders) { jobs.push(syncWarehouse([o], { now, update: store.update.bind(store), printed: {}, arranged: {} })); jobs.push(syncWarehouse([o], { now, update: store.update.bind(store), printed: {}, arranged: {} })); }
   await Promise.all(jobs);
   assert.ok(store.conflicts > 0, 'the store really did make writers collide');
   assert.equal(store.doc.items['M-094'].qty, 198 + expectedIn - 50, 'every receipt once, every order once');

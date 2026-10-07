@@ -41,6 +41,23 @@ export function leftAtOf(order) {
 /** Whether an order belongs after the migration (not counted by the sheet). */
 export const afterOpening = (order) => leftAtOf(order) >= OPENING_AT;
 
+/** What the picklist shows of an order long after the order list has forgotten it. */
+const about = (order) => ({ buyer: String(order.buyer ?? '').slice(0, 80), created: Number(order.createdAt) || null });
+
+/**
+ * Picklist batches close at 15:00 WITA (UTC+8), the courier cut-off: an order that
+ * reaches the picklist after 15:00 belongs to the next day's batch. A batch is named by
+ * the WITA date it closes on.
+ */
+export const BATCH_CLOSE_HOUR_WITA = 15;
+const WITA = 8 * 3600;
+export const batchOf = (at) => new Date((Number(at) - 1 + WITA + (24 - BATCH_CLOSE_HOUR_WITA) * 3600) * 1000).toISOString().slice(0, 10);
+/** The batch's window, epoch seconds: (previous day 15:00 WITA, this day 15:00 WITA]. */
+export function batchWindow(date) {
+  const to = Math.floor(Date.parse(`${date}T${String(BATCH_CLOSE_HOUR_WITA).padStart(2, '0')}:00:00+08:00`) / 1000);
+  return { from: to - 86400, to };
+}
+
 /** Shelf groups, in the order the page shows them. */
 export const GROUPS = {
   goods: 'Barang jadi',
@@ -257,6 +274,9 @@ const move = (doc, entry) => {
  * @returns {{doc, moved: Array}}
  */
 export function applyOrders(doc, orders, { now = Date.now(), admit = false, by = '' } = {}) {
+  // `admit` is true, false, or a test of each order: the run decides which new orders
+  // have reached the picklist and so leave the shelf now.
+  const admits = typeof admit === 'function' ? admit : () => Boolean(admit);
   const next = { ...doc, items: { ...doc.items }, moves: [...doc.moves], orders: { ...(doc.orders ?? {}) }, folded: { ...(doc.folded ?? {}) } };
   const at = Math.floor(now / 1000);
   const moved = [];
@@ -286,8 +306,8 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
     if (!seen) {
       // Only a picklist confirmation (`admit`) takes a new order off the shelf, and only
       // one from after the migration; anything else is just read.
-      if (!admit || undone || !known || !afterOpening(order)) continue;
-      next.orders[key] = { at, rev: 1, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}) };
+      if (undone || !known || !afterOpening(order) || !admits(order)) continue;
+      next.orders[key] = { at, rev: 1, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}), ...about(order) };
       apply(key, 1, read.items, -1, 'order', `Picklist ${label}`);
       continue;
     }
@@ -297,10 +317,10 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
       next.orders[key] = { ...seen, rev, undone: at };
       continue;
     }
-    if (admit && !undone && seen.undone && known) {
+    if (!undone && seen.undone && known && admits(order)) {
       // Cancelled, put back, and confirmed on the picklist again: it leaves again.
       apply(key, rev, read.items, -1, 'order', `Picklist ulang ${label}`);
-      next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}) };
+      next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}), ...about(order) };
       continue;
     }
     if (!undone && !seen.undone && known && seen.lines && !sameItems(seen.lines, lines)) {

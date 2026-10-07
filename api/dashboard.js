@@ -110,7 +110,7 @@ import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
-import { warehouseAfterOrder, loadWarehouse, recordMove } from '../src/warehouse-run.js';
+import { warehouseAfterOrder, loadWarehouse, recordMove, saveRecipe } from '../src/warehouse-run.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
@@ -335,7 +335,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
   product_save: 'products', product_publish: 'products',
-  wh_move: 'stock',
+  wh_move: 'stock', wh_recipe: 'stock',
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
@@ -1034,6 +1034,30 @@ export async function handleWrite(form, ip, user, csrf) {
    * "changed" is decided here, against that, and nothing untouched is rewritten.
    */
   /** A person's movement on the real shelf. Touches warehouse/stock.json and nothing else. */
+  /**
+   * What one product takes off the shelf, set from the page. Only the warehouse document
+   * changes; orders already counted keep what they took.
+   */
+  if (action === 'wh_recipe') {
+    const sku = String(form.get('sku') ?? '').trim();
+    const product = findProduct(sku);
+    if (!product) throw new Error(`produk ${sku || '(kosong)'} tidak dikenal`);
+    const reset = form.get('reset') === '1';
+    const codes = form.getAll('code').map((c) => String(c).trim());
+    const qtys = form.getAll('qty').map((q) => Number(q));
+    const parts = reset ? null : codes.map((code, i) => ({ code, qty: qtys[i] })).filter((p) => p.code);
+    const fmtRecipe = (r) => (r ? Object.entries(r).map(([c, n]) => `${n > 1 ? `${n}× ` : ''}${c}`).join(' + ') : 'tanpa isi');
+    const before = (await loadWarehouse()).recipes?.[product.sku] ?? null;
+    const { recipe, changed } = await saveRecipe({ sku: product.sku, parts, by: user.name || user.email });
+    const name = `${product.name}${product.variant ? ` ${product.variant}` : ''}`;
+    if (!changed) return { view: 'stock', message: `${name}: isinya sudah begitu, tidak ada yang berubah` };
+    return {
+      view: 'stock',
+      message: `${name}: ${reset ? 'kembali ke isi bawaan' : 'isi disimpan'} - ${fmtRecipe(recipe)}`,
+      audit: { menu: 'stock', verb: 'edit', target: product.sku, summary: `Isi produk ${name}: ${fmtRecipe(recipe)}${reset ? ' (bawaan)' : ''}`, changes: [{ field: 'isi', from: before ? fmtRecipe(before) : 'bawaan', to: fmtRecipe(recipe) }] },
+    };
+  }
+
   if (action === 'wh_move') {
     const code = String(form.get('code') ?? '').trim();
     const kind = String(form.get('kind') ?? '');

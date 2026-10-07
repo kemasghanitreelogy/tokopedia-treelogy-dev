@@ -91,14 +91,17 @@ export const RECIPES = {
  * One unit of a product as warehouse items, resolving master bundles to their parts.
  * Null when the product has no recipe and is not a bundle of products that do.
  */
-export function recipeOf(sku, seen = new Set()) {
+export function recipeOf(sku, edited = {}, seen = new Set()) {
   const product = findProduct(sku);
   if (!product || seen.has(product.sku)) return null;
+  // A recipe set on the page wins over the one written here, and a bundle made of a
+  // product whose recipe was set there follows it.
+  if (edited?.[product.sku]) return { ...edited[product.sku] };
   if (RECIPES[product.sku]) return { ...RECIPES[product.sku] };
   if (!isBundle(product)) return null;
   const out = {};
   for (const part of product.components) {
-    const inner = recipeOf(part.sku, new Set([...seen, product.sku]));
+    const inner = recipeOf(part.sku, edited, new Set([...seen, product.sku]));
     if (!inner) return null;
     for (const [code, qty] of Object.entries(inner)) out[code] = (out[code] ?? 0) + qty * part.qty;
   }
@@ -106,14 +109,28 @@ export function recipeOf(sku, seen = new Set()) {
 }
 
 /** What an order takes off the shelf, by warehouse item; and the lines it could not place. */
-export function itemsForOrder(order) {
-  const items = {};
-  const unknown = [];
+export function itemsForOrder(order, edited = {}) {
+  return itemsForLines(linesOf(order), edited);
+}
+
+/** An order's lines as {sku: qty}, the same whatever order the platform lists them in. */
+export function linesOf(order) {
+  const lines = {};
   for (const line of order?.lines ?? []) {
     const qty = numberOrNull(line.qty);
     if (!qty || qty <= 0) continue;
-    const recipe = recipeOf(String(line.sku ?? '').trim());
-    if (!recipe) { unknown.push(String(line.sku ?? '?')); continue; }
+    const sku = String(line.sku ?? '').trim() || '?';
+    lines[sku] = (lines[sku] ?? 0) + qty;
+  }
+  return lines;
+}
+
+function itemsForLines(lines, edited = {}) {
+  const items = {};
+  const unknown = [];
+  for (const [sku, qty] of Object.entries(lines ?? {})) {
+    const recipe = recipeOf(sku, edited);
+    if (!recipe) { unknown.push(sku); continue; }
     for (const [code, n] of Object.entries(recipe)) items[code] = (items[code] ?? 0) + n * qty;
   }
   return { items, unknown };
@@ -125,7 +142,7 @@ const UNDONE = new Set(['cancelled', 'returned']);
 export const REMEMBER_DAYS = 45;
 const MAX_MOVES = 5000;
 
-export const emptyWarehouse = () => ({ version: 1, items: {}, moves: [], orders: {}, folded: {}, tokens: {}, opened_at: null });
+export const emptyWarehouse = () => ({ version: 1, items: {}, moves: [], orders: {}, folded: {}, tokens: {}, recipes: {}, opened_at: null });
 
 /*
  * The invariant every write keeps, and verifyWarehouse proves:
@@ -166,7 +183,7 @@ const sameItems = (a = {}, b = {}) => {
 
 /** The sheet's figures as the starting point - only for items not held yet. */
 export function openWarehouse(doc, { now = Date.now(), by = 'migrasi sheet' } = {}) {
-  const next = { ...emptyWarehouse(), ...(doc ?? {}), items: { ...(doc?.items ?? {}) }, moves: [...(doc?.moves ?? [])], folded: { ...(doc?.folded ?? {}) }, tokens: { ...(doc?.tokens ?? {}) } };
+  const next = { ...emptyWarehouse(), ...(doc ?? {}), items: { ...(doc?.items ?? {}) }, moves: [...(doc?.moves ?? [])], folded: { ...(doc?.folded ?? {}) }, tokens: { ...(doc?.tokens ?? {}) }, recipes: { ...(doc?.recipes ?? {}) } };
   for (const [code, name, uom, group, qty] of OPENING_ITEMS) {
     if (next.items[code]) continue;
     next.items[code] = { name, uom, group, qty, updated_at: OPENING_AT };
@@ -213,14 +230,15 @@ export function applyOrders(doc, orders, { now = Date.now() } = {}) {
     const label = `${order.channel === 'manual' ? '' : `${order.channel} `}${order.id}`;
     const shipped = SHIPPED.has(order.stage);
     const undone = UNDONE.has(order.stage);
-    const read = itemsForOrder(order);
+    const lines = linesOf(order);
+    const read = itemsForLines(lines, next.recipes);
     // A read that came back without any lines says nothing about the order's contents -
     // a platform hiccup is not an instruction to put everything back.
     const known = Object.keys(read.items).length > 0 || read.unknown.length > 0;
 
     if (!seen) {
       if (!shipped || !known || !(Number(order.createdAt) >= OPENING_AT)) continue;
-      next.orders[key] = { at, rev: 1, items: read.items, unknown: read.unknown };
+      next.orders[key] = { at, rev: 1, lines, items: read.items, unknown: read.unknown };
       apply(key, 1, read.items, -1, 'order', `Pesanan ${label}`);
       continue;
     }
@@ -233,20 +251,30 @@ export function applyOrders(doc, orders, { now = Date.now() } = {}) {
     if (shipped && seen.undone && known) {
       // Cancelled and then sent after all: it leaves the shelf again.
       apply(key, rev, read.items, -1, 'order', `Dikirim ulang ${label}`);
-      next.orders[key] = { at, rev, items: read.items, unknown: read.unknown };
+      next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown };
       continue;
     }
-    if (shipped && !seen.undone && known && !sameItems(seen.items, read.items)) {
-      // The order changed after it was counted - a typed-in sale edited, a line cancelled
-      // on the platform. Only the difference moves, so the shelf ends where it would have
-      // been had the order always looked like this.
+    if (shipped && !seen.undone && known && seen.lines && !sameItems(seen.lines, lines)) {
+      // The order's lines changed after it was counted - a typed-in sale edited, a line
+      // cancelled on the platform. Only the change in lines moves, priced by today's
+      // recipes on both sides, so a recipe edited since never re-counts what already left;
+      // the order keeps a record of exactly what it took, which is what a cancel returns.
+      const before = itemsForLines(seen.lines, next.recipes).items;
       const diff = {};
-      for (const code of new Set([...Object.keys(seen.items ?? {}), ...Object.keys(read.items)])) {
-        const d = (read.items[code] ?? 0) - (seen.items?.[code] ?? 0);
+      for (const code of new Set([...Object.keys(before), ...Object.keys(read.items)])) {
+        const d = (read.items[code] ?? 0) - (before[code] ?? 0);
         if (d) diff[code] = d;
       }
       apply(key, rev, diff, -1, 'order', `Pesanan ${label} diubah`);
-      next.orders[key] = { ...seen, at, rev, items: read.items, unknown: read.unknown };
+      const took = { ...(seen.items ?? {}) };
+      for (const [code, d] of Object.entries(diff)) {
+        took[code] = (took[code] ?? 0) + d;
+        if (!took[code]) delete took[code];
+      }
+      next.orders[key] = { ...seen, at, rev, lines, items: took, unknown: read.unknown };
+    } else if (!seen.lines && known) {
+      // Counted before lines were kept: remember them from now on, move nothing.
+      next.orders[key] = { ...seen, lines };
     }
   }
   const cutoff = at - REMEMBER_DAYS * 86400;
@@ -287,8 +315,8 @@ export function manualMove(doc, { code, kind, qty, note = '', by, token = '' }, 
  * How many of a product the shelf can make now, and which item decides it.
  * This is the real figure - unlike the channels', it is a count of things that exist.
  */
-export function makeable(sku, items) {
-  const recipe = recipeOf(sku);
+export function makeable(sku, items, edited = {}) {
+  const recipe = recipeOf(sku, edited);
   if (!recipe) return null;
   let can = Infinity;
   let limit = null;
@@ -299,4 +327,47 @@ export function makeable(sku, items) {
     return { code, per, have, n };
   });
   return { can: can === Infinity ? 0 : can, limit, parts };
+}
+
+/** Most parts one product may list, and most of one part per product. */
+export const RECIPE_LIMITS = { parts: 12, per: 99 };
+
+/**
+ * Set what one unit of a product takes off the shelf from now on, or put back the
+ * built-in recipe (`parts` null). Pure. Orders already counted keep what they took: their
+ * cancel returns exactly that, and only a change to their lines moves anything again.
+ *
+ * @param {{sku: string, parts: Array<{code: string, qty: number}>|null, by?: string}} input
+ * @returns {{doc, recipe: object|null, changed: boolean}}
+ */
+export function setRecipe(doc, { sku, parts, by = '' }, { now = Date.now() } = {}) {
+  const product = findProduct(String(sku ?? '').trim());
+  if (!product) throw new Error(`produk ${sku} tidak dikenal`);
+  const next = { ...doc, recipes: { ...(doc.recipes ?? {}) } };
+  const before = recipeOf(product.sku, doc.recipes ?? {});
+  if (parts == null) {
+    delete next.recipes[product.sku];
+  } else {
+    if (!Array.isArray(parts) || !parts.length) throw new Error('isi produk minimal satu barang');
+    if (parts.length > RECIPE_LIMITS.parts) throw new Error(`paling banyak ${RECIPE_LIMITS.parts} barang`);
+    const recipe = {};
+    for (const part of parts) {
+      const code = String(part?.code ?? '').trim();
+      const qty = Number(part?.qty);
+      if (!doc.items?.[code]) throw new Error(`barang ${code || '(kosong)'} tidak ada di gudang`);
+      if (!Number.isInteger(qty) || qty < 1 || qty > RECIPE_LIMITS.per) throw new Error(`jumlah ${code} harus 1-${RECIPE_LIMITS.per}`);
+      recipe[code] = (recipe[code] ?? 0) + qty;
+      if (recipe[code] > RECIPE_LIMITS.per) throw new Error(`jumlah ${code} harus 1-${RECIPE_LIMITS.per}`);
+    }
+    next.recipes[product.sku] = recipe;
+    // Saving exactly the built-in recipe is the same as not having edited it.
+    const builtIn = recipeOf(product.sku, { ...next.recipes, [product.sku]: undefined });
+    if (builtIn && sameItems(builtIn, recipe)) delete next.recipes[product.sku];
+  }
+  const after = recipeOf(product.sku, next.recipes);
+  const changed = !sameItems(before ?? {}, after ?? {}) || Boolean(before) !== Boolean(after);
+  if (changed) {
+    next.recipeLog = [...(doc.recipeLog ?? []), { at: Math.floor(now / 1000), sku: product.sku, from: before, to: after, by }].slice(-200);
+  }
+  return { doc: changed ? next : doc, recipe: after, changed };
 }

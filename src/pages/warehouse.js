@@ -83,15 +83,57 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
       <ul class="wh__list">${list.map(([code, it]) => row(code, it, top)).join('')}</ul></section>`;
   }).join('');
 
-  // What each product is made of on the shelf - only the ones made of more than one thing,
-  // since "Bamboo Scoop is a Bamboo Scoop" tells nobody anything.
-  const sets = PRODUCTS.map((p) => ({ p, recipe: recipeOf(p.sku) }))
-    .filter(({ recipe }) => recipe && (Object.keys(recipe).length > 1 || Object.values(recipe).some((n) => n > 1)))
+  // What each product is made of on the shelf, and so what leaves it when one is sent.
+  // Listed: every product made of more than one thing, and any product whose recipe was
+  // set here. Every product can be given one with "Atur isi produk".
+  const edited = warehouse.recipes ?? {};
+  const productLabel = (p) => `${p.name}${p.variant ? ` ${p.variant}` : ''}`;
+  const sets = PRODUCTS.map((p) => ({ p, recipe: recipeOf(p.sku, edited) }))
+    .filter(({ p, recipe }) => edited[p.sku] || (recipe && (Object.keys(recipe).length > 1 || Object.values(recipe).some((n) => n > 1))))
     .sort((a, b) => familyOf(a.p).localeCompare(familyOf(b.p)) || a.p.name.localeCompare(b.p.name));
-  const can = `<section class="wh__grp wh__grp--can"><h2 class="wh__h">Isi produk<span>${sets.length}</span></h2>
-    <ul class="wh__sets">${sets.map(({ p, recipe }) => `<li class="wh__set">
-      <span class="wh__setname">${escape(p.name)}${p.variant ? `<small>${escape(p.variant)}</small>` : ''}</span>
-      <span class="wh__parts">${Object.entries(recipe).map(([code, per]) => `<span class="wh__part ${TONE[items[code]?.group ?? 'pack'] ?? ''}" title="${escape(code)}"><i class="wh__dot" aria-hidden="true"></i>${per > 1 ? `<b class="mono">${per}×</b> ` : ''}${escape(items[code]?.name ?? code)}</span>`).join('')}</span>
+  const itemOptions = (selected) => `<option value="">Pilih barang…</option>${Object.entries(GROUPS).map(([group, label]) => {
+    const list = Object.entries(items).filter(([, it]) => (it.group ?? 'pack') === group).sort(([a], [b]) => a.localeCompare(b));
+    return list.length ? `<optgroup label="${escape(label)}">${list.map(([code, it]) => `<option value="${escape(code)}"${code === selected ? ' selected' : ''}>${escape(it.name)} · ${escape(code)}</option>`).join('')}</optgroup>` : '';
+  }).join('')}`;
+  const partRow = (code = '', qty = 1) => `<li class="rc__row">
+      <select name="code" class="rc__item" aria-label="Barang" required>${itemOptions(code)}</select>
+      <span class="rc__step" role="group" aria-label="Jumlah per produk">
+        <button type="button" class="rc__sb" data-step="-1" aria-label="Kurangi">−</button>
+        <input name="qty" type="number" min="1" max="99" step="1" inputmode="numeric" value="${qty}" class="mono" aria-label="Jumlah" required>
+        <button type="button" class="rc__sb" data-step="1" aria-label="Tambah">+</button>
+      </span>
+      <button type="button" class="rc__del" data-del aria-label="Hapus barang ini">${svg('trash')}</button>
+    </li>`;
+  const editor = (sku, recipe, isEdited, label) => `<form class="rc" method="post" hidden data-recipe-form data-confirm="Simpan isi ${escape(label)}? Berlaku untuk pesanan berikutnya.">
+      ${hidden}<input type="hidden" name="action" value="wh_recipe"><input type="hidden" name="sku" value="${escape(sku)}">
+      <p class="rc__hint">Satu produk ini mengambil dari rak:</p>
+      <ul class="rc__rows" data-rows>${Object.entries(recipe ?? {}).map(([code, n]) => partRow(code, n)).join('') || partRow()}</ul>
+      <button type="button" class="rc__add" data-add>${svg('plus')}<span>Tambah barang</span></button>
+      <p class="rc__note">Berlaku untuk pesanan yang dikirim setelah disimpan. Pesanan yang sudah keluar tidak dihitung ulang.</p>
+      <div class="rc__foot">
+        ${isEdited ? `<button type="submit" name="reset" value="1" class="rc__ghost" formnovalidate data-confirm-text="Kembalikan isi ${escape(label)} ke bawaan?">Kembalikan ke bawaan</button>` : ''}
+        <span class="rc__grow"></span>
+        <button type="button" class="rc__ghost" data-cancel>Batal</button>
+        <button type="submit" class="pf__primary">Simpan isi</button>
+      </div>
+    </form>`;
+  const chips = (recipe) => Object.entries(recipe ?? {}).map(([code, per]) => `<span class="wh__part ${TONE[items[code]?.group ?? 'pack'] ?? ''}" title="${escape(code)}"><i class="wh__dot" aria-hidden="true"></i>${per > 1 ? `<b class="mono">${per}×</b> ` : ''}${escape(items[code]?.name ?? code)}</span>`).join('');
+  const unlisted = PRODUCTS.filter((p) => !sets.some((x) => x.p.sku === p.sku))
+    .sort((a, b) => productLabel(a).localeCompare(productLabel(b)));
+  const can = `<section class="wh__grp wh__grp--can" id="isi"><div class="wh__hrow"><h2 class="wh__h">Isi produk<span>${sets.length}</span></h2>
+      <button type="button" class="wh__btn wh__btn--add" data-open-new aria-expanded="false">${svg('plus')}<span>Atur isi produk</span></button></div>
+    <p class="wh__sub">Setiap produk yang dikirim mengurangi semua barang di dalamnya.</p>
+    <div class="rc__new" hidden data-new>
+      <label class="wh__in rc__pick"><span>Produk</span><select data-pick><option value="">Pilih produk…</option>${unlisted.map((p) => `<option value="${escape(p.sku)}">${escape(productLabel(p))}</option>`).join('')}</select></label>
+      ${unlisted.map((p) => `<div data-new-for="${escape(p.sku)}" hidden>${editor(p.sku, recipeOf(p.sku, edited), false, productLabel(p))}</div>`).join('')}
+    </div>
+    <ul class="wh__sets">${sets.map(({ p, recipe }) => `<li class="wh__set" data-set>
+      <div class="wh__sethead">
+        <span class="wh__setname">${escape(p.name)}${p.variant ? `<small>${escape(p.variant)}</small>` : ''}${edited[p.sku] ? '<em class="wh__edited">Diubah</em>' : ''}</span>
+        <button type="button" class="wh__edit" data-edit aria-expanded="false" aria-label="Ubah isi ${escape(productLabel(p))}">${svg('pencil')}<span>Ubah</span></button>
+      </div>
+      <span class="wh__parts" data-chips>${chips(recipe) || '<span class="dim">Belum ada isi</span>'}</span>
+      ${editor(p.sku, recipe, Boolean(edited[p.sku]), productLabel(p))}
     </li>`).join('')}</ul></section>`;
 
   const shown = moves.filter((m) => (!item || m.code === item) && (!kind || m.kind === kind)).slice(0, 150);
@@ -165,6 +207,45 @@ const STYLE = `
 .wh__in input{font:inherit; font-size:.9rem; color:var(--fg); background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; width:8rem}
 .wh__in--note{flex:1; min-width:12rem} .wh__in--note input{width:100%}
 .wh__in input:focus-visible{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent)}
+.wh__hrow{display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.75rem}
+.wh__hrow .wh__h{margin:0}
+.wh__btn--add{display:inline-flex; align-items:center; gap:.35rem}
+.wh__btn .ico, .wh__edit .ico{width:15px; height:15px}
+.wh__sethead{display:flex; align-items:center; justify-content:space-between; gap:.5rem}
+.wh__edit{display:inline-flex; align-items:center; gap:.3rem; font:inherit; font-size:.76rem; min-height:36px; padding:.25rem .65rem; border-radius:999px; border:1px solid transparent; background:none; color:var(--muted); cursor:pointer; transition:color .15s, border-color .15s}
+.wh__edit:hover, .wh__edit[aria-expanded="true"]{color:var(--brand); border-color:var(--line)}
+.wh__edit:focus-visible, .rc button:focus-visible, .rc select:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.wh__edited{font-style:normal; font-size:.66rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); padding:.1rem .45rem; border-radius:6px; background:color-mix(in srgb, var(--accent) 14%, transparent)}
+.wh__set.is-editing .wh__parts{display:none}
+.rc{display:flex; flex-direction:column; gap:.6rem; padding:.85rem; border-radius:var(--radius-s); background:var(--panel-2); border:1px solid color-mix(in srgb, var(--brand) 40%, var(--line))}
+.rc[hidden]{display:none}
+.rc__hint, .rc__note{margin:0; font-size:.76rem; color:var(--muted)}
+.rc__note{color:var(--dim)}
+.rc__rows{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.45rem}
+.rc__row{display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:.45rem; align-items:center}
+.rc__item{font:inherit; font-size:.84rem; color:var(--fg); background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:42px; min-width:0; cursor:pointer}
+.rc__step{display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:9px; background:var(--panel); overflow:hidden}
+.rc__step input{width:3rem; text-align:center; font-size:.9rem; color:var(--fg); background:none; border:0; min-height:40px; -moz-appearance:textfield}
+.rc__step input::-webkit-inner-spin-button, .rc__step input::-webkit-outer-spin-button{-webkit-appearance:none; margin:0}
+.rc__sb{width:40px; min-height:40px; border:0; background:none; color:var(--muted); font-size:1.05rem; cursor:pointer}
+.rc__sb:hover{color:var(--fg); background:color-mix(in srgb, var(--fg) 6%, transparent)}
+.rc__del{display:inline-grid; place-items:center; width:42px; height:42px; border-radius:9px; border:1px solid transparent; background:none; color:var(--dim); cursor:pointer}
+.rc__del:hover{color:var(--bad); border-color:color-mix(in srgb, var(--bad) 40%, var(--line))}
+.rc__del .ico{width:16px; height:16px}
+.rc__add{align-self:flex-start; display:inline-flex; align-items:center; gap:.35rem; font:inherit; font-size:.8rem; min-height:38px; padding:.3rem .8rem; border-radius:999px; border:1px dashed var(--line); background:none; color:var(--brand); cursor:pointer}
+.rc__add:hover{border-color:var(--brand)}
+.rc__add .ico{width:15px; height:15px}
+.rc__foot{display:flex; align-items:center; gap:.5rem; flex-wrap:wrap}
+.rc__grow{flex:1}
+.rc__ghost{font:inherit; font-size:.8rem; min-height:38px; padding:.3rem .85rem; border-radius:999px; border:1px solid var(--line); background:none; color:var(--muted); cursor:pointer}
+.rc__ghost:hover{color:var(--fg)}
+.rc__new{display:flex; flex-direction:column; gap:.6rem; margin-bottom:.9rem; padding-bottom:.9rem; border-bottom:1px solid var(--line)}
+.rc__new[hidden]{display:none}
+.rc__new [data-new-for][hidden]{display:none}
+.rc__pick select{font:inherit; font-size:.86rem; color:var(--fg); background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:42px; width:100%}
+.wh .pf__primary{font:inherit; font-size:.82rem; font-weight:600; min-height:40px; padding:.35rem 1.1rem; border-radius:999px; border:1px solid var(--brand); background:var(--brand); color:var(--bg, #0f1512); cursor:pointer; transition:filter .15s}
+.wh .pf__primary:hover{filter:brightness(1.08)}
+.wh .pf__primary:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .wh__sets{list-style:none; margin:0; padding:0; display:flex; flex-direction:column}
 .wh__set{display:flex; flex-direction:column; gap:.45rem; padding:.7rem .2rem; border-top:1px solid var(--line)}
 .wh__set:first-child{border-top:0; padding-top:.2rem}
@@ -227,6 +308,52 @@ const SCRIPT = `
       label.textContent = k === 'count' ? 'Jumlah di rak sekarang' : 'Jumlah';
     });
   });
+  // Isi produk: one editor open at a time; the chips hide while it is open.
+  function closeAll() {
+    document.querySelectorAll('[data-recipe-form]').forEach(function (f) { f.hidden = true; });
+    document.querySelectorAll('[data-set]').forEach(function (s) { s.classList.remove('is-editing'); });
+    document.querySelectorAll('[data-edit],[data-open-new]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+    var nw = document.querySelector('[data-new]'); if (nw) nw.hidden = true;
+  }
+  document.querySelectorAll('[data-edit]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var set = btn.closest('[data-set]'), form = set.querySelector('[data-recipe-form]'), open = form.hidden;
+      closeAll();
+      if (open) { form.hidden = false; set.classList.add('is-editing'); btn.setAttribute('aria-expanded', 'true'); var s = form.querySelector('select'); if (s) s.focus(); }
+    });
+  });
+  var openNew = document.querySelector('[data-open-new]'), nw = document.querySelector('[data-new]'), pick = document.querySelector('[data-pick]');
+  if (openNew && nw) openNew.addEventListener('click', function () {
+    var open = nw.hidden; closeAll();
+    if (open) { nw.hidden = false; openNew.setAttribute('aria-expanded', 'true'); pick.focus(); }
+  });
+  if (pick) pick.addEventListener('change', function () {
+    nw.querySelectorAll('[data-new-for]').forEach(function (d) {
+      var on = d.getAttribute('data-new-for') === pick.value;
+      d.hidden = !on; d.querySelector('[data-recipe-form]').hidden = !on;
+    });
+  });
+  document.querySelectorAll('[data-recipe-form]').forEach(function (form) {
+    var rows = form.querySelector('[data-rows]');
+    var blank = rows.querySelector('.rc__row').cloneNode(true);
+    blank.querySelectorAll('option[selected]').forEach(function (o) { o.removeAttribute('selected'); });
+    blank.querySelector('input').setAttribute('value', '1');
+    form.addEventListener('click', function (e) {
+      var t = e.target.closest('button'); if (!t) return;
+      if (t.hasAttribute('data-step')) {
+        var input = t.parentNode.querySelector('input');
+        input.value = Math.min(99, Math.max(1, (parseInt(input.value, 10) || 1) + Number(t.getAttribute('data-step'))));
+      } else if (t.hasAttribute('data-del')) {
+        if (rows.children.length > 1) t.closest('.rc__row').remove();
+        else { t.closest('.rc__row').querySelector('select').value = ''; }
+      } else if (t.hasAttribute('data-add')) {
+        var row = blank.cloneNode(true); rows.appendChild(row); row.querySelector('select').focus();
+      } else if (t.hasAttribute('data-cancel')) {
+        form.reset(); closeAll();
+      }
+    });
+  });
+
   var q = document.getElementById('wq');
   if (q) q.addEventListener('input', function () {
     var v = q.value.trim().toLowerCase();

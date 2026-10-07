@@ -6918,7 +6918,7 @@ const PF_STYLE = `
 .pe__chip--live{color:var(--fg)} .pe__chip--live i{background:var(--good, #6fbf73)}
 .pe__chip--off i{background:transparent; border:1.5px solid var(--muted)}
 .pe__chip--none{opacity:.7} .pe__chip--none i{background:transparent; border:1.5px dashed var(--dim)}
-.cts{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.75rem; margin:1rem 0}
+.cts{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.75rem; margin:1rem 0; align-items:start}
 .ct{display:flex; flex-direction:column; gap:.55rem; padding:.9rem 1rem; border:1px solid var(--line); border-radius:var(--radius-s); background:var(--panel)}
 .ct__top{display:flex; align-items:center; gap:.5rem; font-size:.9rem}
 .ct__dot{width:9px; height:9px; border-radius:50%; background:var(--dim); flex:none}
@@ -6930,7 +6930,7 @@ const PF_STYLE = `
 .ct__kv dt{font-size:.66rem; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
 .ct__kv dd{margin:.1rem 0 0; font-size:.92rem; font-weight:600}
 .ct__title{margin:0; font-size:.76rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.ct__acts{margin-top:auto; display:flex}
+.ct__acts{margin-top:.2rem; display:flex}
 .ct__acts form{margin:0}
 .ct__btn{display:inline-flex; align-items:center; gap:.35rem; font:inherit; font-size:.78rem; min-height:36px; padding:.35rem .75rem; border-radius:8px; cursor:pointer;
   border:1px solid var(--line); background:transparent; color:var(--muted); list-style:none; transition:color var(--t-fast), border-color var(--t-fast)}
@@ -7337,9 +7337,12 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
                   <span class="ct__catrow"><select name="category" data-cat required aria-label="Kategori ${escape(label)}"><option value="">Memuat saran kategori…</option></select>
                   <button type="button" class="ct__again" data-cat-again title="Cari saran lagi dari judul sekarang" aria-label="Cari saran kategori lagi">${svg('refresh')}</button></span></label>
                 <div class="ct__attrs" data-attrs aria-live="polite"></div>
-                <details class="ct__adv"><summary>Pengaturan lanjutan</summary>
-                  <label class="ct__f"><span>Logistik, gudang &amp; sertifikat disalin dari</span><select name="template" data-template>${usable.map((l) => `<option value="${escape(String(l.id))}" ${l === pick ? 'selected' : ''}>${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>
-                </details>
+                ${/* Couriers, the warehouse and certificates are the shop's, not the product's:
+                   any live listing lends them alike, so the choice is not asked. One of the
+                   same category is taken when there is one, so a certificate it holds can
+                   carry over; otherwise the first that is not a gift. */''}
+                <input type="hidden" name="template" value="${escape(String(pick?.id ?? ''))}" data-template>
+                <p class="ct__msg">Jasa kirim &amp; gudang mengikuti listing ${escape(label)} yang sudah ada.</p>
               </div>`;
             })()}
             ${(() => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { shell, svg, escape } from '../dashboard-page.js';
 import { PRODUCTS, familyOf } from '../master.js';
-import { GROUPS, makeable, recipeOf, verifyWarehouse } from '../warehouse.js';
+import { GROUPS, recipeOf, verifyWarehouse } from '../warehouse.js';
 
 /**
  * The Stok tab: the real warehouse, item by item.
@@ -83,16 +83,15 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
       <ul class="wh__list">${list.map(([code, it]) => row(code, it, top)).join('')}</ul></section>`;
   }).join('');
 
-  // What the shelf lets us send, per product - the real figure, decided by the scarcest part.
-  const sendable = PRODUCTS.map((p) => ({ p, m: makeable(p.sku, items) })).filter((x) => x.m)
+  // What each product is made of on the shelf - only the ones made of more than one thing,
+  // since "Bamboo Scoop is a Bamboo Scoop" tells nobody anything.
+  const sets = PRODUCTS.map((p) => ({ p, recipe: recipeOf(p.sku) }))
+    .filter(({ recipe }) => recipe && (Object.keys(recipe).length > 1 || Object.values(recipe).some((n) => n > 1)))
     .sort((a, b) => familyOf(a.p).localeCompare(familyOf(b.p)) || a.p.name.localeCompare(b.p.name));
-  const tier = (n) => (n <= 0 ? 't-none' : n < 20 ? 't-low' : 't-ok');
-  const can = `<section class="wh__grp wh__grp--can"><h2 class="wh__h">Bisa dikirim dari gudang<span>${sendable.length}</span></h2>
-    <p class="wh__legend"><span class="g-goods"><i class="wh__dot"></i>Barang jadi</span><span class="g-set"><i class="wh__dot"></i>Set &amp; aksesori</span><span class="wh__legend-lim">Bergaris = penentu jumlah</span></p>
-    <ul class="wh__cans">${sendable.map(({ p, m }) => `<li class="wh__can ${tier(m.can)}">
-      <span class="wh__canname">${escape(p.name)}${p.variant ? `<small>${escape(p.variant)}</small>` : ''}</span>
-      <b class="mono wh__cann">${fmt(m.can)}</b>
-      <span class="wh__parts">${m.parts.map((part) => `<span class="wh__part ${TONE[items[part.code]?.group ?? 'pack'] ?? ''}${part.code === m.limit && m.parts.length > 1 ? ' is-limit' : ''}" title="${escape(items[part.code]?.name ?? part.code)}: ${fmt(part.have)} di rak${part.per > 1 ? `, ${part.per} per produk` : ''}${part.code === m.limit ? ' - penentu jumlah' : ''}"><i class="wh__dot" aria-hidden="true"></i>${escape(items[part.code]?.name ?? part.code)}${part.per > 1 ? ` ×${part.per}` : ''}</span>`).join('')}</span>
+  const can = `<section class="wh__grp wh__grp--can"><h2 class="wh__h">Isi produk<span>${sets.length}</span></h2>
+    <ul class="wh__sets">${sets.map(({ p, recipe }) => `<li class="wh__set">
+      <span class="wh__setname">${escape(p.name)}${p.variant ? `<small>${escape(p.variant)}</small>` : ''}</span>
+      <span class="wh__parts">${Object.entries(recipe).map(([code, per]) => `<span class="wh__part ${TONE[items[code]?.group ?? 'pack'] ?? ''}" title="${escape(code)}"><i class="wh__dot" aria-hidden="true"></i>${per > 1 ? `<b class="mono">${per}×</b> ` : ''}${escape(items[code]?.name ?? code)}</span>`).join('')}</span>
     </li>`).join('')}</ul></section>`;
 
   const shown = moves.filter((m) => (!item || m.code === item) && (!kind || m.kind === kind)).slice(0, 150);
@@ -135,9 +134,6 @@ const STYLE = `
 .wh__h{display:flex; align-items:baseline; gap:.5rem; margin:0 0 .75rem; font-size:.72rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
 .wh__h span{opacity:.6; letter-spacing:0}
 .wh__sub{margin:-.35rem 0 .75rem; font-size:.76rem; color:var(--dim)}
-.wh__legend{display:flex; flex-wrap:wrap; gap:.4rem 1rem; margin:-.25rem 0 .9rem; font-size:.74rem; color:var(--muted)}
-.wh__legend span{display:inline-flex; align-items:center; gap:.4rem}
-.wh__legend-lim{padding:.05rem .5rem; border:1.5px solid var(--muted); border-radius:999px}
 .wh__list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column}
 .wh__row{display:grid; grid-template-columns:4.2rem minmax(0,1fr) 6rem auto; align-items:center; gap:.75rem; padding:.55rem .35rem; border-top:1px solid var(--line)}
 .wh__row:first-child{border-top:0}
@@ -169,15 +165,14 @@ const STYLE = `
 .wh__in input{font:inherit; font-size:.9rem; color:var(--fg); background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; width:8rem}
 .wh__in--note{flex:1; min-width:12rem} .wh__in--note input{width:100%}
 .wh__in input:focus-visible{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent)}
-.wh__cans{list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(15.5rem, 1fr)); gap:.6rem}
-.wh__can{--t:var(--good); display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:.75rem; row-gap:.55rem; align-content:start; padding:.75rem .85rem; border-radius:var(--radius-s); background:var(--panel-2); border:1px solid var(--line); border-left:3px solid var(--t)}
-.wh__can.t-low{--t:var(--warn)} .wh__can.t-none{--t:var(--bad)}
-.wh__canname{font-size:.86rem; line-height:1.3; display:flex; flex-direction:column; gap:.1rem}
-.wh__canname small{font-size:.72rem; color:var(--muted)}
-.wh__cann{font-size:1.35rem; font-weight:600; text-align:right; color:var(--t); line-height:1}
+.wh__sets{list-style:none; margin:0; padding:0; display:flex; flex-direction:column}
+.wh__set{display:flex; flex-direction:column; gap:.45rem; padding:.7rem .2rem; border-top:1px solid var(--line)}
+.wh__set:first-child{border-top:0; padding-top:.2rem}
+.wh__setname{font-size:.88rem; display:flex; align-items:baseline; gap:.45rem; flex-wrap:wrap}
+.wh__setname small{font-size:.74rem; color:var(--muted)}
 .wh__parts{grid-column:1/-1; display:flex; flex-wrap:wrap; gap:.3rem}
-.wh__part{display:inline-flex; align-items:center; gap:.35rem; font-size:.7rem; padding:.18rem .55rem; border-radius:999px; border:1px solid var(--line); color:var(--muted); background:var(--panel)}
-.wh__part.is-limit{border:1.5px solid var(--tone); color:var(--fg); font-weight:600}
+.wh__part b{color:var(--fg); font-weight:600}
+.wh__part{display:inline-flex; align-items:center; gap:.35rem; font-size:.74rem; padding:.22rem .6rem; border-radius:999px; border:1px solid var(--line); color:var(--muted); background:var(--panel)}
 .wh__filters{display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:.75rem}
 .wh__filters a{text-decoration:none}
 .wh__filters .ico{width:12px; height:12px; vertical-align:-1px}

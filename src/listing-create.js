@@ -50,8 +50,31 @@ async function tiktokTemplate(productId) {
   };
 }
 
-export async function createTikTok(input, images, { templateId, draft = false }) {
+/**
+ * The attribute values an example listing carries, as {attributeId: {ids, text}} - what
+ * the publish form pre-fills when the chosen category asks for the same attribute.
+ */
+export async function templateAttributes(channel, templateId) {
+  if (channel === 'tiktok') {
+    const t = await tiktokTemplate(templateId);
+    return { category: String(t.category_id), values: Object.fromEntries(t.product_attributes.map((a) => [String(a.id), {
+      ids: a.values.filter((v) => v.id).map((v) => String(v.id)), text: a.values.find((v) => !v.id)?.name ?? '' }])) };
+  }
+  const t = await shopeeTemplate(templateId);
+  return { category: String(t.category_id), values: Object.fromEntries(t.attribute_list.map((a) => [String(a.attribute_id), {
+    ids: a.attribute_value_list.filter((v) => v.value_id).map((v) => String(v.value_id)),
+    text: a.attribute_value_list.find((v) => !v.value_id)?.original_value_name ?? '',
+    unit: a.attribute_value_list.find((v) => !v.value_id)?.value_unit ?? '' }])) };
+}
+
+export async function createTikTok(input, images, { templateId, draft = false, categoryId = null, attributes = null }) {
   const t = await tiktokTemplate(templateId);
+  // A category chosen for this product replaces the example's, with the attributes that
+  // category takes. The example's certificates only travel with its own category: they
+  // were issued for what it is, not for what this is.
+  const own = categoryId && String(categoryId) !== String(t.category_id);
+  if (categoryId) { t.category_id = String(categoryId); t.product_attributes = attributes ?? []; }
+  if (own) t.certifications = [];
   const main = [];
   for (const file of images) main.push({ uri: await uploadTikTokImage(file) });
   const body = {
@@ -119,8 +142,21 @@ async function shopeeTemplate(itemId) {
   };
 }
 
-export async function createShopee(input, images, { templateId, draft = false }) {
+/**
+ * Treelogy's brand on Shopee, as the live listings carry it (brand_id 5680885, read
+ * 7 Oct 2026). Brand lists are per category and run past 6,000 names, so the brand is
+ * sent as known and Shopee says if the category does not take it.
+ */
+export const SHOPEE_TREELOGY_BRAND = { brand_id: 5680885, original_brand_name: 'Treelogy' };
+const NO_BRAND = { brand_id: 0, original_brand_name: 'NoBrand' };
+
+export async function createShopee(input, images, { templateId, draft = false, categoryId = null, attributes = null }) {
   const t = await shopeeTemplate(templateId);
+  if (categoryId) {
+    t.category_id = Number(categoryId);
+    t.attribute_list = attributes ?? [];
+    t.brand = t.brand?.brand_id ? t.brand : SHOPEE_TREELOGY_BRAND;
+  }
   const ids = [];
   for (const file of images) ids.push(await uploadShopeeImage(file));
   const body = {
@@ -141,10 +177,20 @@ export async function createShopee(input, images, { templateId, draft = false })
     item_status: draft ? 'UNLIST' : 'NORMAL',
   };
   const { config, auth } = await resolveShopeeSession();
-  const r = await callShopApi(config, '/api/v2/product/add_item', auth, {}, body);
+  const warnings = [];
+  let r;
+  try {
+    r = await callShopApi(config, '/api/v2/product/add_item', auth, {}, body);
+  } catch (error) {
+    // The category does not take the Treelogy brand: listed as No brand, and said so.
+    if (!categoryId || !/brand/i.test(error.message) || !body.brand?.brand_id) throw error;
+    body.brand = NO_BRAND;
+    r = await callShopApi(config, '/api/v2/product/add_item', auth, {}, body);
+    warnings.push(`brand Treelogy tidak tersedia di kategori ini - tayang sebagai No brand (${error.message})`);
+  }
   const id = r.response?.item_id;
   if (!id) throw new Error('Shopee tidak mengembalikan item_id');
-  return { id, warnings: r.warning ? [r.warning] : [] };
+  return { id, warnings: [...warnings, ...(r.warning ? [r.warning] : [])] };
 }
 
 /** Test cleanup only. */

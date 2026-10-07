@@ -105,7 +105,8 @@ import { LISTING_CHANNELS, refOf, diffPatch, isManaged, UNMANAGED_MESSAGE } from
 import { findProduct, isBaseProduct } from '../src/master.js';
 import { loadShopifyConfig } from '../src/shopify/config.js';
 import { cleanProduct, saveMasterProduct, setMasterRemoved } from '../src/master-store.js';
-import { CREATORS } from '../src/listing-create.js';
+import { CREATORS, templateAttributes } from '../src/listing-create.js';
+import { suggestCategories, categoryAttributes, attributesFromForm, houseDefaults } from '../src/listing-category.js';
 import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.js';
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
@@ -193,7 +194,7 @@ const IMAGES_TTL_MS = 5 * 60_000;
  * says elsewhere: the live listing's content and pictures, the master stock, the price it
  * sells for. The example listing is the one given, or one of the same kind.
  */
-async function publishProduct(catalog, sku, channel, { templateId = null, draft = false, dims = null, weightGram = null, title = null, description = null, price: setPrice = null, uploads = [] } = {}) {
+async function publishProduct(catalog, sku, channel, { templateId = null, draft = false, dims = null, weightGram = null, title = null, description = null, price: setPrice = null, uploads = [], categoryId = null, attributes = null } = {}) {
   const product = findProduct(sku);
   if (!product || !Object.hasOwn(CREATORS, channel)) throw new Error('SKU atau kanal tidak valid');
   if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
@@ -222,7 +223,7 @@ async function publishProduct(catalog, sku, channel, { templateId = null, draft 
   if (images.length === 0) throw new Error('foto listing sumber tidak bisa diambil');
   const out = await CREATORS[channel]({
     sku: product.sku, title: L.title, description: L.description, price, stock, weightGram: L.weightGram, dims: L.dims ?? { l: 1, w: 1, h: 1 },
-  }, images, { templateId: template, draft });
+  }, images, { templateId: template, draft, categoryId, attributes });
   return { ...out, price, stock };
 }
 
@@ -1238,16 +1239,26 @@ export async function handleWrite(form, ip, user, csrf) {
     if (form.has('description') && description.length < 20) throw new Error('deskripsi minimal 20 karakter');
     if (price !== null && !(Number.isInteger(price) && price >= 100 && price <= 100_000_000)) throw new Error('harga harus Rp100 - Rp100.000.000');
     const uploads = await imagesFrom(form);
+    // A category chosen for this product, with its attributes checked against the list
+    // the channel publishes for it - an unknown value or a missing required one is
+    // refused here, before anything is created.
+    const categoryId = String(form.get('category') ?? '').trim();
+    if (categoryId && !/^\d{1,12}$/.test(categoryId)) throw new Error('kategori tidak valid');
+    if (categoryId && !isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
+    const attributes = categoryId
+      ? attributesFromForm(channel, await categoryAttributes(channel, categoryId), (key) => form.getAll(key))
+      : null;
     const out = await publishProduct(await readCatalog(), sku, channel, {
       templateId: String(form.get('template') ?? '').trim(), draft,
       dims, weightGram: Number.isInteger(n('weightGram')) && n('weightGram') > 0 ? n('weightGram') : null,
       title: title || null, description: description || null, price, uploads,
+      categoryId: categoryId || null, attributes,
     });
     invalidate('catalog');
     console.log(`dashboard: product_publish ${sku} -> ${channel} ${out.id}`);
     return {
       view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`,
-      message: `${sku} dipublikasikan${draft ? ' sebagai draft' : ''} di ${LISTING_CHANNELS[channel].label}`,
+      message: `${sku} dipublikasikan${draft ? ' sebagai draft' : ''} di ${LISTING_CHANNELS[channel].label}${out.warnings?.length ? ` - catatan: ${out.warnings.join('; ')}` : ''}`,
       celebrate: 'Dipublikasikan',
       audit: {
         menu: 'products', verb: 'add', target: sku,
@@ -2067,6 +2078,36 @@ export default async function handler(req, res) {
       const kind = String(url.searchParams.get('kind') ?? '').slice(0, 10);
       console.log(`dashboard/stock: gudang ${Object.keys(warehouse.items ?? {}).length} barang`);
       send(200, renderWarehouse({ user, warehouse, item, kind, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash }));
+      return;
+    }
+
+    /*
+     * The publish form asks for a category chosen from the product and that category's
+     * attributes. Read-only marketplace calls, answered as JSON for the form to draw.
+     */
+    if (view === 'products' && url.searchParams.has('meta')) {
+      const json = (status, body) => send(status, JSON.stringify(body), { 'Content-Type': 'application/json; charset=utf-8' });
+      const channel = String(url.searchParams.get('channel') ?? '');
+      try {
+        if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
+        if (url.searchParams.get('meta') === 'categories') {
+          json(200, { categories: await suggestCategories(channel, String(url.searchParams.get('title') ?? '').slice(0, 255)) });
+        } else if (url.searchParams.get('meta') === 'attributes') {
+          const category = String(url.searchParams.get('category') ?? '');
+          const schema = await categoryAttributes(channel, category);
+          const template = String(url.searchParams.get('template') ?? '');
+          // The example listing's own answers, where it was asked the same question.
+          const fromTemplate = /^\d+$/.test(template) ? await templateAttributes(channel, template).catch(() => null) : null;
+          const known = new Set(schema.map((a) => a.id));
+          const prefill = { ...houseDefaults(schema), ...Object.fromEntries(Object.entries(fromTemplate?.values ?? {}).filter(([id]) => known.has(id))) };
+          json(200, { attributes: schema, prefill });
+        } else {
+          json(400, { error: 'meta tidak dikenal' });
+        }
+      } catch (error) {
+        console.warn(`dashboard/products meta: ${error.message}`);
+        json(502, { error: error.message });
+      }
       return;
     }
 

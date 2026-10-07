@@ -6950,6 +6950,34 @@ const PF_STYLE = `
 .ct__need input{font:inherit; font-size:.84rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; width:100%}
 .ct__dims{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.4rem}
 .ct__fields{display:flex; flex-direction:column; gap:.7rem}
+.ct__cat{display:flex; flex-direction:column; gap:.7rem; padding:.75rem; border-radius:var(--radius-s); border:1px solid color-mix(in srgb, var(--brand) 35%, var(--line)); background:color-mix(in srgb, var(--brand) 6%, transparent)}
+.ct__catrow{display:flex; gap:.4rem}
+.ct__catrow select{flex:1; min-width:0; font:inherit; font-size:.86rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.5rem .6rem; min-height:42px}
+.ct__again{display:inline-grid; place-items:center; width:42px; height:42px; flex:none; border-radius:9px; border:1px solid var(--line); background:var(--panel-2); color:var(--muted); cursor:pointer}
+.ct__again:hover{color:var(--brand); border-color:var(--brand)}
+.ct__again .ico{width:16px; height:16px}
+.ct__again.is-busy .ico{animation:ct-spin .9s linear infinite}
+@keyframes ct-spin{to{transform:rotate(360deg)}}
+.ct__attrs{display:flex; flex-direction:column; gap:.6rem}
+.ct__attrs:empty{display:none}
+.ct__ah{margin:.1rem 0 0; font-size:.68rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.ct__a{display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; color:var(--muted)}
+.ct__a > b{font-weight:500; color:var(--fg); font-size:.8rem}
+.ct__a > b i{font-style:normal; color:var(--bad)}
+.ct__a select, .ct__a input[type=text]{font:inherit; font-size:.84rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; width:100%}
+.ct__a .ct__pair{display:flex; gap:.4rem} .ct__a .ct__pair select{width:auto}
+.ct__chips{display:flex; flex-wrap:wrap; gap:.3rem}
+.ct__chips label{display:inline-flex !important; flex-direction:row !important; align-items:center; gap:.3rem !important; font-size:.76rem !important; color:var(--fg) !important; padding:.25rem .6rem; border:1px solid var(--line); border-radius:999px; cursor:pointer; min-height:32px}
+.ct__chips label:has(input:checked){border-color:var(--brand); background:color-mix(in srgb, var(--brand) 16%, transparent)}
+.ct__chips input{accent-color:var(--brand); margin:0}
+.ct__opt{border-top:1px dashed var(--line); padding-top:.5rem}
+.ct__opt > summary{cursor:pointer; font-size:.78rem; color:var(--brand); list-style:none}
+.ct__opt[open] > summary{margin-bottom:.5rem}
+.ct__opt .ct__a + .ct__a{margin-top:.55rem}
+.ct__msg{margin:0; font-size:.76rem; color:var(--muted)}
+.ct__msg.is-bad{color:var(--bad)}
+.ct__adv > summary{cursor:pointer; font-size:.76rem; color:var(--muted); list-style:none}
+.ct__adv[open] > summary{margin-bottom:.45rem}
 .ct__pubf .ct__f{display:flex; flex-direction:column; gap:.3rem; font-size:.74rem; color:var(--muted)}
 .ct__f > span{display:flex; justify-content:space-between; gap:.5rem}
 .ct__f em{font-style:normal; color:var(--dim); font-variant-numeric:tabular-nums}
@@ -6988,6 +7016,109 @@ const PF_STYLE = `
 `;
 
 const PF_SCRIPT = `
+(function () {
+  // Publish form: category suggested from the product's title, then that category's
+  // attributes drawn as fields. Every name and value comes from the channel and is set
+  // as text, never as markup.
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(c); });
+    return n;
+  }
+  function field(a, pre) {
+    pre = pre || {};
+    var wrap = el('div', { 'class': 'ct__a' });
+    var head = el('b', { text: a.name });
+    if (a.required) head.appendChild(el('i', { text: ' *' }));
+    wrap.appendChild(head);
+    var ids = pre.ids || [];
+    if (a.values.length && a.multiple) {
+      var chips = el('div', { 'class': 'ct__chips' });
+      a.values.forEach(function (v) {
+        var box = el('input', { type: 'checkbox', name: 'attr:' + a.id, value: v.id });
+        if (ids.indexOf(v.id) >= 0) box.checked = true;
+        chips.appendChild(el('label', {}, [box, el('span', { text: v.name })]));
+      });
+      wrap.appendChild(chips);
+    } else if (a.values.length) {
+      var sel = el('select', { name: 'attr:' + a.id });
+      sel.appendChild(el('option', { value: '', text: a.required ? 'Pilih…' : '— tidak diisi —' }));
+      a.values.forEach(function (v) { var o = el('option', { value: v.id, text: v.name }); if (ids.indexOf(v.id) >= 0) o.selected = true; sel.appendChild(o); });
+      wrap.appendChild(sel);
+    }
+    if (!a.values.length || a.custom) {
+      var text = el('input', { type: 'text', name: 'attrtext:' + a.id, maxlength: '200', placeholder: a.values.length ? 'atau ketik sendiri' : (a.numeric ? 'angka' : 'isi') });
+      if (pre.text) text.value = pre.text;
+      if (a.units && a.units.length) {
+        var unit = el('select', { name: 'attrunit:' + a.id, 'aria-label': 'Satuan ' + a.name });
+        a.units.forEach(function (u) { var o = el('option', { value: u, text: u }); if (u === pre.unit) o.selected = true; unit.appendChild(o); });
+        wrap.appendChild(el('span', { 'class': 'ct__pair' }, [text, unit]));
+      } else wrap.appendChild(text);
+    }
+    return wrap;
+  }
+  document.querySelectorAll('[data-cat-box]').forEach(function (box) {
+    var form = box.closest('form'), channel = box.dataset.channel;
+    var cat = box.querySelector('[data-cat]'), attrs = box.querySelector('[data-attrs]'), again = box.querySelector('[data-cat-again]');
+    var template = box.querySelector('[data-template]'), title = form.querySelector('[name=title]');
+    var base = location.pathname + '?view=products&meta=';
+    var loaded = false, chosen = false;
+    // Right under the title it is suggested from.
+    var titleField = title && title.closest('label');
+    if (titleField) titleField.after(box);
+    function say(text, bad) { attrs.innerHTML = ''; attrs.appendChild(el('p', { 'class': 'ct__msg' + (bad ? ' is-bad' : ''), text: text })); }
+    function loadAttrs() {
+      if (!cat.value) { attrs.innerHTML = ''; return; }
+      say('Memuat atribut kategori…');
+      fetch(base + 'attributes&channel=' + channel + '&category=' + encodeURIComponent(cat.value) + '&template=' + encodeURIComponent(template ? template.value : ''), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.error) return say('Atribut tidak terbaca: ' + d.error, true);
+          attrs.innerHTML = '';
+          var need = d.attributes.filter(function (a) { return a.required; });
+          var rest = d.attributes.filter(function (a) { return !a.required; });
+          if (need.length) { attrs.appendChild(el('p', { 'class': 'ct__ah', text: 'Atribut wajib' })); need.forEach(function (a) { attrs.appendChild(field(a, d.prefill[a.id])); }); }
+          if (rest.length) {
+            var filled = rest.filter(function (a) { return d.prefill[a.id]; }).length;
+            var more = el('details', { 'class': 'ct__opt' }, [el('summary', { text: 'Atribut lainnya (opsional) · ' + rest.length + (filled ? ', ' + filled + ' sudah terisi' : '') })]);
+            rest.forEach(function (a) { more.appendChild(field(a, d.prefill[a.id])); });
+            attrs.appendChild(more);
+          }
+          if (!need.length && !rest.length) say('Kategori ini tidak meminta atribut.');
+        })
+        .catch(function () { say('Atribut tidak terbaca, coba pilih kategori lagi.', true); });
+    }
+    function loadCats() {
+      again.classList.add('is-busy');
+      cat.innerHTML = ''; cat.appendChild(el('option', { value: '', text: 'Memuat saran kategori…' }));
+      fetch(base + 'categories&channel=' + channel + '&title=' + encodeURIComponent(title ? title.value : ''), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          cat.innerHTML = '';
+          if (d.error || !d.categories.length) {
+            cat.appendChild(el('option', { value: '', text: d.error ? 'Saran tidak terbaca' : 'Tidak ada saran untuk judul ini' }));
+            return say(d.error ? 'Saran kategori tidak terbaca: ' + d.error : 'Ubah judul agar lebih jelas, lalu tekan tombol cari lagi.', true);
+          }
+          d.categories.forEach(function (c, i) { cat.appendChild(el('option', { value: c.id, text: (i === 0 ? '★ ' : '') + c.path })); });
+          loadAttrs();
+        })
+        .catch(function () { say('Saran kategori tidak terbaca, tekan tombol cari lagi.', true); })
+        .then(function () { again.classList.remove('is-busy'); });
+    }
+    cat.addEventListener('change', function () { chosen = true; loadAttrs(); });
+    // A new title asks again, unless a category was already picked by hand.
+    if (title) title.addEventListener('change', function () { if (loaded && !chosen) loadCats(); });
+    if (template) template.addEventListener('change', loadAttrs);
+    again.addEventListener('click', loadCats);
+    // Asked only when the form is opened: a product page is read far more than published from.
+    var pub = box.closest('details');
+    function open() { if (!loaded && (!pub || pub.open)) { loaded = true; loadCats(); } }
+    if (pub) pub.addEventListener('toggle', open);
+    open();
+  });
+})();
+
 (function () {
   // Publish form: a live count on the title, rupiah grouping on the price, and the
   // picked photo files named on their button.
@@ -7193,7 +7324,24 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
             ${hidden}${back}
             <input type="hidden" name="action" value="product_publish"><input type="hidden" name="sku" value="${escape(product.sku)}">
             <input type="hidden" name="channel" value="${key}">
-            ${key === 'shopify' ? '' : `<label><span>Salin kategori &amp; atribut dari</span><select name="template">${list.map((l) => `<option value="${escape(String(l.id))}" ${l.category === product.category ? 'selected' : ''} data-cat="${escape(l.category)}">${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>`}
+            ${key === 'shopify' ? '' : (() => {
+              // The category comes from the product: the channel's own recommendation for
+              // this title, with that category's attributes drawn below by the script. The
+              // example listing only lends logistics, the warehouse and certificates now,
+              // and a free-gift listing is never the one chosen for that.
+              const gift = (l) => /free gift|do not order|hadiah/i.test(String(l.title));
+              const usable = list.filter((l) => !gift(l)).length ? list.filter((l) => !gift(l)) : list;
+              const pick = usable.find((l) => l.category === product.category) ?? usable[0];
+              return `<div class="ct__cat" data-cat-box data-channel="${key}">
+                <label class="ct__f"><span>Kategori <em>disarankan ${escape(label)} dari judul di atas</em></span>
+                  <span class="ct__catrow"><select name="category" data-cat required aria-label="Kategori ${escape(label)}"><option value="">Memuat saran kategori…</option></select>
+                  <button type="button" class="ct__again" data-cat-again title="Cari saran lagi dari judul sekarang" aria-label="Cari saran kategori lagi">${svg('refresh')}</button></span></label>
+                <div class="ct__attrs" data-attrs aria-live="polite"></div>
+                <details class="ct__adv"><summary>Pengaturan lanjutan</summary>
+                  <label class="ct__f"><span>Logistik, gudang &amp; sertifikat disalin dari</span><select name="template" data-template>${usable.map((l) => `<option value="${escape(String(l.id))}" ${l === pick ? 'selected' : ''}>${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>
+                </details>
+              </div>`;
+            })()}
             ${(() => {
               // Everything the new listing will say, filled in from the live one and open
               // to change before it goes: title, description, price, weight, box, photos.

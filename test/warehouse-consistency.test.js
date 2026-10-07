@@ -107,9 +107,9 @@ test('different orders commute: the order they are read in changes nothing', () 
 
 test('a log longer than it keeps is folded, never summarised away', () => {
   let doc = opened();
-  for (let i = 0; i < 5400; i++) doc = manualMove(doc, { code: 'M-049', kind: i % 2 ? 'out' : 'in', qty: 1 + (i % 3), by: 'qa', token: `fold-${i}-xxxxxxxxxxxx` }, { now: (OPENING_AT + 100 + i) * 1000 }).doc;
+  for (let i = 0; i < 5400; i++) doc = manualMove(doc, { code: 'M-036', kind: i % 2 ? 'out' : 'in', qty: 1 + (i % 3), by: 'qa', token: `fold-${i}-xxxxxxxxxxxx` }, { now: (OPENING_AT + 100 + i) * 1000 }).doc;
   assert.ok(doc.moves.length <= 5000);
-  assert.ok(doc.folded['M-049'] !== undefined, 'saldo terlipat tercatat');
+  assert.ok(doc.folded['M-036'] !== undefined, 'saldo terlipat tercatat');
   assert.deepEqual(verifyWarehouse(doc), []);
 });
 

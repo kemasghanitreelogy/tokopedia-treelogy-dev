@@ -18,7 +18,7 @@ test('the opening stock is the sheet\'s Current Stock, item by item', () => {
   assert.equal(Object.keys(doc.items).length, OPENING_ITEMS.length);
   assert.equal(qty(doc, 'M-036'), 248);
   assert.equal(qty(doc, 'M-093'), 218);
-  assert.equal(doc.items['M-058'].uom, 'ROL');
+  assert.equal(doc.items['M-058'], undefined, 'kemasan tidak dilacak');
 });
 
 test('a Ritual Set is a bowl, a whisk, a scoop and a wooden box; with powder, the powder too', () => {

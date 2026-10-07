@@ -29,8 +29,14 @@ export const OPENING_AT = Math.floor(Date.parse('2026-10-06T17:16:20+07:00') / 1
 export const GROUPS = {
   goods: 'Barang jadi',
   set: 'Set & aksesori',
-  pack: 'Kemasan & pendukung',
 };
+
+/**
+ * Packaging the sheet also counted - mailerboxes, magazines, paper bags, honeycomb, cards,
+ * twine. Not tracked here at all (operator, 7 Oct 2026): a document that still holds them
+ * from before has them, their movements and any recipe mention of them removed on open.
+ */
+export const UNTRACKED = new Set(['M-049', 'M-050', 'M-053', 'M-054', 'M-055', 'M-056', 'M-057', 'M-058', 'M-088', 'M-089', 'M-095']);
 
 /** The sheet's Stock tab as it stood: code, name, unit, group, current stock. */
 export const OPENING_ITEMS = [
@@ -48,17 +54,6 @@ export const OPENING_ITEMS = [
   ['M-094', 'Wooden Box', 'PCS', 'set', 198],
   ['M-051', 'Pouch Treelogy', 'PCS', 'set', 263],
   ['M-052', 'Pouch tanpa logo', 'PCS', 'set', 32],
-  ['M-049', 'Mailerbox Printed', 'PCS', 'pack', 7473],
-  ['M-050', 'Mailerbox Plain', 'PCS', 'pack', 788],
-  ['M-053', 'Magazine Kecil', 'PCS', 'pack', 735],
-  ['M-054', 'Magazine Besar', 'PCS', 'pack', 376],
-  ['M-055', 'Paper Bag Kecil (Print)', 'PCS', 'pack', 370],
-  ['M-056', 'Paper Bag Sedang (Print)', 'PCS', 'pack', 543],
-  ['M-057', 'Paper Bag Besar (Print)', 'PCS', 'pack', 807],
-  ['M-058', 'Honeycomb', 'ROL', 'pack', 22],
-  ['M-088', 'Card Oil 3 mL - Alternative', 'PCS', 'pack', 132],
-  ['M-095', 'Card Oil 3 mL - Green', 'PCS', 'pack', 824],
-  ['M-089', 'Tali Goni 3 ply 50 m', 'PCS', 'pack', 15],
 ];
 
 /**
@@ -96,11 +91,18 @@ export function recipeOf(sku, edited = {}, seen = new Set()) {
   if (!product || seen.has(product.sku)) return null;
   // A recipe set on the page wins over the one written here, and a bundle made of a
   // product whose recipe was set there follows it.
-  if (edited?.[product.sku]) return { ...edited[product.sku] };
+  if (edited && Object.hasOwn(edited, product.sku)) {
+    // An empty recipe set on the page means "takes nothing from the shelf".
+    const own = edited[product.sku];
+    return own && Object.keys(own).length ? { ...own } : null;
+  }
   if (RECIPES[product.sku]) return { ...RECIPES[product.sku] };
   if (!isBundle(product)) return null;
   const out = {};
   for (const part of product.components) {
+    // A part whose recipe was removed on the page adds nothing; the rest still leave.
+    const partSku = findProduct(part.sku)?.sku;
+    if (partSku && edited && Object.hasOwn(edited, partSku) && !Object.keys(edited[partSku] ?? {}).length) continue;
     const inner = recipeOf(part.sku, edited, new Set([...seen, product.sku]));
     if (!inner) return null;
     for (const [code, qty] of Object.entries(inner)) out[code] = (out[code] ?? 0) + qty * part.qty;
@@ -190,7 +192,35 @@ export function openWarehouse(doc, { now = Date.now(), by = 'migrasi sheet' } = 
     next.moves.push({ id: `open-${code}`, at: OPENING_AT, code, kind: 'opening', delta: qty, after: qty, note: 'Current Stock dari sheet (06/10/2026 17:16)', by });
   }
   if (!next.opened_at) next.opened_at = Math.floor(now / 1000);
+  forgetUntracked(next);
   return next;
+}
+
+/**
+ * Drop untracked items whole: the item, every movement of it and its folded balance go
+ * together, so each remaining item still equals the sum of its own movements. Recipes and
+ * counted orders forget them too, so nothing ever tries to move one again.
+ */
+function forgetUntracked(doc) {
+  if (![...Object.keys(doc.items), ...Object.keys(doc.folded)].some((c) => UNTRACKED.has(c))
+    && !doc.moves.some((m) => UNTRACKED.has(m.code))
+    && !Object.values(doc.recipes ?? {}).some((r) => Object.keys(r ?? {}).some((c) => UNTRACKED.has(c)))) return;
+  for (const code of UNTRACKED) { delete doc.items[code]; delete doc.folded[code]; }
+  doc.moves = doc.moves.filter((m) => !UNTRACKED.has(m.code));
+  const strip = (map) => Object.fromEntries(Object.entries(map ?? {}).filter(([c]) => !UNTRACKED.has(c)));
+  const recipes = {};
+  for (const [sku, recipe] of Object.entries(doc.recipes ?? {})) {
+    const kept = strip(recipe);
+    const hadParts = Object.keys(recipe ?? {}).length > 0;
+    // A recipe that was only packaging, or that is now the built-in one, is no edit at all.
+    if (hadParts && !Object.keys(kept).length) continue;
+    const rest = { ...doc.recipes }; delete rest[sku];
+    const builtIn = recipeOf(sku, rest);
+    if (hadParts && builtIn && sameItems(builtIn, kept)) continue;
+    recipes[sku] = kept;
+  }
+  doc.recipes = recipes;
+  doc.orders = Object.fromEntries(Object.entries(doc.orders ?? {}).map(([k, o]) => [k, { ...o, items: strip(o.items) }]));
 }
 
 const move = (doc, entry) => {
@@ -333,19 +363,24 @@ export function makeable(sku, items, edited = {}) {
 export const RECIPE_LIMITS = { parts: 12, per: 99 };
 
 /**
- * Set what one unit of a product takes off the shelf from now on, or put back the
- * built-in recipe (`parts` null). Pure. Orders already counted keep what they took: their
+ * Set what one unit of a product takes off the shelf from now on, put back the built-in
+ * recipe (`parts` null), or remove it (`remove`) so the product takes nothing. Pure. Orders already counted keep what they took: their
  * cancel returns exactly that, and only a change to their lines moves anything again.
  *
  * @param {{sku: string, parts: Array<{code: string, qty: number}>|null, by?: string}} input
  * @returns {{doc, recipe: object|null, changed: boolean}}
  */
-export function setRecipe(doc, { sku, parts, by = '' }, { now = Date.now() } = {}) {
+export function setRecipe(doc, { sku, parts, remove = false, by = '' }, { now = Date.now() } = {}) {
   const product = findProduct(String(sku ?? '').trim());
   if (!product) throw new Error(`produk ${sku} tidak dikenal`);
   const next = { ...doc, recipes: { ...(doc.recipes ?? {}) } };
   const before = recipeOf(product.sku, doc.recipes ?? {});
-  if (parts == null) {
+  const withoutEdit = () => { const r = { ...next.recipes }; delete r[product.sku]; return r; };
+  if (remove) {
+    // Nothing built in either: forgetting the edit already means "takes nothing".
+    if (recipeOf(product.sku, withoutEdit())) next.recipes[product.sku] = {};
+    else delete next.recipes[product.sku];
+  } else if (parts == null) {
     delete next.recipes[product.sku];
   } else {
     if (!Array.isArray(parts) || !parts.length) throw new Error('isi produk minimal satu barang');
@@ -361,7 +396,7 @@ export function setRecipe(doc, { sku, parts, by = '' }, { now = Date.now() } = {
     }
     next.recipes[product.sku] = recipe;
     // Saving exactly the built-in recipe is the same as not having edited it.
-    const builtIn = recipeOf(product.sku, { ...next.recipes, [product.sku]: undefined });
+    const builtIn = recipeOf(product.sku, withoutEdit());
     if (builtIn && sameItems(builtIn, recipe)) delete next.recipes[product.sku];
   }
   const after = recipeOf(product.sku, next.recipes);

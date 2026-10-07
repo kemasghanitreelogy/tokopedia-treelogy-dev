@@ -1043,18 +1043,19 @@ export async function handleWrite(form, ip, user, csrf) {
     const product = findProduct(sku);
     if (!product) throw new Error(`produk ${sku || '(kosong)'} tidak dikenal`);
     const reset = form.get('reset') === '1';
+    const remove = form.get('remove') === '1';
     const codes = form.getAll('code').map((c) => String(c).trim());
     const qtys = form.getAll('qty').map((q) => Number(q));
-    const parts = reset ? null : codes.map((code, i) => ({ code, qty: qtys[i] })).filter((p) => p.code);
+    const parts = reset || remove ? null : codes.map((code, i) => ({ code, qty: qtys[i] })).filter((p) => p.code);
     const fmtRecipe = (r) => (r ? Object.entries(r).map(([c, n]) => `${n > 1 ? `${n}× ` : ''}${c}`).join(' + ') : 'tanpa isi');
     const before = (await loadWarehouse()).recipes?.[product.sku] ?? null;
-    const { recipe, changed } = await saveRecipe({ sku: product.sku, parts, by: user.name || user.email });
+    const { recipe, changed } = await saveRecipe({ sku: product.sku, parts, remove, by: user.name || user.email });
     const name = `${product.name}${product.variant ? ` ${product.variant}` : ''}`;
     if (!changed) return { view: 'stock', message: `${name}: isinya sudah begitu, tidak ada yang berubah` };
     return {
       view: 'stock',
-      message: `${name}: ${reset ? 'kembali ke isi bawaan' : 'isi disimpan'} - ${fmtRecipe(recipe)}`,
-      audit: { menu: 'stock', verb: 'edit', target: product.sku, summary: `Isi produk ${name}: ${fmtRecipe(recipe)}${reset ? ' (bawaan)' : ''}`, changes: [{ field: 'isi', from: before ? fmtRecipe(before) : 'bawaan', to: fmtRecipe(recipe) }] },
+      message: remove ? `${name}: isi dihapus - tidak lagi mengurangi stok gudang` : `${name}: ${reset ? 'kembali ke isi bawaan' : 'isi disimpan'} - ${fmtRecipe(recipe)}`,
+      audit: { menu: 'stock', verb: 'edit', target: product.sku, summary: `Isi produk ${name}: ${remove ? 'dihapus' : `${fmtRecipe(recipe)}${reset ? ' (bawaan)' : ''}`}`, changes: [{ field: 'isi', from: before ? fmtRecipe(before) : 'bawaan', to: fmtRecipe(recipe) }] },
     };
   }
 

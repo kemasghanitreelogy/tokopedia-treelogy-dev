@@ -88,7 +88,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   const edited = warehouse.recipes ?? {};
   const productLabel = (p) => `${p.name}${p.variant ? ` ${p.variant}` : ''}`;
   const sets = PRODUCTS.map((p) => ({ p, recipe: recipeOf(p.sku, edited) }))
-    .filter(({ p, recipe }) => edited[p.sku] || (recipe && (Object.keys(recipe).length > 1 || Object.values(recipe).some((n) => n > 1))))
+    .filter(({ p, recipe }) => recipe && (edited[p.sku] || Object.keys(recipe).length > 1 || Object.values(recipe).some((n) => n > 1)))
     .sort((a, b) => familyOf(a.p).localeCompare(familyOf(b.p)) || a.p.name.localeCompare(b.p.name));
   const itemOptions = (selected) => `<option value="">Pilih barang…</option>${Object.entries(GROUPS).map(([group, label]) => {
     const list = Object.entries(items).filter(([, it]) => (it.group ?? 'pack') === group).sort(([a], [b]) => a.localeCompare(b));
@@ -129,7 +129,13 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     <ul class="wh__sets">${sets.map(({ p, recipe }) => `<li class="wh__set" data-set>
       <div class="wh__sethead">
         <span class="wh__setname">${escape(p.name)}${p.variant ? `<small>${escape(p.variant)}</small>` : ''}${edited[p.sku] ? '<em class="wh__edited">Diubah</em>' : ''}</span>
-        <button type="button" class="wh__edit" data-edit aria-expanded="false" aria-label="Ubah isi ${escape(productLabel(p))}">${svg('pencil')}<span>Ubah</span></button>
+        <span class="wh__setacts">
+          <button type="button" class="wh__edit" data-edit aria-expanded="false" aria-label="Ubah isi ${escape(productLabel(p))}">${svg('pencil')}<span>Ubah</span></button>
+          <form method="post" class="wh__delform" data-confirm="Hapus isi ${escape(productLabel(p))}? Produk ini tidak lagi mengurangi stok gudang saat dikirim. Bisa diatur lagi lewat Atur isi produk.">
+            ${hidden}<input type="hidden" name="action" value="wh_recipe"><input type="hidden" name="sku" value="${escape(p.sku)}"><input type="hidden" name="remove" value="1">
+            <button type="submit" class="wh__edit wh__edit--del" aria-label="Hapus isi ${escape(productLabel(p))}">${svg('trash')}<span>Hapus</span></button>
+          </form>
+        </span>
       </div>
       <span class="wh__parts" data-chips>${chips(recipe) || '<span class="dim">Belum ada isi</span>'}</span>
       ${editor(p.sku, recipe, Boolean(edited[p.sku]), productLabel(p))}
@@ -217,6 +223,9 @@ const STYLE = `
 .wh__edit{display:inline-flex; align-items:center; gap:.3rem; font:inherit; font-size:.76rem; min-height:36px; padding:.25rem .65rem; border-radius:999px; border:1px solid transparent; background:none; color:var(--muted); cursor:pointer; transition:color .15s, border-color .15s}
 .wh__edit:hover, .wh__edit[aria-expanded="true"]{color:var(--brand); border-color:var(--line)}
 .wh__edit:focus-visible, .rc button:focus-visible, .rc select:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.wh__setacts{display:inline-flex; align-items:center; gap:.15rem; flex:none}
+.wh__delform{display:contents}
+.wh__edit--del:hover{color:var(--bad); border-color:color-mix(in srgb, var(--bad) 40%, var(--line))}
 .wh__edited{font-style:normal; font-size:.66rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); padding:.1rem .45rem; border-radius:6px; background:color-mix(in srgb, var(--accent) 14%, transparent)}
 .wh__set.is-editing .wh__parts{display:none}
 .rc{display:flex; flex-direction:column; gap:.6rem; padding:.85rem; border-radius:var(--radius-s); background:var(--panel-2); border:1px solid color-mix(in srgb, var(--brand) 40%, var(--line))}

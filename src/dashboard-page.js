@@ -6944,6 +6944,28 @@ const PF_STYLE = `
 .ct__need{display:flex; flex-direction:column; gap:.4rem; font-size:.74rem; color:var(--muted)}
 .ct__need input{font:inherit; font-size:.84rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:40px; width:100%}
 .ct__dims{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.4rem}
+.ct__fields{display:flex; flex-direction:column; gap:.7rem}
+.ct__pubf .ct__f{display:flex; flex-direction:column; gap:.3rem; font-size:.74rem; color:var(--muted)}
+.ct__f > span{display:flex; justify-content:space-between; gap:.5rem}
+.ct__f em{font-style:normal; color:var(--dim); font-variant-numeric:tabular-nums}
+.ct__f em.is-over{color:var(--bad)}
+.ct__f input, .ct__f textarea{font:inherit; font-size:.88rem; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding:.5rem .65rem; min-height:42px; width:100%}
+.ct__f textarea{resize:vertical; line-height:1.5; min-height:8rem}
+.ct__f input:focus-visible, .ct__f textarea:focus-visible{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent)}
+.ct__rp{display:flex; align-items:center; background:var(--panel-2); border:1px solid var(--line); border-radius:9px; padding-left:.65rem}
+.ct__rp b{font-size:.84rem; color:var(--muted); font-weight:500}
+.ct__rp input{border:0; background:none; font-size:1rem; font-weight:600}
+.ct__rp:focus-within{border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent)}
+.ct__rp input:focus-visible{box-shadow:none}
+.ct__row{display:grid; grid-template-columns:repeat(auto-fit, minmax(5.5rem, 1fr)); gap:.45rem}
+.ct__pics{display:flex; flex-wrap:wrap; gap:.35rem}
+.ct__pics img{width:52px; height:52px; object-fit:cover; border-radius:8px; border:1px solid var(--line); background:#fff}
+.ct__up{flex-direction:row !important; align-items:center; gap:.45rem !important; font-size:.8rem !important; color:var(--brand) !important; padding:.5rem .7rem; border:1px dashed var(--line); border-radius:9px; cursor:pointer; position:relative}
+.ct__up:hover{border-color:var(--brand)}
+.ct__up .ico{width:16px; height:16px; flex:none}
+.ct__up input{position:absolute; inset:0; opacity:0; cursor:pointer}
+.ct__up.has-files{color:var(--fg) !important; border-style:solid; border-color:var(--brand)}
+.ct__stock{margin:0; font-size:.76rem; color:var(--muted)}
 .pe__pics{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem}
 .pe__pics figure{position:relative; margin:0}
 .pe__pics img{width:84px; height:84px; object-fit:cover; border-radius:10px; border:1px solid var(--line); display:block; background:var(--panel)}
@@ -6961,6 +6983,30 @@ const PF_STYLE = `
 `;
 
 const PF_SCRIPT = `
+(function () {
+  // Publish form: a live count on the title, rupiah grouping on the price, and the
+  // picked photo files named on their button.
+  document.querySelectorAll('.ct__pubf [data-count]').forEach(function (input) {
+    var out = document.querySelector('[data-count-for="' + input.id + '"]');
+    var sync = function () { if (!out) return; out.textContent = input.value.length + '/' + input.maxLength; out.classList.toggle('is-over', input.value.length < 3); };
+    input.addEventListener('input', sync); sync();
+  });
+  document.querySelectorAll('.ct__pubf [data-rupiah]').forEach(function (input) {
+    input.addEventListener('input', function () {
+      var digits = input.value.replace(/[^0-9]/g, '').replace(/^0+/, '');
+      input.value = digits ? Number(digits).toLocaleString('id-ID') : '';
+    });
+  });
+  document.querySelectorAll('.ct__up input[type=file]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var label = input.closest('.ct__up'), text = label.querySelector('span');
+      var n = input.files.length;
+      label.classList.toggle('has-files', n > 0);
+      text.textContent = n ? n + ' foto dipilih - menggantikan foto di atas' : 'Ganti dengan foto lain (JPG/PNG, maks. 9)';
+    });
+  });
+})();
+
 (function () {
   // Bundle rows: add from the template, remove in place.
   document.querySelectorAll('.pf').forEach(function (form) {
@@ -7138,25 +7184,41 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
     const list = templates[key] ?? [];
     const publish = key === 'shopify' || list.length
       ? `<details class="ct__pub"><summary class="ct__btn ct__btn--go">${svg('plus')}<span>Publikasikan</span></summary>
-          <form method="post" class="ct__pubf" data-confirm="Publikasikan ${escape(product.sku)} ke ${escape(label)} memakai konten & foto listing yang sudah ada?">
+          <form method="post" class="ct__pubf" enctype="multipart/form-data" data-confirm="Publikasikan ${escape(product.sku)} ke ${escape(label)} dengan judul, harga dan isi di form ini?">
             ${hidden}${back}
             <input type="hidden" name="action" value="product_publish"><input type="hidden" name="sku" value="${escape(product.sku)}">
             <input type="hidden" name="channel" value="${key}">
             ${key === 'shopify' ? '' : `<label><span>Salin kategori &amp; atribut dari</span><select name="template">${list.map((l) => `<option value="${escape(String(l.id))}" ${l.category === product.category ? 'selected' : ''} data-cat="${escape(l.category)}">${escape(String(l.title).slice(0, 70))}</option>`).join('')}</select></label>`}
             ${(() => {
-              // What the new channel needs that the live listing does not say: Shopify keeps
-              // no box, and Shopee and TikTok require one. Asked here rather than refused.
-              const L0 = listing?.data;
-              const needDims = key !== 'shopify' && !L0?.dims;
-              const needWeight = !L0?.weightGram;
-              if (!needDims && !needWeight) return '';
-              return `<div class="ct__need"><span>Listing sumber belum punya ${[needWeight ? 'berat' : '', needDims ? 'dimensi' : ''].filter(Boolean).join(' &amp; ')}:</span>
-                ${needWeight ? '<input name="weightGram" type="number" min="1" step="1" inputmode="numeric" required placeholder="Berat (g)" aria-label="Berat paket (gram)" class="mono">' : ''}
-                ${needDims ? `<span class="ct__dims">${['dimL:P', 'dimW:L', 'dimH:T'].map((d) => { const [n, ph] = d.split(':'); return `<input name="${n}" type="number" min="1" step="1" inputmode="numeric" required placeholder="${ph} cm" aria-label="${ph === 'P' ? 'Panjang' : ph === 'L' ? 'Lebar' : 'Tinggi'} (cm)" class="mono">`; }).join('')}</span>` : ''}</div>`;
+              // Everything the new listing will say, filled in from the live one and open
+              // to change before it goes: title, description, price, weight, box, photos.
+              // Stock is not here - every channel shows the master stock.
+              const L0 = listing?.data ?? {};
+              const srcRow = ['tiktok', 'shopee', 'shopify'].map((k) => entry?.[k]?.rows?.[0]).find((r) => r?.price);
+              const titleMax = 255;
+              const field = (name, ph, val, label) => `<label class="ct__f ct__f--s"><span>${label}</span><input name="${name}" type="number" min="1" step="1" inputmode="numeric" required placeholder="${ph}" value="${escape(val ?? '')}" class="mono"></label>`;
+              return `<div class="ct__fields">
+                <label class="ct__f"><span>Judul <em data-count-for="t-${key}">${String(L0.title ?? '').length}/${titleMax}</em></span>
+                  <input id="t-${key}" name="title" required minlength="3" maxlength="${titleMax}" value="${escape(String(L0.title ?? '').slice(0, titleMax))}" data-count></label>
+                <label class="ct__f"><span>Deskripsi</span>
+                  <textarea name="description" rows="6" required minlength="20" maxlength="10000">${escape(L0.description ?? '')}</textarea></label>
+                <label class="ct__f"><span>Harga</span>
+                  <span class="ct__rp"><b>Rp</b><input name="price" type="text" inputmode="numeric" required pattern="[0-9.]{3,12}" value="${escape(srcRow?.price ? Number(srcRow.price).toLocaleString('id-ID') : '')}" class="mono" data-rupiah></span></label>
+                <div class="ct__row">
+                  ${field('weightGram', 'gram', L0.weightGram, 'Berat (g)')}
+                  ${key === 'shopify' ? '' : ['dimL:P:l', 'dimW:L:w', 'dimH:T:h'].map((d) => { const [n, ph, k] = d.split(':'); return field(n, `${ph} cm`, L0.dims?.[k], `${ph === 'P' ? 'Panjang' : ph === 'L' ? 'Lebar' : 'Tinggi'} (cm)`); }).join('')}
+                </div>
+                <div class="ct__f"><span>Foto</span>
+                  ${(L0.images ?? []).length ? `<div class="ct__pics">${(L0.images ?? []).slice(0, 9).map((u) => `<img src="${escape(u)}" alt="" loading="lazy" width="52" height="52">`).join('')}</div>` : ''}
+                  <label class="ct__up">${svg('image')}<span>Ganti dengan foto lain (JPG/PNG, maks. 9)</span><input type="file" name="images" accept="image/jpeg,image/png" multiple></label>
+                  <small>Tanpa memilih file, foto di atas yang dipakai.</small>
+                </div>
+                <p class="ct__stock">Stok mengikuti stok induk: <b class="mono">${escape(String(ledgerRow?.qty ?? row?.qty ?? '-'))}</b></p>
+              </div>`;
             })()}
             <label class="ct__mode"><input type="checkbox" name="mode" value="draft"><span>Simpan sebagai draft dulu</span></label>
             <button class="pf__primary" type="submit">Publikasikan</button>
-            <small>Judul, deskripsi, foto, berat dan dimensi diambil dari listing yang sedang tayang; stok dari stok induk.</small>
+            <small>Isian di atas diambil dari listing yang sedang tayang - ubah seperlunya sebelum dipublikasikan.</small>
           </form></details>`
       : '<span class="ct__note">Belum ada listing contoh di kanal ini.</span>';
     return `<div class="ct ct--${st}">

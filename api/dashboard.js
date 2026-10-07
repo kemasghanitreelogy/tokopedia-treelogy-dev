@@ -192,7 +192,7 @@ const IMAGES_TTL_MS = 5 * 60_000;
  * says elsewhere: the live listing's content and pictures, the master stock, the price it
  * sells for. The example listing is the one given, or one of the same kind.
  */
-async function publishProduct(catalog, sku, channel, { templateId = null, draft = false, dims = null, weightGram = null } = {}) {
+async function publishProduct(catalog, sku, channel, { templateId = null, draft = false, dims = null, weightGram = null, title = null, description = null, price: setPrice = null, uploads = [] } = {}) {
   const product = findProduct(sku);
   if (!product || !Object.hasOwn(CREATORS, channel)) throw new Error('SKU atau kanal tidak valid');
   if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
@@ -201,7 +201,8 @@ async function publishProduct(catalog, sku, channel, { templateId = null, draft 
   const content = await listingContent(catalog, product.sku);
   if (!content?.data) throw new Error('belum tayang di kanal mana pun - buat lewat Tambah produk');
   // What the operator typed in for a box or weight the source does not have wins.
-  const L = { ...content.data, ...(dims ? { dims } : {}), ...(weightGram ? { weightGram } : {}) };
+  // What the operator typed into the publish form wins over the source listing.
+  const L = { ...content.data, ...(dims ? { dims } : {}), ...(weightGram ? { weightGram } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}) };
   if (!L.weightGram) throw new Error('berat listing sumber tidak terbaca - isi beratnya di form publikasi');
   if (channel !== 'shopify' && !L.dims) throw new Error('dimensi paket belum ada - isi dimensinya di form publikasi');
   let template = /^\d+$/.test(String(templateId ?? '')) ? String(templateId) : null;
@@ -213,10 +214,10 @@ async function publishProduct(catalog, sku, channel, { templateId = null, draft 
     if (!template) throw new Error(`belum ada listing contoh di ${LISTING_CHANNELS[channel].label}`);
   }
   const ledger = await loadLedger().catch(() => null);
-  const price = Math.round(Number(entry?.tiktok?.price || entry?.shopee?.price || entry?.shopify?.price || 0));
+  const price = setPrice ?? Math.round(Number(entry?.tiktok?.price || entry?.shopee?.price || entry?.shopify?.price || 0));
   if (!(price >= 100)) throw new Error('harga sumber tidak terbaca');
   const stock = Math.max(1, Math.min(99999, Number(ledger?.skus?.[product.sku]?.qty) || entry?.tiktok?.qty || entry?.shopee?.qty || entry?.shopify?.qty || 1));
-  const images = await downloadImages(L.images);
+  const images = uploads.length ? uploads : await downloadImages(L.images);
   if (images.length === 0) throw new Error('foto listing sumber tidak bisa diambil');
   const out = await CREATORS[channel]({
     sku: product.sku, title: L.title, description: L.description, price, stock, weightGram: L.weightGram, dims: L.dims ?? { l: 1, w: 1, h: 1 },
@@ -1226,9 +1227,20 @@ export async function handleWrite(form, ip, user, csrf) {
     const draft = String(form.get('mode') ?? 'live') === 'draft';
     const n = (k) => Number(form.get(k));
     const dims = ['dimL', 'dimW', 'dimH'].every((k) => Number.isInteger(n(k)) && n(k) > 0) ? { l: n('dimL'), w: n('dimW'), h: n('dimH') } : null;
+    // The publish form's own fields, checked before any channel is asked anything.
+    const title = String(form.get('title') ?? '').replace(/\s+/g, ' ').trim();
+    const description = String(form.get('description') ?? '').replace(/\r\n/g, '\n').trim();
+    const rawPrice = String(form.get('price') ?? '').replace(/[^\d]/g, '');
+    const price = rawPrice ? Number(rawPrice) : null;
+    if (form.has('title') && (title.length < 3 || title.length > 255)) throw new Error('judul harus 3-255 karakter');
+    if (description.length > 10000) throw new Error('deskripsi paling panjang 10.000 karakter');
+    if (form.has('description') && description.length < 20) throw new Error('deskripsi minimal 20 karakter');
+    if (price !== null && !(Number.isInteger(price) && price >= 100 && price <= 100_000_000)) throw new Error('harga harus Rp100 - Rp100.000.000');
+    const uploads = await imagesFrom(form);
     const out = await publishProduct(await readCatalog(), sku, channel, {
       templateId: String(form.get('template') ?? '').trim(), draft,
       dims, weightGram: Number.isInteger(n('weightGram')) && n('weightGram') > 0 ? n('weightGram') : null,
+      title: title || null, description: description || null, price, uploads,
     });
     invalidate('catalog');
     console.log(`dashboard: product_publish ${sku} -> ${channel} ${out.id}`);

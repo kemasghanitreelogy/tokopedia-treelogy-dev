@@ -552,7 +552,7 @@ export function shell({
     .join('');
 
   const notice = flash
-    ? `<div class="alert ${flash.kind === 'error' ? '' : 'alert--ok'}"${flash.kind === 'error' ? '' : ' data-brief'} role="status">${svg(flash.kind === 'error' ? 'warn' : 'check')}<span>${escape(flash.text)}</span></div>`
+    ? `<div class="alert ${flash.kind === 'error' ? '' : 'alert--ok alert--toast'}"${flash.kind === 'error' ? '' : ' data-brief'} role="status">${svg(flash.kind === 'error' ? 'warn' : 'check')}<span>${escape(flash.text)}</span>${flash.kind === 'error' ? '' : `<button type="button" class="alert__x" data-dismiss aria-label="Tutup">${svg('x')}</button>`}</div>`
     : '';
 
   // Every error the operator can do something about gets the one action that helps:
@@ -1108,7 +1108,19 @@ tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:poin
 .alert--ok{border-color:color-mix(in srgb,var(--good) 40%,transparent);
   background:color-mix(in srgb,var(--good) 12%,transparent)}
 .alert--ok .ico{color:var(--good)}
-/* A success note has said its piece after two seconds; an error stays until it is read. */
+/* A success is a toast: floating under the menu wherever the page was scrolled, so it is
+   seen; two seconds (as asked), longer while pointed at, or closed by hand. An error stays in the page until it is read. */
+.alert--toast{position:fixed; z-index:70; top:5.6rem; left:0; right:0; margin:0 auto;
+  width:max-content; max-width:min(560px, calc(100vw - 32px)); background:var(--panel);
+  background-image:linear-gradient(color-mix(in srgb,var(--good) 14%,transparent), color-mix(in srgb,var(--good) 14%,transparent));
+  box-shadow:0 18px 40px -12px rgba(0,0,0,.45); animation:toast-in 220ms var(--ease-out) both}
+.alert--toast.is-going{animation:toast-in 220ms var(--ease-out) reverse both}
+@keyframes toast-in{from{opacity:0; transform:translateY(-8px)} to{opacity:1; transform:none}}
+.alert__x{display:inline-grid; place-items:center; width:32px; height:32px; margin-left:.25rem; flex:none; border:0; border-radius:8px; background:none; color:var(--muted); cursor:pointer}
+.alert__x:hover{color:var(--fg); background:color-mix(in srgb,var(--fg) 8%,transparent)}
+.alert__x .ico{width:15px; height:15px}
+@media (max-width:700px){.alert--toast{top:auto; bottom:calc(1rem + env(safe-area-inset-bottom, 0px))}}
+@media (prefers-reduced-motion:reduce){.alert--toast, .alert--toast.is-going{animation:none}}
 .alert.is-going{animation:rise 260ms var(--ease-out) reverse both; pointer-events:none}
 
 .edit{display:flex; gap:.3rem; align-items:center; margin:0}
@@ -2182,10 +2194,20 @@ ${celebration(flash)}
   // its query flag goes with it so a reload does not bring it back. Errors stay put.
   Array.prototype.forEach.call(document.querySelectorAll('.alert[data-brief]'), function (note) {
     var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    window.setTimeout(function () {
+    var gone = false;
+    // Fixed to the window, not to whichever wrapper happens to hold it.
+    if (note.classList.contains('alert--toast')) document.body.appendChild(note);
+    function leave() {
+      if (gone) return; gone = true;
       note.classList.add('is-going');
-      window.setTimeout(function () { if (note.parentNode) note.parentNode.removeChild(note); }, calm ? 0 : 260);
-    }, 2000);
+      window.setTimeout(function () { if (note.parentNode) note.parentNode.removeChild(note); }, calm ? 0 : 230);
+    }
+    var timer = window.setTimeout(leave, 2000);
+    // Held while the pointer rests on it, so a long message can be read to the end.
+    note.addEventListener('mouseenter', function () { window.clearTimeout(timer); });
+    note.addEventListener('mouseleave', function () { timer = window.setTimeout(leave, 2500); });
+    var x = note.querySelector('[data-dismiss]');
+    if (x) x.addEventListener('click', leave);
   });
   try {
     var addr = new URL(window.location.href);

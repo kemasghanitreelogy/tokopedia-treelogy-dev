@@ -1051,7 +1051,8 @@ export async function handleWrite(form, ip, user, csrf) {
     console.log(`dashboard: listing_active ${sku} ${channel} -> ${active ? 'aktif' : 'nonaktif'} (${done})`);
     return {
       view: 'products',
-      message: `${sku} ${active ? 'diaktifkan lagi' : 'dinonaktifkan'} di ${LISTING_CHANNELS[channel].label} (${done} listing)`,
+      message: `${sku} ${active ? 'ditayangkan' : 'dinonaktifkan'} di ${LISTING_CHANNELS[channel].label} (${done} listing)`,
+      celebrate: active ? 'Ditayangkan' : null,
       audit: {
         menu: 'products', verb: 'edit', target: sku,
         summary: `${active ? 'Mengaktifkan' : 'Menonaktifkan'} ${sku} di ${LISTING_CHANNELS[channel].label}`,

@@ -1043,9 +1043,9 @@ test('a download link never arms the skeleton', () => {
 
 test('a success note leaves after two seconds, an error note stays', () => {
   const ok = renderDashboard({ orders: [order], summary: summarize([order]), ...common, flash: { kind: 'ok', text: 'tersimpan' } });
-  assert.match(ok, /<div class="alert alert--ok" data-brief role="status">/);
+  assert.match(ok, /<div class="alert alert--ok alert--toast" data-brief role="status">/);
   assert.ok(ok.includes("querySelectorAll('.alert[data-brief]')"), 'the note is never scheduled to leave');
-  assert.ok(ok.includes('}, 2000);'), 'two seconds, as asked');
+  assert.ok(ok.includes('window.setTimeout(leave, 2000)'), 'two seconds, as asked');
   assert.ok(ok.includes("searchParams.delete('done')"), 'the done flag must be stripped so a reload cannot bring it back');
   const bad = renderDashboard({ orders: [order], summary: summarize([order]), ...common, flash: { kind: 'error', text: 'gagal' } });
   assert.match(bad, /<div class="alert " role="status">/);

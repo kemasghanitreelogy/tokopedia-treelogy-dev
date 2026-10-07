@@ -1,3 +1,4 @@
+import { searchOrders as rankOrders } from './fuzzy.js';
 import { saleValue } from './mekari/invoice.js';
 import { loadConfig } from './config.js';
 import { searchOrders, getOrderDetail } from './orders.js';
@@ -632,22 +633,16 @@ export function summarize(orders) {
  * with the page number. The search matches the order id, the buyer and the tracking
  * number, case-insensitively, the same three fields the old client-side search read.
  */
-/**
- * A phone number as its national digits, so every way of writing one compares equal:
- * "+62 813-9815-1516", "62813...", "0813 9815 1516" and "813..." all become "813...".
- */
-export const phoneDigits = (value) => String(value ?? '').replace(/\D/g, '').replace(/^(?:62|0)/, '');
+export { phoneDigits } from './fuzzy.js';
 
+/**
+ * The orders a channel, a stage and a search leave. The search forgives: a typo or two
+ * in a name, any way of writing a phone number, an order id with or without its "#" -
+ * see src/fuzzy.js. Near matches are only looked for when nothing matched exactly, and
+ * the array says which it was (`fuzzy`) so the page can say so.
+ */
 export function filterOrders(orders, { channel = 'all', stage = 'all', q = '' } = {}) {
-  const needle = String(q ?? '').trim().toLowerCase();
-  // A search that is a phone number (digits, spaces, +, -, brackets, at least six digits)
-  // is also matched against the buyer's phone, whichever way either side wrote it. A
-  // marketplace that masks the number ("******16") can only be found by what it shows.
-  const dialled = /^[\d\s+().-]+$/.test(needle) && needle.replace(/\D/g, '').length >= 6 ? phoneDigits(needle) : '';
-  return orders.filter((o) =>
-    (channel === 'all' || o.channel === channel)
-    && (stage === 'all' || o.stage === stage)
-    && (!needle
-      || `${o.id} ${o.buyer ?? ''} ${o.tracking ?? ''} ${o.buyerPhone ?? ''}`.toLowerCase().includes(needle)
-      || (dialled && phoneDigits(o.buyerPhone).includes(dialled))));
+  const scoped = orders.filter((o) => (channel === 'all' || o.channel === channel) && (stage === 'all' || o.stage === stage));
+  const found = rankOrders(scoped, q);
+  return Object.assign(found.orders, { fuzzy: found.fuzzy });
 }

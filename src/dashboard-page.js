@@ -1105,6 +1105,7 @@ tr.grp .grp__sel{display:inline-flex; align-items:center; gap:.5rem; cursor:poin
 .alert--soft{border-color:color-mix(in srgb,var(--warn) 40%,transparent);
   background:color-mix(in srgb,var(--warn) 12%,transparent)}
 .alert--soft .ico{color:var(--warn)}
+.alert.fz{margin:.75rem 1rem 0}
 .alert--ok{border-color:color-mix(in srgb,var(--good) 40%,transparent);
   background:color-mix(in srgb,var(--good) 12%,transparent)}
 .alert--ok .ico{color:var(--good)}
@@ -2609,7 +2610,7 @@ export function renderDashboard({
     .join('');
 
   const paged = paginate(orders, paging);
-  const noun = q || channel !== 'all' || stage !== 'all' ? 'pesanan cocok' : 'pesanan';
+  const noun = orders.fuzzy ? 'pesanan mirip' : q || channel !== 'all' || stage !== 'all' ? 'pesanan cocok' : 'pesanan';
 
   return shell({ user, flash,
     csrf,
@@ -2640,7 +2641,8 @@ export function renderDashboard({
       ${stageChips}
       <button class="exbtn" type="button" id="ex-open" aria-haspopup="dialog">${svg('export')}Ekspor</button>
     </div>
-    ${pager(paged, { baseQuery, noun }).replace('class="pager"', 'class="pager pager--top"')}
+${orders.fuzzy ? `<div class="alert alert--soft fz" role="status">${svg('search')}<span>Tidak ada yang persis cocok dengan <b>${escape(q)}</b> - ini ${orders.length} pesanan yang paling mirip, dari yang paling dekat.</span></div>` : ''}
+        ${pager(paged, { baseQuery, noun }).replace('class="pager"', 'class="pager pager--top"')}
     <div class="scroll">
       ${paged.total ? `<table>
         <thead><tr>

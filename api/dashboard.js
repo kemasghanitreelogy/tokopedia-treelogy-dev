@@ -425,7 +425,7 @@ async function pickupStep({ user, csrf, eligible, waiting, plans, chosen }) {
   });
 }
 
-async function handleWrite(form, ip, user, csrf) {
+export async function handleWrite(form, ip, user, csrf) {
   const action = form.get('action');
 
   // Permission first, before any field is read: a viewer's POST is refused whatever it says.
@@ -857,10 +857,16 @@ async function handleWrite(form, ip, user, csrf) {
     if (!sku) throw new Error('SKU kosong');
     if (!Number.isInteger(price) || price <= 0) throw new Error('harga harus bilangan bulat positif');
 
-    const catalog = await readCatalog();
-    // The channels ticked on the form; a form from before the choice existed meant both.
+    // The channels named on the form, and nothing else. There used to be a fallback to
+    // both marketplaces when none was named; a request naming only Shopify was filtered to
+    // none and fell through to it, and rewrote two live prices nobody had asked to change.
+    // A write that names no channel it may touch is refused.
     const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
-    const results = await applyPrice({ catalog, sku, price, channels: picked.length ? picked : ['tiktok', 'shopee'] });
+    if (picked.length === 0) {
+      throw new Error(form.getAll('channel').some((c) => String(c) === 'shopify') ? UNMANAGED_MESSAGE : 'pilih minimal satu kanal');
+    }
+    const catalog = await readCatalog();
+    const results = await applyPrice({ catalog, sku, price, channels: picked });
     invalidate('catalog');
     const ok = results.filter((r) => r.status === 'ok').length;
     const failed = results.filter((r) => r.status === 'failed');
@@ -891,7 +897,7 @@ async function handleWrite(form, ip, user, csrf) {
     const sku = String(form.get('sku') ?? '').trim();
     const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
     if (!sku) throw new Error('SKU kosong');
-    if (picked.length === 0) throw new Error('pilih minimal satu kanal');
+    if (picked.length === 0) throw new Error(form.getAll('channel').some((c) => String(c) === 'shopify') ? UNMANAGED_MESSAGE : 'pilih minimal satu kanal');
 
     let before = {};
     try { before = JSON.parse(String(form.get('before') ?? '{}')); } catch { before = {}; }
@@ -1031,6 +1037,7 @@ async function handleWrite(form, ip, user, csrf) {
     let before = {};
     try { before = JSON.parse(String(form.get('before') ?? '{}')); } catch { before = {}; }
     const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
+    if (picked.length === 0 && form.getAll('channel').some((c) => String(c) === 'shopify')) throw new Error(UNMANAGED_MESSAGE);
     const done = [];
     const problems = [];
     const changes = [];
@@ -1194,7 +1201,7 @@ async function handleWrite(form, ip, user, csrf) {
         const price = Number(form.get('price'));
         if (!Number.isInteger(price) || price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
         const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
-        if (picked.length === 0) throw new Error('pilih minimal satu kanal');
+        if (picked.length === 0) throw new Error(form.getAll('channel').some((c) => String(c) === 'shopify') ? UNMANAGED_MESSAGE : 'pilih minimal satu kanal');
         for (const sku of skus) {
           const r = await applyPrice({ catalog, sku, price, channels: picked }).catch((error) => [{ status: 'failed', error: error.message }]);
           const failed = r.filter((x) => x.status === 'failed');
@@ -1262,6 +1269,7 @@ async function handleWrite(form, ip, user, csrf) {
       components: form.getAll('part_sku').map((partSku, i) => ({ sku: partSku, qty: form.getAll('part_qty')[i] })),
     }, { isNew: true });
     const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(CREATORS, c) && isManaged(c));
+    if (picked.length === 0 && form.getAll('channel').some((c) => String(c) === 'shopify')) throw new Error(UNMANAGED_MESSAGE);
     const draft = String(form.get('mode') ?? 'live') === 'draft';
 
     const input = {

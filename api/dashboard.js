@@ -200,6 +200,11 @@ async function publishProduct(catalog, sku, channel, { templateId = null, draft 
   if (!isManaged(channel)) throw new Error(UNMANAGED_MESSAGE);
   const entry = catalog.skus.find((e) => e.sku === product.sku);
   if (entry?.[channel]?.rows?.length) throw new Error(`sudah tayang di ${LISTING_CHANNELS[channel].label}`);
+  // A draft or switched-off listing is the same product already there: publishing again
+  // would put a second listing beside it. It is shown live with Tayangkan instead.
+  if ((entry?.[`${channel}_ignored`] ?? []).some((r) => r.status !== 'DELETED')) {
+    throw new Error(`sudah ada sebagai draft/nonaktif di ${LISTING_CHANNELS[channel].label} - pakai Tayangkan, bukan Publikasikan`);
+  }
   const content = await listingContent(catalog, product.sku);
   if (!content?.data) throw new Error('belum tayang di kanal mana pun - buat lewat Tambah produk');
   // What the operator typed in for a box or weight the source does not have wins.
@@ -225,6 +230,38 @@ async function publishProduct(catalog, sku, channel, { templateId = null, draft 
     sku: product.sku, title: L.title, description: L.description, price, stock, weightGram: L.weightGram, dims: L.dims ?? { l: 1, w: 1, h: 1 },
   }, images, { templateId: template, draft, categoryId, attributes });
   return { ...out, price, stock };
+}
+
+/**
+ * Forget the catalogue now and twice more within the minute. A listing just created or
+ * switched takes Shopee a few seconds to show in its own item list, and the page opened
+ * right after the write read that list too early and kept the answer (7 Oct, Bamboo Whisk).
+ */
+function settleCatalog() {
+  invalidate('catalog');
+  for (const ms of [15_000, 45_000]) setTimeout(() => invalidate('catalog'), ms).unref?.();
+}
+
+/**
+ * The catalogue with one SKU's not-yet-live listings standing in as its rows, on a channel
+ * where nothing of it is live: a draft created from here, or a listing switched off. What
+ * the editor changes there is what will show when it goes live. Never on a channel that
+ * is live already - an old switched-off duplicate beside the live listing stays alone.
+ */
+export function withDrafts(catalog, sku) {
+  return {
+    ...catalog,
+    skus: (catalog?.skus ?? []).map((entry) => {
+      if (entry.sku !== sku) return entry;
+      const next = { ...entry };
+      for (const channel of ['tiktok', 'shopee']) {
+        if (entry[channel]?.rows?.length) continue;
+        const drafts = (entry[`${channel}_ignored`] ?? []).filter((r) => r.status !== 'DELETED');
+        if (drafts.length) next[channel] = { qty: drafts[0].qty ?? 0, price: drafts[0].price ?? 0, rows: drafts, ignored: [], conflict: false, draft: true };
+      }
+      return next;
+    }),
+  };
 }
 
 /** Pictures sent with a form, checked the same way everywhere. */
@@ -926,7 +963,7 @@ export async function handleWrite(form, ip, user, csrf) {
     }
     if (Object.keys(patch).length === 0 && images.length === 0) throw new Error('tidak ada yang diubah');
 
-    const catalog = await readCatalog();
+    const catalog = withDrafts(await readCatalog(), sku);
     const entry = catalog.skus.find((e) => e.sku === sku);
     if (!entry) throw new Error(`${sku} tidak ada di katalog`);
 
@@ -1010,7 +1047,7 @@ export async function handleWrite(form, ip, user, csrf) {
       await LISTING_CHANNELS[channel].setActive(ref, active);
       done += 1;
     }
-    invalidate('catalog');
+    settleCatalog();
     console.log(`dashboard: listing_active ${sku} ${channel} -> ${active ? 'aktif' : 'nonaktif'} (${done})`);
     return {
       view: 'products',
@@ -1158,7 +1195,8 @@ export async function handleWrite(form, ip, user, csrf) {
       }
     }
 
-    const catalog = picked.length ? await readCatalog() : null;
+    // A draft (or switched-off) listing is edited like a live one: it is what will go live.
+    const catalog = picked.length ? withDrafts(await readCatalog(), sku) : null;
 
     // 3. The price, on the channels ticked.
     const priceRaw = String(form.get('price') ?? '').trim();
@@ -1254,7 +1292,7 @@ export async function handleWrite(form, ip, user, csrf) {
       title: title || null, description: description || null, price, uploads,
       categoryId: categoryId || null, attributes,
     });
-    invalidate('catalog');
+    settleCatalog();
     console.log(`dashboard: product_publish ${sku} -> ${channel} ${out.id}`);
     return {
       view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`,

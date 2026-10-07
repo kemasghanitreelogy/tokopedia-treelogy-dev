@@ -52,3 +52,18 @@ test('a publish naming a malformed category is refused before any channel is ask
   const f = new URLSearchParams([['action', 'product_publish'], ['sku', 'Bamboo-Whisk'], ['channel', 'shopee'], ['category', '12ab']]);
   await assert.rejects(() => handleWrite(f, '127.0.0.1', { id: 'o', email: 'o@x', name: 'O', role: 'owner', status: 'active' }, 'csrf'), /kategori tidak valid/);
 });
+
+test('a draft stands in for the listing on a channel where nothing is live, and only there', async () => {
+  const { withDrafts } = await import('../api/dashboard.js');
+  const draft = { sku: 'Bamboo-Whisk', itemId: 53768824826, modelId: 0, status: 'UNLIST', qty: 193, price: 290000, title: 'Bamboo Whisk - 120 prongs' };
+  const catalog = { skus: [
+    { sku: 'Bamboo-Whisk', shopee: null, shopee_ignored: [draft], tiktok: null, tiktok_ignored: [{ status: 'DELETED', productId: '1' }] },
+    { sku: 'Discovery-Pack', tiktok: { rows: [{ productId: 'live' }] }, tiktok_ignored: [{ status: 'SELLER_DEACTIVATED', productId: 'old' }] },
+  ] };
+  const one = withDrafts(catalog, 'Bamboo-Whisk').skus[0];
+  assert.deepEqual(one.shopee.rows, [draft]);
+  assert.equal(one.shopee.price, 290000);
+  assert.equal(one.tiktok, null, 'a deleted TikTok listing never comes back');
+  const pack = withDrafts(catalog, 'Discovery-Pack').skus[1];
+  assert.deepEqual(pack.tiktok.rows, [{ productId: 'live' }], 'the switched-off duplicate stays out beside the live one');
+});

@@ -6930,7 +6930,7 @@ const PF_STYLE = `
 .ct__kv dt{font-size:.66rem; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
 .ct__kv dd{margin:.1rem 0 0; font-size:.92rem; font-weight:600}
 .ct__title{margin:0; font-size:.76rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.ct__acts{margin-top:.2rem; display:flex}
+.ct__acts{margin-top:.2rem; display:flex; flex-wrap:wrap; gap:.4rem}
 .ct__acts form{margin:0}
 .ct__btn{display:inline-flex; align-items:center; gap:.35rem; font:inherit; font-size:.78rem; min-height:36px; padding:.35rem .75rem; border-radius:8px; cursor:pointer;
   border:1px solid var(--line); background:transparent; color:var(--muted); list-style:none; transition:color var(--t-fast), border-color var(--t-fast)}
@@ -6939,6 +6939,7 @@ const PF_STYLE = `
 .ct__btn--go{color:var(--brand); border-color:color-mix(in srgb, var(--brand) 45%, var(--line))}
 .ct__btn .ico{width:14px; height:14px}
 .ct__btn:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+a.ct__btn{text-decoration:none}
 .ct__pub{width:100%}
 .ct__pubf{display:flex; flex-direction:column; gap:.6rem; margin-top:.7rem}
 .ct__pubf label{display:flex; flex-direction:column; gap:.3rem; font-size:.74rem; color:var(--muted)}
@@ -7379,9 +7380,13 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       : '<span class="ct__note">Belum ada listing contoh di kanal ini.</span>';
     return `<div class="ct ct--${st}">
       <div class="ct__top"><span class="ct__dot" aria-hidden="true"></span><b>${label}</b>
-        <span class="ct__st">${st === 'live' ? 'Tayang' : st === 'off' ? 'Nonaktif' : 'Belum ada'}</span></div>
-      ${row ? `<dl class="ct__kv"><div><dt>Stok</dt><dd class="mono">${row.qty}</dd></div><div><dt>Harga</dt><dd class="mono">${escape(rupiah(row.price ?? 0))}</dd></div></dl>
-        <p class="ct__title" title="${escape(row.title ?? '')}">${escape(row.title ?? '')}</p>` : ''}
+        <span class="ct__st">${st === 'live' ? 'Tayang' : st === 'off' ? (switchedOff(key).some((r) => r.status === 'DRAFT') ? 'Draft' : key === 'shopee' ? 'Draft / nonaktif' : 'Nonaktif') : 'Belum ada'}</span></div>
+      ${(() => {
+        // A listing not yet live shows what it holds, so a draft is recognisable as one.
+        const shown = row ?? (st === 'off' ? switchedOff(key)[0] : null);
+        return shown ? `<dl class="ct__kv"><div><dt>Stok</dt><dd class="mono">${shown.qty}</dd></div><div><dt>Harga</dt><dd class="mono">${escape(rupiah(shown.price ?? 0))}</dd></div></dl>
+        <p class="ct__title" title="${escape(shown.title ?? '')}">${escape(shown.title ?? '')}</p>` : '';
+      })()}
       <div class="ct__acts">${key === 'shopify'
         ? (() => {
           const gid = row?.productId ?? switchedOff('shopify')[0]?.productId ?? '';
@@ -7392,7 +7397,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
         })()
         : st === 'live'
           ? ask('listing_active', false, `Nonaktifkan ${product.sku} di ${label}? Listing disembunyikan dari pembeli dan bisa diaktifkan lagi.`)
-          : st === 'off' ? ask('listing_active', true, `Aktifkan lagi ${product.sku} di ${label}?`, 'ct__btn--go') : publish}</div>
+          : st === 'off' ? `${ask('listing_active', true, `Tayangkan ${product.sku} di ${label}? Listing langsung terlihat oleh pembeli.`, 'ct__btn--go').replace('<span>Aktifkan</span>', '<span>Tayangkan</span>')}<a class="ct__btn" href="#konten">${svg('pencil')}<span>Ubah isi</span></a>` : publish}</div>
     </div>`;
   };
 
@@ -7416,8 +7421,10 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
     : '';
 
   const L = listing?.data ?? null;
-  const liveOn = MANAGED.filter((k) => state(k) === 'live');
-  const price = entry?.tiktok?.price ?? entry?.shopee?.price ?? '';
+  // Channels the editor writes to: live ones, and one holding a draft or a switched-off
+  // listing - that is what will show when it goes live.
+  const liveOn = MANAGED.filter((k) => state(k) === 'live' || state(k) === 'off');
+  const price = entry?.tiktok?.price ?? entry?.shopee?.price ?? switchedOff('tiktok')[0]?.price ?? switchedOff('shopee')[0]?.price ?? '';
   const before = {
     qty: ledgerRow?.qty ?? null,
     price: price === '' ? null : price,
@@ -7440,7 +7447,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       <p>Cara dashboard mengenal produk ini. Hanya tersimpan di dashboard, tidak dikirim ke kanal.</p></header>
       ${masterFields(product, { idPrefix: 'pe' })}</section>
 
-    ${liveOn.length ? `<section class="pf__step"><header><span class="pf__n" aria-hidden="true">2</span><h2>Konten listing</h2>
+    ${liveOn.length ? `<section class="pf__step" id="konten"><header><span class="pf__n" aria-hidden="true">2</span><h2>Konten listing</h2>
       <p>${L ? `Diisi dari ${escape(LABELS[listing.source])}.` : listing?.error ? `Isi listing tidak terbaca (${escape(listing.error)}).` : ''} Yang diubah dikirim ke kanal yang dicentang di bawah.${L?.variants > 1 ? ` Berlaku untuk seluruh listing (${L.variants} varian).` : ''}</p></header>
       <div class="pf__grid">
         ${field('Judul listing', `<input name="title" maxlength="255" value="${escape(L?.title ?? '')}" autocomplete="off">`, { wide: true })}
@@ -7466,7 +7473,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       </div></section>
 
     <div class="pf__bar pe__bar">
-      ${liveOn.length ? `<fieldset class="chp"><legend class="pe__to">Kirim ke</legend>${liveOn.map((k) => `<label class="chp__opt"><input type="checkbox" name="channel" value="${k}" checked><span>${LABELS[k]}</span></label>`).join('')}</fieldset>` : '<span class="pe__to">Belum tayang di kanal mana pun</span>'}
+      ${liveOn.length ? `<fieldset class="chp"><legend class="pe__to">Kirim ke</legend>${liveOn.map((k) => `<label class="chp__opt"><input type="checkbox" name="channel" value="${k}" checked><span>${LABELS[k]}${state(k) === 'off' ? ' <em class="dim">(draft)</em>' : ''}</span></label>`).join('')}</fieldset>` : '<span class="pe__to">Belum tayang di kanal mana pun</span>'}
       <span class="pe__count" data-pe-count aria-live="polite"></span>
       <button class="pf__primary" type="submit" data-pe-go>Simpan &amp; sinkronkan</button>
     </div>

@@ -51,13 +51,12 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     // Bar length is relative to the fullest item in the same group, on a square-root scale
     // so a 7.473 mailerbox does not flatten every other bar to nothing.
     const level = top > 0 ? Math.round(Math.sqrt(Math.max(0, it.qty) / top) * 100) : 0;
-    return `<li class="wh__row ${TONE[it.group ?? 'pack'] ?? ''}" data-code="${escape(code)}" data-text="${escape(`${code} ${it.name}`.toLowerCase())}">
+    return `<li class="wh__row ${TONE[it.group ?? 'pack'] ?? ''}" tabindex="0" aria-expanded="false" title="Klik untuk mencatat barang masuk, keluar, atau opname" data-code="${escape(code)}" data-text="${escape(`${code} ${it.name}`.toLowerCase())}">
       <span class="wh__code mono">${escape(code)}</span>
       <span class="wh__name"><span class="wh__nm">${escape(it.name)}</span><span class="wh__bar" aria-hidden="true"><i style="width:${level}%"></i></span></span>
       <span class="wh__qty"><b class="mono${it.qty <= 0 ? ' is-zero' : ''}">${fmt(it.qty)}</b><small>${escape(it.uom)}</small></span>
       <span class="wh__acts">
         <a class="wh__hist" href="?view=stock&amp;item=${encodeURIComponent(code)}#riwayat" title="Riwayat ${escape(it.name)}">${svg('history')}<span class="visually-hidden">Riwayat</span></a>
-        <button class="wh__btn" type="button" data-move="${escape(code)}" aria-expanded="false">Catat</button>
       </span>
       <form class="wh__form" method="post" hidden data-confirm="Catat gerakan ${escape(it.name)}?">
         ${hidden}
@@ -185,7 +184,10 @@ const STYLE = `
 .wh__nm{font-size:.88rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .wh__bar{display:block; height:4px; border-radius:999px; background:color-mix(in srgb, var(--fg) 8%, transparent); overflow:hidden; max-width:22rem}
 .wh__bar i{display:block; height:100%; border-radius:inherit; background:var(--tone, var(--brand)); opacity:.8}
-.wh__row:hover{background:color-mix(in srgb, var(--fg) 3%, transparent)}
+.wh__row{cursor:pointer; border-radius:var(--radius-s); transition:background .15s}
+.wh__row:hover, .wh__row.is-open{background:color-mix(in srgb, var(--fg) 4%, transparent)}
+.wh__row:focus-visible{outline:2px solid var(--brand); outline-offset:-2px}
+.wh__form{cursor:auto}
 .wh__qty{display:flex; align-items:baseline; justify-content:flex-end; gap:.3rem}
 .wh__qty b{font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums}
 .wh__qty b.is-zero{color:var(--dim)}
@@ -289,15 +291,22 @@ const STYLE = `
 
 const SCRIPT = `
 (function () {
-  // One movement form open at a time, under its own row.
-  document.querySelectorAll('[data-move]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var row = btn.closest('.wh__row');
-      var form = row.querySelector('.wh__form');
-      var open = form.hidden;
-      document.querySelectorAll('.wh__form').forEach(function (f) { f.hidden = true; });
-      document.querySelectorAll('[data-move]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
-      if (open) { form.hidden = false; btn.setAttribute('aria-expanded', 'true'); form.querySelector('[name=qty]').focus(); }
+  // A click on a shelf row opens its movement form under it; one open at a time.
+  function toggleRow(row) {
+    var form = row.querySelector('.wh__form');
+    var open = form.hidden;
+    document.querySelectorAll('.wh__form').forEach(function (f) { f.hidden = true; });
+    document.querySelectorAll('.wh__row').forEach(function (r) { r.setAttribute('aria-expanded', 'false'); r.classList.remove('is-open'); });
+    if (open) { form.hidden = false; row.setAttribute('aria-expanded', 'true'); row.classList.add('is-open'); form.querySelector('[name=qty]').focus(); }
+  }
+  document.querySelectorAll('.wh__row').forEach(function (row) {
+    row.addEventListener('click', function (e) {
+      if (e.target.closest('.wh__form, a, button, input, label, select')) return;
+      toggleRow(row);
+    });
+    row.addEventListener('keydown', function (e) {
+      if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault(); toggleRow(row);
     });
   });
   // "Opname" asks for the count on the shelf, not a difference.

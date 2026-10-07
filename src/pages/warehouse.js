@@ -157,7 +157,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   </section>`;
 
   const body = `<div class="wh">
-    <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Pesanan mengurangi stok di sini otomatis sesuai isi produknya saat labelnya dicetak, atau saat dikirim kalau labelnya tidak dicetak dari dashboard.</p>
+    <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Stok di sini berkurang saat picklist dikonfirmasi, sesuai isi tiap produk. Pesanan yang batal atau diretur setelah dikonfirmasi kembali ke rak otomatis.</p>
     <div class="wh__cols"><div>${shelf}</div><div>${can}</div></div>
     ${history}
   </div>`;

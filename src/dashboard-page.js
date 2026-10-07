@@ -3544,7 +3544,27 @@ export function renderPicklist({ picklist, orders = [], range, errors, shopeeSho
 
   // The orders behind these lines, exactly; confirming sends this list, so what is taken
   // off the shelf is what the picker was looking at.
-  const pickKeys = orders.filter((o) => o.stage === 'to_ship').map((o) => `${o.channel}:${o.id}`);
+  const pickable = orders.filter((o) => o.stage === 'to_ship');
+  const pickKeys = pickable.map((o) => `${o.channel}:${o.id}`);
+  // The same parcels, one per transaction, oldest first - the order they are packed in.
+  const byOrder = [...pickable].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)).map((o) => {
+    const units = (o.lines ?? []).reduce((n, l) => n + (Number(l.qty) || 0), 0);
+    return `<li class="pk__o">
+      <div class="pk__oh">
+        ${channelTag(o)}
+        <span class="mono pk__code">${escape(orderCode(o))}</span>
+        ${o.buyer ? `<span class="pk__buyer">${escape(o.buyer)}</span>` : ''}
+        <span class="pk__grow"></span>
+        <span class="dim nowrap pk__when">${escape(dateTime(o.createdAt, o.channel))}</span>
+        <span class="pk__units mono">${units} unit</span>
+      </div>
+      <ul class="pk__lines">${(o.lines ?? []).map((l) => `<li><b class="mono">${Number(l.qty) || 0}×</b><span>${escape(l.name ?? l.sku)}${l.variant ? ` <span class="note">${escape(l.variant)}</span>` : ''}</span><span class="mono dim pk__sku">${escape(l.sku ?? '')}</span></li>`).join('')}</ul>
+    </li>`;
+  }).join('');
+  const tabs = `<div class="pk__tabs" role="tablist" aria-label="Tampilan picklist">
+      <button type="button" role="tab" class="pk__tab" data-pane="items" aria-selected="true">Per produk <span>${picklist.skuCount}</span></button>
+      <button type="button" role="tab" class="pk__tab" data-pane="orders" aria-selected="false">Per transaksi <span>${pickable.length}</span></button>
+    </div>`;
   const confirm = csrf && pickKeys.length ? `<form method="post" class="pick__confirm" data-confirm="Konfirmasi ${picklist.orderCount} pesanan (${picklist.unitCount} unit) sudah dipetik? Stok gudang berkurang sesuai isi produknya.">
       <input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="action" value="wh_pick"><input type="hidden" name="view" value="picklist"><input type="hidden" name="back" value="?view=picklist">
       ${pickKeys.map((k) => `<input type="hidden" name="order" value="${escape(k)}">`).join('')}
@@ -3571,13 +3591,13 @@ export function renderPicklist({ picklist, orders = [], range, errors, shopeeSho
       </div>`,
     body: `<div id="pick-live" data-live="${escape(pickKeys.join(','))}">${picklist.items.length === 0
       ? '<p class="empty">Tidak ada pesanan yang menunggu dipetik.</p>'
-      : `${confirm}<div class="scroll"><table class="dense">
+      : `${confirm}${tabs}<div class="pk__pane" data-pane-body="orders" hidden><ol class="pk__orders">${byOrder}</ol></div><div class="pk__pane scroll" data-pane-body="items"><table class="dense">
           <thead><tr>
             <th class="num">Qty</th><th>Produk</th><th>Kanal</th><th class="num">Pesanan</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
-        <div class="foot"><span>${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span><span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span></div>`}</div>`,
+        <div class="foot"><span>${picklist.orderCount} pesanan &middot; ${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span><span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span></div>`}</div>`,
   });
 }
 
@@ -3593,7 +3613,25 @@ const PICK_STYLE = `
 .pick__live{display:inline-flex; align-items:center; gap:.35rem; color:var(--dim); font-size:.74rem}
 .pick__live .ico{width:13px; height:13px}
 .pick__live.is-new{color:var(--brand)}
-@media (max-width:700px){.pick__go{width:100%; justify-content:center}}
+.pk__tabs{display:inline-flex; gap:.25rem; padding:.25rem; margin:0 0 .9rem; border:1px solid var(--line); border-radius:999px; background:var(--panel)}
+.pk__tab{font:inherit; font-size:.84rem; min-height:40px; padding:.35rem 1rem; border-radius:999px; border:0; background:none; color:var(--muted); cursor:pointer; transition:background .15s, color .15s}
+.pk__tab span{font-size:.72rem; opacity:.7; margin-left:.2rem}
+.pk__tab[aria-selected="true"]{background:var(--brand); color:var(--bg); font-weight:600}
+.pk__tab:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.pk__pane[hidden]{display:none}
+.pk__orders{list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(22rem, 1fr)); gap:.7rem}
+.pk__o{border:1px solid var(--line); border-radius:var(--radius-s); background:var(--panel); padding:.8rem .95rem; display:flex; flex-direction:column; gap:.6rem}
+.pk__oh{display:flex; align-items:center; flex-wrap:wrap; gap:.45rem .6rem}
+.pk__code{font-size:.84rem; font-weight:600}
+.pk__buyer{font-size:.82rem; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:12rem}
+.pk__grow{flex:1}
+.pk__when{font-size:.74rem}
+.pk__units{font-size:.72rem; padding:.12rem .5rem; border-radius:999px; border:1px solid var(--line); color:var(--muted)}
+.pk__lines{list-style:none; margin:0; padding:.55rem 0 0; border-top:1px dashed var(--line); display:flex; flex-direction:column; gap:.4rem}
+.pk__lines li{display:grid; grid-template-columns:2.4rem minmax(0,1fr) auto; gap:.5rem; align-items:baseline; font-size:.86rem}
+.pk__lines b{font-size:.95rem; text-align:right}
+.pk__sku{font-size:.7rem}
+@media (max-width:700px){.pick__go{width:100%; justify-content:center} .pk__orders{grid-template-columns:minmax(0,1fr)} .pk__sku{display:none} .pk__lines li{grid-template-columns:2.2rem minmax(0,1fr)}}
 `;
 
 /*
@@ -3603,6 +3641,20 @@ const PICK_STYLE = `
  */
 const PICK_SCRIPT = `
 (function () {
+  // Per produk / per transaksi, remembered for this browser and kept across refreshes.
+  var pane = 'items';
+  try { pane = localStorage.getItem('pick-pane') || 'items'; } catch (e) {}
+  function show(name) {
+    pane = name;
+    document.querySelectorAll('.pk__tab').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.pane === name)); });
+    document.querySelectorAll('[data-pane-body]').forEach(function (b) { b.hidden = b.dataset.paneBody !== name; });
+  }
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('.pk__tab'); if (!t) return;
+    show(t.dataset.pane);
+    try { localStorage.setItem('pick-pane', t.dataset.pane); } catch (err) {}
+  });
+  show(pane);
   var busy = false;
   // Only the submit that really goes (after the confirmation was answered yes).
   document.addEventListener('submit', function (e) { if (e.target.dataset.confirmed === '1') busy = true; }, true);
@@ -3617,6 +3669,7 @@ const PICK_SCRIPT = `
         var kpis = doc.getElementById('pick-kpis'), hereK = document.getElementById('pick-kpis');
         if (!live || !here || live.dataset.live === here.dataset.live) return;
         here.replaceWith(live);
+        show(pane);
         if (kpis && hereK) hereK.replaceWith(kpis);
         var badge = document.querySelector('.pick__live');
         if (badge) { badge.classList.add('is-new'); badge.lastChild.textContent = ' daftar baru saja diperbarui'; }

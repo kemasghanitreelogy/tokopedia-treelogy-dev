@@ -125,6 +125,32 @@ export function applyOrders(ledger, orders, { now = Date.now() } = {}) {
       }
       next.applied[key] = { ...seen, undone: Math.floor(now / 1000) };
       applied.push({ key, lines: seen.lines, sign: +1 });
+      continue;
+    }
+
+    // Lines the order has now. A read without any says nothing, and is never read as
+    // "everything was taken out of the order".
+    const lines = linesOf(order);
+    if (Object.keys(lines).length === 0 || undone) continue;
+    const move = (sku, delta, source) => {
+      if (!delta || !next.skus[sku]) return;
+      next.skus[sku] = { ...next.skus[sku], qty: Math.max(0, next.skus[sku].qty + delta), updated_at: new Date(now).toISOString(), source };
+      touched.add(sku);
+    };
+    if (seen.undone) {
+      // Cancelled, then live again after all: it takes its lines once more.
+      for (const [sku, qty] of Object.entries(lines)) move(sku, -qty, `order:${key}`);
+      next.applied[key] = { at: Math.floor(now / 1000), lines };
+      applied.push({ key, lines, sign: -1 });
+      continue;
+    }
+    const before = seen.lines ?? {};
+    const keys = new Set([...Object.keys(before), ...Object.keys(lines)]);
+    if ([...keys].some((k) => (before[k] ?? 0) !== (lines[k] ?? 0))) {
+      // Edited after it was counted: only the difference moves.
+      for (const k of keys) move(k, (before[k] ?? 0) - (lines[k] ?? 0), `ubah:${key}`);
+      next.applied[key] = { ...seen, lines };
+      applied.push({ key, lines, sign: 0 });
     }
   }
 

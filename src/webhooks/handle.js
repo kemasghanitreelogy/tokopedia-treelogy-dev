@@ -10,6 +10,7 @@ import { beatWebhook } from '../mekari/heartbeat.js';
 import { notifySyncFailures } from '../notify/telegram.js';
 import { announceExpress } from '../alerts-express.js';
 import { followAfterOrder } from '../stock-watch.js';
+import { warehouseAfterOrder } from '../warehouse-run.js';
 import { rememberOrder } from '../orders-source.js';
 
 /**
@@ -105,6 +106,9 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
    * half-hourly run reads the stored order again and finishes the job either way.
    */
   void followAfterOrder(order);
+  // And the real shelf, kept apart: an order that has shipped comes off the warehouse by
+  // its recipe. It never touches a marketplace.
+  void warehouseAfterOrder(order);
 
   // The order has just changed in the database, so every cached list of orders is now a
   // description of the past. Without this the push was only half a push: the row was

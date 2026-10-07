@@ -110,6 +110,8 @@ import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
+import { warehouseAfterOrder, loadWarehouse, recordMove } from '../src/warehouse-run.js';
+import { renderWarehouse } from '../src/pages/warehouse.js';
 import { resolveRange } from '../src/range.js';
 import { cached, invalidate } from '../src/cache.js';
 import { runSync, loadSyncLedger, syncOverview, postManual, manualCodes } from '../src/mekari/sync.js';
@@ -333,6 +335,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
   product_save: 'products', product_publish: 'products',
+  wh_move: 'stock',
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
@@ -1030,6 +1033,25 @@ export async function handleWrite(form, ip, user, csrf) {
    * it changed and only where it belongs. The page carries what it was filled with, so
    * "changed" is decided here, against that, and nothing untouched is rewritten.
    */
+  /** A person's movement on the real shelf. Touches warehouse/stock.json and nothing else. */
+  if (action === 'wh_move') {
+    const code = String(form.get('code') ?? '').trim();
+    const kind = String(form.get('kind') ?? '');
+    const qty = Number(form.get('qty'));
+    const note = String(form.get('note') ?? '').trim();
+    const token = String(form.get('token') ?? '').slice(0, 64);
+    if (!/^[a-z0-9-]{16,64}$/.test(token)) throw new Error('formulir kedaluwarsa, muat ulang halaman');
+    const { record, duplicate } = await recordMove({ code, kind, qty, note, by: user.name || user.email, token });
+    const label = { in: 'masuk', out: 'keluar', count: 'opname' }[kind];
+    if (duplicate) return { view: 'stock', message: `${code}: sudah tercatat, tidak dicatat dua kali` };
+    if (!record) return { view: 'stock', message: `${code}: jumlah di rak sudah ${qty}, tidak ada yang berubah` };
+    return {
+      view: 'stock',
+      message: `${code} ${label} ${record.delta > 0 ? '+' : ''}${record.delta} → ${record.after}`,
+      audit: { menu: 'stock', verb: 'edit', target: code, summary: `Gudang ${code}: ${label} ${record.delta > 0 ? '+' : ''}${record.delta} (sekarang ${record.after})${note ? ` - ${note}` : ''}`, changes: [{ field: code, from: record.after - record.delta, to: record.after, note }] },
+    };
+  }
+
   if (action === 'product_save') {
     const sku = String(form.get('sku') ?? '').trim();
     const current = findProduct(sku);
@@ -1611,6 +1633,7 @@ export async function handleWrite(form, ip, user, csrf) {
     // A sale typed in here is goods off the same shelf as a marketplace order, so it comes
     // off every channel the same way. Not awaited: the operator is waiting for the page.
     void followAfterOrder(order);
+    void warehouseAfterOrder(order);
 
     // The order list and the invoice printer both read the orders table, and nothing else
     // will ever put a typed-in sale there. The sale is in Jurnal either way - that is the
@@ -1964,23 +1987,15 @@ export default async function handler(req, res) {
       return;
     }
 
+    // The Stok tab is the real warehouse now - item by item, migrated from the sheet.
+    // It never reads or writes a marketplace; the master stock the channels follow is
+    // edited on the products page.
     if (view === 'stock') {
-      const [catalog, ledger] = await Promise.all([
-        cached('catalog', CATALOG_TTL_MS, readCatalogSafely, SWR),
-        cached('ledger', LEDGER_TTL_MS, () => loadLedger().catch(() => null), SWR),
-      ]);
-      const plan = ledger && Object.keys(catalog.errors ?? {}).length === 0
-        ? planSync({ ledger, catalog })
-        : null;
-      console.log(`dashboard/stock: ${catalog.skus.length} skus`);
-      send(200, renderStock({ user,
-        catalog, ledger, plan, errors: catalog.errors, range, shopeeShop: null,
-        generatedAt: Date.now(), csrf, flash,
-        filter: url.searchParams.get('filter') ?? 'all',
-        // The same thumbnails the manual form uses: picking a row by its picture is how
-        // somebody catches that they are about to write the 90 gram figure onto the 180.
-        images: await imagesByKey(),
-      }));
+      const warehouse = await cached('warehouse', 15_000, () => loadWarehouse(), SWR);
+      const item = String(url.searchParams.get('item') ?? '').slice(0, 20);
+      const kind = String(url.searchParams.get('kind') ?? '').slice(0, 10);
+      console.log(`dashboard/stock: gudang ${Object.keys(warehouse.items ?? {}).length} barang`);
+      send(200, renderWarehouse({ user, warehouse, item, kind, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash }));
       return;
     }
 

@@ -24,6 +24,7 @@ import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './me
 import { auditRecent } from './mekari/audit.js';
 import { seedMissing, applyOrders, topUpMaster, planFollow } from './stock-follow.js';
 import { followStock } from './stock-watch.js';
+import { syncWarehouse, loadWarehouse, verifyWarehouse } from './warehouse-run.js';
 import { recordSample, loadHistory, drops } from './stock-history.js';
 import { raiseAlert } from './alerts.js';
 import { backendName } from './store/index.js';
@@ -395,6 +396,20 @@ async function cmdStockTopup(config, args = []) {
     for (const c of plan.changes) console.log(`    ${c.sku.padEnd(28)} ${c.channel.padEnd(7)} ${String(c.from).padStart(5)} -> ${c.to}`);
     console.log(`\n  ${warn('belum ditulis. Ulangi dengan --yes untuk menulis ke marketplace')}\n`);
     return 0;
+  }
+
+  // The real shelf from the same week of orders, apart from everything below: a missed
+  // push is caught here, and an order already counted is skipped.
+  await syncWarehouse(orders, { now }).then(({ moved }) => {
+    if (moved.length) console.log(`  gudang: ${moved.length} gerakan dari pesanan`);
+  }).catch((error) => console.log(`  ${warn(`gudang tidak tercatat: ${error.message}`)}`));
+  // The invariant, proved every run: each item's quantity is exactly the sum of its
+  // movements. A difference of one unit is a bug, and is said out loud.
+  const drift = verifyWarehouse(await loadWarehouse());
+  if (drift.length) {
+    console.log(`  ${fail(`gudang TIDAK konsisten: ${drift.map((d) => `${d.code} ${d.qty}≠${d.expected}`).join(', ')}`)}`);
+    await sendTelegram(`<b>🚨 Stok gudang tidak konsisten</b>\n${drift.slice(0, 8).map((d) => `• <code>${d.code}</code> tercatat ${d.qty}, riwayat ${d.expected}`).join('\n')}`,
+      { key: `wh-drift|${new Date().toISOString().slice(0, 13)}` }).catch(() => {});
   }
 
   const result = await followStock({ orders, only: 'all', read: async () => catalog, now });

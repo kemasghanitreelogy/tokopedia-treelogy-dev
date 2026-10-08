@@ -56,3 +56,17 @@ test('shipped orders are deliberately excluded from the pickable set', () => {
   assert.equal(PICKABLE_STAGES.has('shipping'), false);
   assert.equal(PICKABLE_STAGES.has('to_ship'), true);
 });
+
+test('a product sold under channel spellings is picked as one line, under its master name', async () => {
+  const pl = buildPicklist([
+    { id: 'A', channel: 'tokopedia', stage: 'to_ship', lines: [{ sku: 'OMC-90-001', qty: 2, name: 'TREELOGY - Organic Moringa Capsules | Kapsul Suplemen Daun Kelor Premium', variant: '1 Month' }] },
+    { id: 'B', channel: 'shopify', stage: 'to_ship', lines: [{ sku: 'OMC90', qty: 1, name: 'Organic Moringa Capsules', variant: '90 Moringa Capsules' }, { sku: 'GFT-MYST-001', qty: 1, name: 'Moringa Seed Oil 3ml' }] },
+  ]);
+  const caps = pl.items.find((i) => i.sku === 'OMC-90-001');
+  assert.equal(caps.qty, 3);
+  assert.equal(caps.name, 'Moringa Capsules');
+  assert.equal(caps.variant, '90 caps');
+  const gift = pl.items.find((i) => i.sku === 'Mystery-Gift');
+  assert.equal(gift.name, 'Moringa Seed Oil 3 ml');
+  assert.equal(pl.skuCount, 2);
+});

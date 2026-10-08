@@ -13,12 +13,22 @@ import { findProduct } from './master.js';
 
 export const PICKABLE_STAGES = new Set(['to_ship']);
 
+/** A line as the master catalogue names it; a SKU the master does not know stays as sold. */
+export function asMaster(line) {
+  const p = findProduct(String(line?.sku ?? '').trim());
+  return p ? { ...line, sku: p.sku, name: p.name, variant: p.variant ?? '' } : line;
+}
+
 export function buildPicklist(orders, { stages = PICKABLE_STAGES } = {}) {
   const pickable = orders.filter((o) => stages.has(o.stage));
 
   const bySku = new Map();
   for (const order of pickable) {
-    for (const line of order.lines ?? []) {
+    for (const raw of order.lines ?? []) {
+      // One product, one line: a channel's own spelling of the SKU and its long listing
+      // title fold onto the master product and its name, so the 90 capsules sold on four
+      // channels are picked as one quantity under one name.
+      const line = asMaster(raw);
       const entry = bySku.get(line.sku) ?? {
         sku: line.sku,
         name: line.name,
@@ -81,10 +91,7 @@ export function batchOrders(doc, date, live = []) {
     const channel = key.slice(0, at);
     const id = key.slice(at + 1);
     const current = byKey.get(key);
-    const lines = current?.lines?.length ? current.lines : Object.entries(row.lines ?? {}).map(([sku, qty]) => {
-      const p = findProduct(sku);
-      return { sku, qty, name: p?.name ?? sku, variant: p?.variant ?? '' };
-    });
+    const lines = (current?.lines?.length ? current.lines : Object.entries(row.lines ?? {}).map(([sku, qty]) => ({ sku, qty, name: sku, variant: '' }))).map(asMaster);
     out.push({
       channel, id, stage: 'to_ship', lines,
       buyer: current?.buyer ?? row.buyer ?? '',

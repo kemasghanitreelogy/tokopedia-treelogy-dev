@@ -100,6 +100,7 @@ async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
 }
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist, batchOrders, batchesIn } from '../src/picklist.js';
+import { picklistPdf } from '../src/picklist-pdf.js';
 import { readCatalog } from '../src/inventory.js';
 import { LISTING_CHANNELS, refOf, diffPatch, isManaged, UNMANAGED_MESSAGE } from '../src/listing.js';
 import { findProduct, isBaseProduct } from '../src/master.js';
@@ -2446,6 +2447,13 @@ export default async function handler(req, res) {
       const date = /^\d{4}-\d{2}-\d{2}$/.test(asked) ? asked : current;
       const orders = batchOrders(shelf, date, data.orders);
       const picklist = buildPicklist(orders);
+      if (url.searchParams.get('format') === 'pdf') {
+        // The same batch, as an A4 sheet to print and tick off at the shelf.
+        const pdf = await picklistPdf({ date, orders, picklist, images: await imagesByKey() });
+        console.log(`dashboard/picklist: pdf batch ${date} ${picklist.orderCount} pesanan (${took()})`);
+        send(200, Buffer.from(pdf), { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="picklist-batch-${date}.pdf"` });
+        return;
+      }
       console.log(`dashboard/picklist: batch ${date} ${picklist.orderCount} pesanan, ${picklist.unitCount} unit (${took()})`);
       send(200, renderPicklist({ user,
         ...data, orders, range, picklist, csrf, flash, images: await imagesByKey(),

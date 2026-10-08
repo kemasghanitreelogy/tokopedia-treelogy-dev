@@ -3617,6 +3617,7 @@ export function renderPicklist({ picklist, orders = [], images = {}, batch = nul
         <div class="pb__t"><b>Batch ${escape(WITA_DAY(batch.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</b>
           <span>${escape(WITA_DAY(shiftDay(batch.date, -1), { day: 'numeric', month: 'short' }))} 15.00 &ndash; ${escape(WITA_DAY(batch.date, { day: 'numeric', month: 'short' }))} 15.00 WITA${isLive ? ' &middot; <em class="pb__live">berjalan</em>' : ''}</span></div>
         ${isLive ? '' : `<a class="pb__now" href="?view=picklist">Batch berjalan</a>`}
+        <a class="pb__pdf" href="?view=picklist&amp;batch=${batch.date}&amp;format=pdf" download="picklist-batch-${batch.date}.pdf">${svg('printer')}<span>Download PDF</span></a>
       </div>
       ${batch.list.length ? `<nav class="pb__chips" aria-label="Batch lain">${batch.list.slice(0, 10).map(([d, n]) => `<a class="pb__chip${d === batch.date ? ' is-on' : ''}" href="${batchHref(d)}"><span>${escape(d === batch.current ? 'Berjalan' : WITA_DAY(d, { weekday: 'short', day: 'numeric', month: 'short' }))}</span><b class="mono">${n}</b></a>`).join('')}</nav>` : ''}
       <p class="pb__note">${svg('check2')}<span>Stok gudang berkurang otomatis saat pesanan masuk picklist: langsung bila tidak perlu diproses, atau begitu diatur pengirimannya. Batal atau retur kembali ke rak dengan sendirinya.</span></p>
@@ -3678,6 +3679,12 @@ const PICK_STYLE = `
 .pb__t span{font-size:.78rem; color:var(--muted)}
 .pb__live{font-style:normal; color:var(--brand); font-weight:600}
 .pb__now{font-size:.8rem; color:var(--brand); margin-left:auto}
+.pb__pdf{display:inline-flex; align-items:center; gap:.45rem; margin-left:auto; font-size:.86rem; font-weight:600; min-height:42px; padding:.45rem 1.1rem; border-radius:999px; border:1px solid var(--brand); background:var(--brand); color:var(--bg); text-decoration:none; transition:filter .15s}
+.pb__now + .pb__pdf{margin-left:.5rem}
+.pb__pdf:hover{filter:brightness(1.08)}
+.pb__pdf:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.pb__pdf .ico{width:17px; height:17px}
+@media (max-width:700px){.pb__pdf{margin-left:0; width:100%; justify-content:center}}
 .pb__chips{display:flex; gap:.4rem; overflow-x:auto; padding-bottom:.2rem}
 .pb__chip{flex:none; display:inline-flex; align-items:center; gap:.5rem; font-size:.8rem; min-height:38px; padding:.3rem .85rem; border-radius:999px; border:1px solid var(--line); color:var(--muted); text-decoration:none; background:var(--panel)}
 .pb__chip b{font-size:.74rem; color:var(--fg); padding:.05rem .45rem; border-radius:999px; background:color-mix(in srgb, var(--fg) 8%, transparent)}

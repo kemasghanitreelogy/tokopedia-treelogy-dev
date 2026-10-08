@@ -22,3 +22,11 @@ test('an empty batch is one page that says so', async () => {
   const doc = await PDFDocument.load(await picklistPdf({ date: '2026-10-08', orders: [], picklist: buildPicklist([]) }));
   assert.equal(doc.getPageCount(), 1);
 });
+
+test('a sheet can be per product, per parcel, or both', async () => {
+  const pick = buildPicklist(orders);
+  const pages = async (mode) => (await PDFDocument.load(await picklistPdf({ date: '2026-10-08', orders, picklist: pick, mode, fetcher: async () => ({ ok: false }) }))).getPageCount();
+  const [items, parcels, both] = await Promise.all([pages('items'), pages('orders'), pages('all')]);
+  assert.equal(items, 1, 'dua produk muat satu halaman');
+  assert.ok(parcels >= 2 && both >= parcels);
+});

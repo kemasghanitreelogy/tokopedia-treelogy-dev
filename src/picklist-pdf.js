@@ -40,9 +40,12 @@ async function fetchImage(url, fetcher) {
  * @param {{date: string, orders: Array, picklist: object, images?: object, generatedAt?: number, fetcher?: Function}} input
  * @returns {Promise<Uint8Array>}
  */
-export async function picklistPdf({ date, orders, picklist, images = {}, generatedAt = Date.now(), fetcher = fetch }) {
+export async function picklistPdf({ date, orders, picklist, images = {}, generatedAt = Date.now(), fetcher = fetch, mode = 'all' }) {
+  // 'items' (what to take off the shelf), 'orders' (what goes in each parcel) or both.
+  const showItems = mode !== 'orders';
+  const showOrders = mode !== 'items';
   const pdf = await PDFDocument.create();
-  pdf.setTitle(`Picklist batch ${date}`);
+  pdf.setTitle(`Picklist batch ${date}${mode === 'items' ? ' - per produk' : mode === 'orders' ? ' - per transaksi' : ''}`);
   pdf.setProducer('Treelogy omnichannel');
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -66,7 +69,7 @@ export async function picklistPdf({ date, orders, picklist, images = {}, generat
     const hit = images[sku] ?? (p && images[p.sku]) ?? (p?.components ?? []).map((c) => images[c.sku] ?? images[findProduct(c.sku)?.sku]).find(Boolean);
     return hit?.thumb || hit?.url || '';
   };
-  const wanted = [...new Set(picklist.items.map((i) => photoUrl(i.sku)).filter(Boolean))];
+  const wanted = showItems ? [...new Set(picklist.items.map((i) => photoUrl(i.sku)).filter(Boolean))] : [];
   const embedded = new Map();
   await Promise.all(wanted.map(async (url) => {
     const img = await fetchImage(url, fetcher);
@@ -125,9 +128,9 @@ export async function picklistPdf({ date, orders, picklist, images = {}, generat
     y -= 22;
     rule();
   };
-  section('1. Ambil dari rak', `${picklist.skuCount} produk, ${picklist.unitCount} unit`);
   const ROW = 40;
-  for (const item of picklist.items) {
+  if (showItems) section(`${showOrders ? '1. ' : ''}Ambil dari rak`, `${picklist.skuCount} produk, ${picklist.unitCount} unit`);
+  for (const item of showItems ? picklist.items : []) {
     need(ROW);
     const top = y - 6;
     box(M + 2, top - 9, 12);
@@ -152,11 +155,11 @@ export async function picklistPdf({ date, orders, picklist, images = {}, generat
     y -= ROW;
     rule();
   }
-  y -= 14;
+  if (showItems) y -= 14;
 
   /* ------------------------------------------------- 2. per transaction */
-  section('2. Isi tiap paket', `${orders.length} pesanan, urut masuk picklist`);
-  for (const o of orders) {
+  if (showOrders) section(`${showItems ? '2. ' : ''}Isi tiap paket`, `${orders.length} pesanan, urut masuk picklist`);
+  for (const o of showOrders ? orders : []) {
     const lines = o.lines ?? [];
     const h = 26 + lines.length * 14 + 8;
     need(Math.min(h, 200));

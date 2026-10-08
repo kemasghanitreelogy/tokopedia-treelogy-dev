@@ -3617,7 +3617,11 @@ export function renderPicklist({ picklist, orders = [], images = {}, batch = nul
         <div class="pb__t"><b>Batch ${escape(WITA_DAY(batch.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</b>
           <span>${escape(WITA_DAY(shiftDay(batch.date, -1), { day: 'numeric', month: 'short' }))} 15.00 &ndash; ${escape(WITA_DAY(batch.date, { day: 'numeric', month: 'short' }))} 15.00 WITA${isLive ? ' &middot; <em class="pb__live">berjalan</em>' : ''}</span></div>
         ${isLive ? '' : `<a class="pb__now" href="?view=picklist">Batch berjalan</a>`}
-        <a class="pb__pdf" href="?view=picklist&amp;batch=${batch.date}&amp;format=pdf" download="picklist-batch-${batch.date}.pdf">${svg('printer')}<span>Download PDF</span></a>
+        <details class="pb__dl">
+          <summary class="pb__pdf">${svg('printer')}<span>Download PDF</span><i aria-hidden="true">${svg('chevR')}</i></summary>
+          <div class="pb__menu" role="menu">${[['items', 'Per produk', 'Yang diambil dari rak, digabung per produk'], ['orders', 'Per transaksi', 'Isi tiap paket, satu per pesanan'], ['all', 'Keduanya', 'Per produk lalu per transaksi']].map(([m, label, hint]) =>
+            `<a role="menuitem" href="?view=picklist&amp;batch=${batch.date}&amp;format=pdf&amp;mode=${m}" download="picklist-batch-${batch.date}${m === 'items' ? '-per-produk' : m === 'orders' ? '-per-transaksi' : ''}.pdf"><b>${label}</b><span>${hint}</span></a>`).join('')}</div>
+        </details>
       </div>
       ${batch.list.length ? `<nav class="pb__chips" aria-label="Batch lain">${batch.list.slice(0, 10).map(([d, n]) => `<a class="pb__chip${d === batch.date ? ' is-on' : ''}" href="${batchHref(d)}"><span>${escape(d === batch.current ? 'Berjalan' : WITA_DAY(d, { weekday: 'short', day: 'numeric', month: 'short' }))}</span><b class="mono">${n}</b></a>`).join('')}</nav>` : ''}
       <p class="pb__note">${svg('check2')}<span>Stok gudang berkurang otomatis saat pesanan masuk picklist: langsung bila tidak perlu diproses, atau begitu diatur pengirimannya. Batal atau retur kembali ke rak dengan sendirinya.</span></p>
@@ -3680,11 +3684,21 @@ const PICK_STYLE = `
 .pb__live{font-style:normal; color:var(--brand); font-weight:600}
 .pb__now{font-size:.8rem; color:var(--brand); margin-left:auto}
 .pb__pdf{display:inline-flex; align-items:center; gap:.45rem; margin-left:auto; font-size:.86rem; font-weight:600; min-height:42px; padding:.45rem 1.1rem; border-radius:999px; border:1px solid var(--brand); background:var(--brand); color:var(--bg); text-decoration:none; transition:filter .15s}
-.pb__now + .pb__pdf{margin-left:.5rem}
+.pb__dl{position:relative; margin-left:auto}
+.pb__now + .pb__dl{margin-left:.5rem}
+.pb__dl .pb__pdf{margin-left:0; cursor:pointer; list-style:none}
+.pb__dl .pb__pdf::-webkit-details-marker{display:none}
+.pb__dl .pb__pdf i{display:inline-grid; transition:transform .15s}
+.pb__dl .pb__pdf i .ico{width:14px; height:14px}
+.pb__dl[open] .pb__pdf i{transform:rotate(90deg)}
+.pb__menu{position:absolute; right:0; top:calc(100% + .4rem); z-index:40; min-width:17rem; display:flex; flex-direction:column; padding:.35rem; border-radius:var(--radius-s); border:1px solid var(--line); background:var(--panel); box-shadow:0 18px 40px -14px rgba(0,0,0,.5)}
+.pb__menu a{display:flex; flex-direction:column; gap:.1rem; padding:.6rem .75rem; border-radius:9px; color:var(--fg); text-decoration:none; min-height:44px}
+.pb__menu a span{font-size:.74rem; color:var(--muted)}
+.pb__menu a:hover, .pb__menu a:focus-visible{background:color-mix(in srgb, var(--brand) 14%, transparent); outline:none}
 .pb__pdf:hover{filter:brightness(1.08)}
 .pb__pdf:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .pb__pdf .ico{width:17px; height:17px}
-@media (max-width:700px){.pb__pdf{margin-left:0; width:100%; justify-content:center}}
+@media (max-width:700px){.pb__dl{margin-left:0; width:100%} .pb__pdf{width:100%; justify-content:center} .pb__menu{left:0; right:0}}
 .pb__chips{display:flex; gap:.4rem; overflow-x:auto; padding-bottom:.2rem}
 .pb__chip{flex:none; display:inline-flex; align-items:center; gap:.5rem; font-size:.8rem; min-height:38px; padding:.3rem .85rem; border-radius:999px; border:1px solid var(--line); color:var(--muted); text-decoration:none; background:var(--panel)}
 .pb__chip b{font-size:.74rem; color:var(--fg); padding:.05rem .45rem; border-radius:999px; background:color-mix(in srgb, var(--fg) 8%, transparent)}
@@ -3744,6 +3758,9 @@ const PICK_SCRIPT = `
     document.querySelectorAll('.pk__tab').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.pane === name)); });
     document.querySelectorAll('[data-pane-body]').forEach(function (b) { b.hidden = b.dataset.paneBody !== name; });
   }
+  document.addEventListener('click', function (e) {
+    document.querySelectorAll('.pb__dl[open]').forEach(function (d) { if (!d.contains(e.target) || e.target.closest('.pb__menu a')) d.open = false; });
+  });
   document.querySelectorAll('.pb [data-autosubmit]').forEach(function (input) {
     input.addEventListener('change', function () { if (input.value) input.form.submit(); });
   });

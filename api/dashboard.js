@@ -2449,9 +2449,11 @@ export default async function handler(req, res) {
       const picklist = buildPicklist(orders);
       if (url.searchParams.get('format') === 'pdf') {
         // The same batch, as an A4 sheet to print and tick off at the shelf.
-        const pdf = await picklistPdf({ date, orders, picklist, images: await imagesByKey() });
-        console.log(`dashboard/picklist: pdf batch ${date} ${picklist.orderCount} pesanan (${took()})`);
-        send(200, Buffer.from(pdf), { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="picklist-batch-${date}.pdf"` });
+        const mode = ['items', 'orders'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'all';
+        const pdf = await picklistPdf({ date, orders, picklist, images: await imagesByKey(), mode });
+        const suffix = { items: '-per-produk', orders: '-per-transaksi', all: '' }[mode];
+        console.log(`dashboard/picklist: pdf batch ${date} ${mode} ${picklist.orderCount} pesanan (${took()})`);
+        send(200, Buffer.from(pdf), { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="picklist-batch-${date}${suffix}.pdf"` });
         return;
       }
       console.log(`dashboard/picklist: batch ${date} ${picklist.orderCount} pesanan, ${picklist.unitCount} unit (${took()})`);

@@ -1,6 +1,7 @@
 import { fetchOrdersByIds } from '../src/omni.js';
 import { ordersForPrinting } from '../src/orders-by-id.js';
 import { markPrinted } from '../src/shopify/label.js';
+import { warehouseSweep } from '../src/warehouse-run.js';
 import { buildLabelSheet, LABEL_SIZES, DEFAULT_SIZE } from '../src/labels.js';
 import { dashboardError, renderLabelReport } from '../src/dashboard-page.js';
 import {
@@ -110,6 +111,8 @@ export default async function handler(req, res) {
       await markPrinted(sheet.printed, { by: user.email }).catch((error) => {
         console.warn(`labels: gagal mencatat cetakan Shopify - ${error.message}`);
       });
+      // Printed is on the picklist, and on the picklist is off the shelf - counted now.
+      void warehouseSweep();
     }
 
     console.log(`labels: ${sheet.pageCount} pages for ${chosen.length} orders at ${size}, ${sheet.failures.length} failed`);

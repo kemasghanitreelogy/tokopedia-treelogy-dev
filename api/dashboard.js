@@ -888,6 +888,7 @@ export async function handleWrite(form, ip, user, csrf) {
     if (keys.length > 200) throw new Error('terlalu banyak sekaligus');
 
     await markPrinted(keys, { by: user.email, marked: true });
+    void warehouseSweep();
     console.log(`dashboard: label_printed ${keys.length} pesanan ditandai tanpa dicetak`);
     return {
       view: 'labels', message: `${keys.length} pesanan ditandai sudah dicetak`,

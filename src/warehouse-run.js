@@ -2,8 +2,8 @@ import { updateDoc, readDoc } from './store/index.js';
 import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, recordPick } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
-import { printedLabels, arrangedOrders } from './shopify/label.js';
-import { nextAction } from './fulfillment.js';
+import { printedLabels } from './shopify/label.js';
+import { sourceShips } from './mekari/prefix.js';
 import { ordersInRange } from './db/orders.js';
 
 /**
@@ -14,9 +14,11 @@ export async function withPrintTimes(orders, printed) {
   const ledger = printed ?? await printedLabels().catch(() => ({}));
   return (orders ?? []).map((order) => {
     const entry = ledger[`${order.channel}:${order.id}`] ?? ledger[order.id] ?? null;
-    // A backlog marked printed without printing says nothing about when it left.
+    // A backlog marked printed without printing says nothing about when it left, but it
+    // does say a label exists: `labelled` without a `printedAt`.
     const at = entry && !entry.marked ? Number(entry.first ?? entry.at) : 0;
-    return at > 0 ? { ...order, printedAt: at } : order;
+    if (at > 0) return { ...order, printedAt: at, labelled: true };
+    return entry ? { ...order, labelled: true } : order;
   });
 }
 
@@ -32,12 +34,19 @@ export async function loadWarehouse() {
 
 /** Count these orders against the shelf. Idempotent: an order already counted is skipped. */
 /**
- * Whether an order has reached the picklist - and so leaves the shelf now: paid and with
- * nothing left to do on the Proses page (the same nextAction that page reads), or gone
- * further already (packed, shipped, delivered, done) without ever having been counted.
+ * Whether an order has reached the picklist - and so leaves the shelf now:
+ *   its label has been printed (here, or marked as printed elsewhere);
+ *   a typed-in sale that ships no parcel (walk-in, consignment, La Brisa, wholesale) at
+ *     once, as there is no label to wait for - WhatsApp and resends do wait for theirs;
+ *   and, as the net under both, one that has shipped without ever being counted - its
+ *     label came out of some other printer, and the goods are gone all the same.
  */
-export function onPicklist(arranged = {}) {
-  return (order) => (order.stage === 'to_ship' && !nextAction(order, arranged)) || LEFT.has(order.stage);
+export function onPicklist() {
+  return (order) => {
+    if (order.channel === 'manual' && !sourceShips(order.source ?? String(order.id ?? '').split('-')[0])) return true;
+    if (order.labelled) return true;
+    return LEFT.has(order.stage);
+  };
 }
 const LEFT = new Set(['shipping', 'delivered', 'completed']);
 
@@ -48,7 +57,8 @@ const LEFT = new Set(['shipping', 'delivered', 'completed']);
  */
 export async function syncWarehouse(orders, { now = Date.now(), update = updateDoc, printed, arranged } = {}) {
   orders = await withPrintTimes(orders, printed);
-  const ready = onPicklist(arranged ?? await arrangedOrders().catch(() => ({})));
+  void arranged;
+  const ready = onPicklist();
   let moved = [];
   await update(WAREHOUSE_DOC, (current) => {
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
@@ -63,14 +73,14 @@ export async function syncWarehouse(orders, { now = Date.now(), update = updateD
 }
 
 /**
- * Something on the Proses page changed (an order arranged): read the week's orders and
- * count whatever reached the picklist. Never throws, never awaited by its caller.
+ * Labels came out (or something else moved orders on): read the week's orders and count
+ * whatever reached the picklist. Never throws, never awaited by its caller.
  */
 export function warehouseSweep() {
   const now = Math.floor(Date.now() / 1000);
   return ordersInRange({ since: now - 7 * 86400, until: now })
     .then((orders) => syncWarehouse(orders))
-    .then(({ moved }) => { if (moved.length) console.log(`gudang: ${moved.length} gerakan setelah atur pengiriman`); })
+    .then(({ moved }) => { if (moved.length) console.log(`gudang: ${moved.length} gerakan dari picklist`); })
     .catch((error) => console.warn(`gudang: sapuan gagal - ${error.message}`));
 }
 

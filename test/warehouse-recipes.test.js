@@ -148,7 +148,8 @@ test('a push and a sweep counting the same orders at once take them off once', a
   // A store that makes the second writer collide and retry on the fresh document.
   const update = async (_key, fn, empty) => { const base = structuredClone(state ?? empty); await new Promise((r) => setImmediate(r)); state = fn(structuredClone(state ?? base)); return state; };
   const list = [order('P1', 'to_ship', [['MRS-001', 1]]), order('P2', 'to_ship', [['OMO-30-001', 3]])];
-  await Promise.all([syncWarehouse(list, { update, printed: {}, arranged: {} }), syncWarehouse(list, { update, printed: {}, arranged: {} })]);
+  const labels = { 'shopee:P1': { first: OPENING_AT + 700 }, 'shopee:P2': { first: OPENING_AT + 700 } };
+  await Promise.all([syncWarehouse(list, { update, printed: labels }), syncWarehouse(list, { update, printed: labels })]);
   assert.deepEqual([state.items['M-093'].qty, state.items['M-038'].qty], [217, 55]);
   assert.deepEqual(verifyWarehouse(state), []);
 });
@@ -165,31 +166,13 @@ test('print times come from the ledger, and a backlog marked printed without pri
 });
 
 
-test('the picklist holds only orders with nothing left to arrange on the Proses page', async () => {
-  const { readyToPick } = await import('../src/picklist.js');
-  const shelf = opened();
-  const at = OPENING_AT + 600;
-  const o = (channel, status, extra = {}) => ({ id: `${channel}-${status}`, channel, stage: 'to_ship', status, createdAt: at, lines: [{ sku: 'OMC-90-001', qty: 1 }], ...extra });
-  const cases = [
-    [o('shopee', 'READY_TO_SHIP'), false, 'Shopee belum diatur'],
-    [o('shopee', 'PROCESSED'), true, 'Shopee sudah diatur'],
-    [o('tokopedia', 'AWAITING_SHIPMENT'), false, 'Tokopedia belum diatur'],
-    [o('tokopedia', 'AWAITING_COLLECTION'), true, 'Tokopedia sudah diatur'],
-    [o('shopify', 'PAID/UNFULFILLED', { id: '#1' }), false, 'Shopify belum diatur'],
-    [o('shopify', 'PAID/UNFULFILLED', { id: '#2' }), true, 'Shopify sudah diatur'],
-    [o('manual', 'x', { source: 'OFFLINE' }), true, 'transaksi tanpa kurir'],
-  ];
-  const arranged = { '#2': { at } };
-  for (const [order, want, why] of cases) assert.equal(readyToPick(order, { shelf, arranged }), want, why);
-  assert.equal(readyToPick({ ...o('shopee', 'PROCESSED'), stage: 'shipping' }, { shelf, arranged }), false, 'sudah dikirim bukan picklist');
-});
-
 test('each run that takes orders lands in the picklist history with them, in the same write', async () => {
   const { syncWarehouse } = await import('../src/warehouse-run.js');
   let state = null;
   const update = async (_k, fn, empty) => { state = fn(structuredClone(state ?? empty)); return state; };
-  await syncWarehouse([order('H1', 'to_ship', [['MRS-001', 1]]), order('H2', 'to_ship', [['OMC-90-001', 2]])], { update, printed: {}, arranged: {}, now: (OPENING_AT + 7200) * 1000 });
-  await syncWarehouse([order('H1', 'to_ship', [['MRS-001', 1]])], { update, printed: {}, arranged: {}, now: (OPENING_AT + 7300) * 1000 });
+  const labels = { 'shopee:H1': { first: OPENING_AT + 700 }, 'shopee:H2': { first: OPENING_AT + 700 } };
+  await syncWarehouse([order('H1', 'to_ship', [['MRS-001', 1]]), order('H2', 'to_ship', [['OMC-90-001', 2]])], { update, printed: labels, now: (OPENING_AT + 7200) * 1000 });
+  await syncWarehouse([order('H1', 'to_ship', [['MRS-001', 1]])], { update, printed: labels, now: (OPENING_AT + 7300) * 1000 });
   assert.equal(state.picks.length, 1, 'a run that took nothing new leaves no run');
   assert.deepEqual(state.picks[0].orders.map((x) => [x.key, x.units]), [['shopee|H1', 4], ['shopee|H2', 2]]);
   assert.equal(state.picks[0].by, 'otomatis');
@@ -204,25 +187,32 @@ test('a document confirmed before the history existed gets it from its orders', 
   assert.deepEqual([doc.picks[0].by, doc.picks[0].orders.length, doc.picks[0].orders[1].units], ['Kemas', 2, 2]);
 });
 
-test('an order leaves the shelf the moment it reaches the picklist, never before', async () => {
+test('an order leaves the shelf when its label is printed; a sale with no parcel at once', async () => {
   const { syncWarehouse } = await import('../src/warehouse-run.js');
   let state = null;
   const update = async (_k, fn, empty) => { state = fn(structuredClone(state ?? empty)); return state; };
-  const o = (id, channel, stage, status, extra = {}) => ({ id, channel, stage, status, createdAt: OPENING_AT + 600, lines: [{ sku: 'OMC-90-001', qty: 1 }], ...extra });
-  const run = (orders, arranged = {}) => syncWarehouse(orders, { update, printed: {}, arranged });
-  // Waiting on "Atur pengiriman": nothing moves.
-  await run([o('A', 'shopee', 'to_ship', 'READY_TO_SHIP'), o('B', 'tokopedia', 'to_ship', 'AWAITING_SHIPMENT'), o('#C', 'shopify', 'to_ship', 'PAID'), o('D', 'shopee', 'unpaid', 'UNPAID')]);
+  const o = (id, channel, stage, extra = {}) => ({ id, channel, stage, createdAt: OPENING_AT + 600, lines: [{ sku: 'OMC-90-001', qty: 1 }], ...extra });
+  const run = (orders, printed = {}) => syncWarehouse(orders, { update, printed });
+  // Arranged or not, no label yet: nothing moves. WhatsApp and a resend wait for theirs too.
+  await run([o('A', 'shopee', 'to_ship', { status: 'PROCESSED' }), o('#B', 'shopify', 'to_ship'), o('DP-261008-0001', 'manual', 'to_ship', { source: 'DP' }), o('RS-261008-0002', 'manual', 'to_ship', { source: 'RS' })]);
   assert.equal(state.items['M-036'].qty, 248);
-  // Arranged: on the picklist, off the shelf - each once, however often it is read.
-  await run([o('A', 'shopee', 'to_ship', 'PROCESSED'), o('B', 'tokopedia', 'to_ship', 'AWAITING_COLLECTION'), o('#C', 'shopify', 'to_ship', 'PAID')], { '#C': { at: 1 } });
-  await run([o('A', 'shopee', 'shipping', 'SHIPPED'), o('B', 'tokopedia', 'to_ship', 'AWAITING_COLLECTION')], { '#C': { at: 1 } });
-  assert.equal(state.items['M-036'].qty, 245);
-  // Shipped before anybody saw it on the list: it left all the same.
-  await run([o('E', 'tiktok_shop', 'shipping', 'IN_TRANSIT')]);
+  // A walk-in carries its goods out: off at once.
+  await run([o('DW-261008-0003', 'manual', 'completed', { source: 'DW' })]);
+  assert.equal(state.items['M-036'].qty, 247);
+  // Labels printed: off, each once however often it is read.
+  const printed = { 'shopee:A': { first: OPENING_AT + 700 }, '#B': { at: OPENING_AT + 700 }, 'manual:DP-261008-0001': { first: OPENING_AT + 700 } };
+  await run([o('A', 'shopee', 'to_ship'), o('#B', 'shopify', 'to_ship'), o('DP-261008-0001', 'manual', 'to_ship', { source: 'DP' })], printed);
+  await run([o('A', 'shopee', 'shipping'), o('#B', 'shopify', 'to_ship')], printed);
   assert.equal(state.items['M-036'].qty, 244);
+  // A label marked printed elsewhere counts as a label.
+  await run([o('RS-261008-0002', 'manual', 'to_ship', { source: 'RS' })], { 'manual:RS-261008-0002': { at: OPENING_AT + 800, marked: true } });
+  assert.equal(state.items['M-036'].qty, 243);
+  // Shipped with a label from some other printer: gone all the same.
+  await run([o('E', 'tiktok_shop', 'shipping')]);
+  assert.equal(state.items['M-036'].qty, 242);
   // Cancelled after it was taken: back on the shelf.
-  await run([o('A', 'shopee', 'cancelled', 'CANCELLED')]);
-  assert.equal(state.items['M-036'].qty, 245);
+  await run([o('A', 'shopee', 'cancelled')], printed);
+  assert.equal(state.items['M-036'].qty, 243);
   assert.deepEqual(verifyWarehouse(state), []);
 });
 

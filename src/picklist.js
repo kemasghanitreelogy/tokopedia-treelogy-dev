@@ -1,17 +1,7 @@
 import { CHANNELS , MANUAL_CHANNEL } from './omni.js';
-import { nextAction } from './fulfillment.js';
-import { awaitingPick, batchOf } from './warehouse.js';
+import { batchOf } from './warehouse.js';
 import { findProduct } from './master.js';
 
-/**
- * Whether an order belongs on the picklist now: still to be picked from the shelf (after
- * the migration, not yet confirmed) and with nothing left to do on the Proses page. One
- * that needs "Atur pengiriman" joins once it is arranged; one that never needs it joins
- * at once.
- */
-export function readyToPick(order, { shelf = null, arranged = {} } = {}) {
-  return PICKABLE_STAGES.has(order?.stage) && awaitingPick(shelf, order) && !nextAction(order, arranged);
-}
 
 /**
  * What the warehouse actually has to pick.

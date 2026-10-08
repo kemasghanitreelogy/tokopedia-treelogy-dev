@@ -158,7 +158,7 @@ export async function picklistPdf({ date, orders, picklist, images = {}, generat
   if (showItems) y -= 14;
 
   /* ------------------------------------------------- 2. per transaction */
-  if (showOrders) section(`${showItems ? '2. ' : ''}Isi tiap paket`, `${orders.length} pesanan, urut masuk picklist`);
+  if (showOrders) section(`${showItems ? '2. ' : ''}Isi tiap paket`, `${orders.length} pesanan, urut jam pesanan`);
   for (const o of showOrders ? orders : []) {
     const lines = o.lines ?? [];
     const h = 26 + lines.length * 14 + 8;

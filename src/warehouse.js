@@ -45,9 +45,9 @@ export const afterOpening = (order) => leftAtOf(order) >= OPENING_AT;
 const about = (order) => ({ buyer: String(order.buyer ?? '').slice(0, 80), created: Number(order.createdAt) || null });
 
 /**
- * Picklist batches close at 15:00 WITA (UTC+8), the courier cut-off: an order that
- * reaches the picklist after 15:00 belongs to the next day's batch. A batch is named by
- * the WITA date it closes on.
+ * Picklist batches close at 15:00 WITA (UTC+8), the courier cut-off: an order placed
+ * after 15:00 belongs to the next day's batch - by when it was ordered, not when its
+ * label came out. A batch is named by the WITA date it closes on.
  */
 export const BATCH_CLOSE_HOUR_WITA = 15;
 const WITA = 8 * 3600;
@@ -311,6 +311,9 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
       apply(key, 1, read.items, -1, 'order', `Picklist ${label}`);
       continue;
     }
+    // Counted before the order's own time was kept: remember it now, nothing moves. The
+    // picklist batch an order belongs to is decided by when it was ordered.
+    if (!seen.created && Number(order.createdAt) > 0) next.orders[key] = { ...seen, ...about(order), buyer: seen.buyer || about(order).buyer };
     const rev = (seen.rev ?? 1) + 1;
     if (undone && !seen.undone) {
       apply(key, rev, seen.items ?? {}, +1, 'return', `${order.stage === 'returned' ? 'Retur' : 'Batal'} ${label}`);

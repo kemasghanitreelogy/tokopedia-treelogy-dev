@@ -225,13 +225,26 @@ test('a batch runs from 15:00 WITA the day before to 15:00 WITA, and leaves out 
   assert.equal(batchOf(at('2026-10-06T15:00:01+08:00')), '2026-10-07');
   assert.deepEqual(batchWindow('2026-10-07'), { from: at('2026-10-06T15:00:00+08:00'), to: at('2026-10-07T15:00:00+08:00') });
   const doc = { orders: {
+    // Ordered the evening before the cut, label printed the next morning: yesterday's
+    // order, but past 15:00 - batch of the 8th by when it was ordered, not printed.
+    'shopee|L': { picked: at('2026-10-08T09:00:00+08:00'), created: at('2026-10-07T16:30:00+08:00'), lines: { 'OMC-90-001': 1 } },
+    'shopee|M': { picked: at('2026-10-07T16:10:00+08:00'), created: at('2026-10-07T14:59:00+08:00'), lines: { 'OMC-90-001': 1 } },
     'shopee|A': { picked: at('2026-10-07T09:00:00+08:00'), lines: { 'OMC-90-001': 2 }, buyer: 'Rina' },
     'shopify|#9': { picked: at('2026-10-06T16:00:00+08:00'), lines: { 'MRS-001': 1 } },
     'shopee|X': { picked: at('2026-10-07T10:00:00+08:00'), lines: { 'OMC-90-001': 1 }, undone: 1 },
     'shopee|N': { picked: at('2026-10-07T16:00:00+08:00'), lines: { 'OMO-30-001': 1 } },
   } };
   const b = batchOrders(doc, '2026-10-07');
-  assert.deepEqual(b.map((o) => o.id), ['#9', 'A']);
+  assert.deepEqual(b.map((o) => o.id), ['#9', 'A', 'M'], 'M dipesan 14.59, labelnya 16.10: tetap batch 7');
   assert.equal(b[1].lines[0].name, 'Moringa Capsules', 'dinamai dari master');
-  assert.deepEqual(batchesIn(doc), [['2026-10-08', 1], ['2026-10-07', 2]]);
+  assert.deepEqual(batchesIn(doc), [['2026-10-08', 2], ['2026-10-07', 3]]);
+});
+
+test('an order counted before its own time was kept gets it from the next read, moving nothing', () => {
+  const doc = opened();
+  doc.orders = { 'shopee|Q': { at: OPENING_AT + 900, rev: 1, picked: OPENING_AT + 900, lines: { 'OMC-90-001': 1 }, items: { 'M-036': 1 } } };
+  const { doc: next, moved } = readOrders(doc, [{ ...order('Q', 'to_ship', [['OMC-90-001', 1]]), createdAt: OPENING_AT + 300, buyer: 'Rina' }]);
+  assert.deepEqual(moved, []);
+  assert.equal(next.orders['shopee|Q'].created, OPENING_AT + 300);
+  assert.equal(next.orders['shopee|Q'].buyer, 'Rina');
 });

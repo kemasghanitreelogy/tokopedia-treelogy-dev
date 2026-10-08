@@ -63,9 +63,12 @@ export function ordersForSku(orders, sku, { stages = PICKABLE_STAGES } = {}) {
     }));
 }
 
+/** When the order was placed, which decides its batch; when it was taken, for one recorded before. */
+const orderedAt = (row) => Number(row.created) || row.picked;
+
 /**
- * One picklist batch, from the warehouse's own record of what it took: every order that
- * reached the picklist (and so left the shelf) inside the batch's window, minus those
+ * One picklist batch, from the warehouse's own record of what it took: every order placed
+ * inside the batch's window that has reached the picklist (and so left the shelf), minus those
  * cancelled or returned since. `live` lends the current order (buyer, lines as titled on
  * the channel) where it is still at hand; otherwise the lines are named from the master.
  */
@@ -73,7 +76,7 @@ export function batchOrders(doc, date, live = []) {
   const byKey = new Map(live.map((o) => [`${o.channel}|${o.id}`, o]));
   const out = [];
   for (const [key, row] of Object.entries(doc?.orders ?? {})) {
-    if (!row?.picked || row.undone || batchOf(row.picked) !== date) continue;
+    if (!row?.picked || row.undone || batchOf(orderedAt(row)) !== date) continue;
     const at = key.indexOf('|');
     const channel = key.slice(0, at);
     const id = key.slice(at + 1);
@@ -90,7 +93,7 @@ export function batchOrders(doc, date, live = []) {
       gateways: current?.gateways,
     });
   }
-  return out.sort((a, b) => a.pickedAt - b.pickedAt || a.createdAt - b.createdAt);
+  return out.sort((a, b) => a.createdAt - b.createdAt || a.pickedAt - b.pickedAt);
 }
 
 /** The batches the record holds, newest first, with how many orders each took. */
@@ -98,7 +101,7 @@ export function batchesIn(doc) {
   const counts = new Map();
   for (const row of Object.values(doc?.orders ?? {})) {
     if (!row?.picked || row.undone) continue;
-    const d = batchOf(row.picked);
+    const d = batchOf(orderedAt(row));
     counts.set(d, (counts.get(d) ?? 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[0].localeCompare(a[0]));

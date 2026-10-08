@@ -3624,7 +3624,7 @@ export function renderPicklist({ picklist, orders = [], images = {}, batch = nul
         </details>
       </div>
       ${batch.list.length ? `<nav class="pb__chips" aria-label="Batch lain">${batch.list.slice(0, 10).map(([d, n]) => `<a class="pb__chip${d === batch.date ? ' is-on' : ''}" href="${batchHref(d)}"><span>${escape(d === batch.current ? 'Berjalan' : WITA_DAY(d, { weekday: 'short', day: 'numeric', month: 'short' }))}</span><b class="mono">${n}</b></a>`).join('')}</nav>` : ''}
-      <p class="pb__note">${svg('check2')}<span>Pesanan masuk picklist dan stok gudang berkurang otomatis saat labelnya dicetak. Transaksi manual tanpa kurir (walk-in, konsinyasi, La Brisa, grosir) langsung masuk; WhatsApp dan kirim ulang menunggu labelnya. Batal atau retur kembali ke rak dengan sendirinya.</span></p>
+      <p class="pb__note">${svg('check2')}<span>Batch dihitung dari jam pesanan (tutup 15.00 WITA). Pesanan masuk picklist dan stok gudang berkurang otomatis saat labelnya dicetak. Transaksi manual tanpa kurir (walk-in, konsinyasi, La Brisa, grosir) langsung masuk; WhatsApp dan kirim ulang menunggu labelnya. Batal atau retur kembali ke rak dengan sendirinya.</span></p>
     </div>` : '';
   const confirm = '';
 

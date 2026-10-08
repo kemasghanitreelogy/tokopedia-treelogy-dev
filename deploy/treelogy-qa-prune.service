@@ -1,0 +1,12 @@
+# /etc/systemd/system/treelogy-qa-prune.service  (dijalankan oleh treelogy-qa-prune.timer)
+[Unit]
+Description=Treelogy QA: hapus laporan run yang lebih tua dari 1 hari
+
+[Service]
+Type=oneshot
+# Pemilik laporannya; tidak perlu root dan tidak bisa menyentuh yang lain.
+User=treelogyqa
+Group=treelogyqa
+ExecStart=/opt/treelogy/app/deploy/qa-prune.sh
+Nice=10
+IOSchedulingClass=idle

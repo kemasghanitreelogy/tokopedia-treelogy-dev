@@ -364,6 +364,23 @@ async function cmdStockApply(config, args = []) {
  *
  * Dry run unless --yes, like every other write here. The timer passes --yes.
  */
+/** Disk check for the timer: prints the reading, and tells Telegram above 80%. */
+async function cmdOpsDisk() {
+  const { diskUsage, diskAlert } = await import('./ops/disk.js');
+  const usage = await diskUsage('/');
+  console.log(`  disk ${usage.percent}% terpakai, sisa ${(usage.free / 1024 ** 3).toFixed(1)} GB`);
+  const alert = diskAlert(usage);
+  // Only the server's own disk is worth a message: run anywhere else (a laptop, a test)
+  // this prints the reading and says nothing to anybody.
+  if (alert && process.env.NODE_ENV !== 'production') {
+    console.log(`  ${warn('bukan server produksi')}: peringatan tidak dikirim`);
+  } else if (alert) {
+    const sent = await sendTelegram(alert.html, { key: alert.key }).catch((error) => ({ sent: false, reason: error.message }));
+    console.log(`  ${alert.critical ? fail('KRITIS') : warn('peringatan')}: telegram ${sent.sent ? 'terkirim' : `tidak dikirim (${sent.reason})`}`);
+  }
+  return 0;
+}
+
 async function cmdStockTopup(config, args = []) {
   const now = Date.now();
   const catalog = await readCatalog();
@@ -1875,6 +1892,7 @@ const COMMANDS = {
   'stock:plan': cmdStockPlan,
   'stock:apply': cmdStockApply,
   'stock:topup': cmdStockTopup,
+  'ops:disk': cmdOpsDisk,
   'stock:history': cmdStockHistory,
   'mekari:setup': cmdMekariSetup,
   'mekari:plan': cmdMekariPlan,

@@ -1,0 +1,13 @@
+# /etc/systemd/system/treelogy-disk.service  (dijalankan oleh treelogy-disk.timer)
+[Unit]
+Description=Treelogy: peringatan Telegram kalau disk terisi lebih dari 80%
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node bin/tts.mjs ops:disk
+TimeoutStartSec=2min

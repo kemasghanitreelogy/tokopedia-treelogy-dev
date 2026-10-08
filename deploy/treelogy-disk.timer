@@ -1,0 +1,13 @@
+# /etc/systemd/system/treelogy-disk.timer
+[Unit]
+Description=Treelogy: cek sisa disk tiap 15 menit
+
+[Timer]
+# Pada 8 Okt 2026 disk penuh dalam beberapa jam saat run QA berjalan; seperempat jam
+# cukup untuk diberi tahu sebelum Redis berhenti menulis.
+OnBootSec=3min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

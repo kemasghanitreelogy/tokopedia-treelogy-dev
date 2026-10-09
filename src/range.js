@@ -29,8 +29,8 @@ const DAY = 24 * 3600;
 
 export const PRESETS = {
   today: { label: 'Hari ini' },
+  yesterday: { label: 'Kemarin' },
   '7d': { label: '7 hari', days: 7 },
-  '14d': { label: '14 hari', days: 14 },
   '30d': { label: '30 hari', days: 30 },
 };
 
@@ -85,14 +85,20 @@ export function resolveRange({ preset, from, to, now = Date.now(), fallback = '7
 
   const key = PRESETS[preset] ? preset : fallback;
   const chosen = PRESETS[key];
-  const since = key === 'today' ? wibDayStart(wibDate(nowSeconds)) : nowSeconds - chosen.days * DAY;
+  const todayStart = wibDayStart(wibDate(nowSeconds));
+  // Yesterday is the one preset that does not end now: it is the whole previous business
+  // day, closed at the last second before today began.
+  const until = key === 'yesterday' ? todayStart - 1 : nowSeconds;
+  const since = key === 'today' ? todayStart
+    : key === 'yesterday' ? wibDayStart(wibDate(until))
+    : nowSeconds - chosen.days * DAY;
 
   return {
     since,
-    until: nowSeconds,
+    until,
     preset: key,
     from: wibDate(since),
-    to: wibDate(nowSeconds),
+    to: wibDate(until),
     label: chosen.label,
     clamped: false,
   };

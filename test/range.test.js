@@ -31,6 +31,15 @@ test('"today" starts at WIB midnight, not 24 hours ago', () => {
   assert.equal(r.label, 'Hari ini');
 });
 
+test('"yesterday" is the whole previous WIB day and stops before today', () => {
+  const r = resolveRange({ preset: 'yesterday', now: NOW });
+  assert.equal(r.since, wibDayStart('2026-09-07'));
+  assert.equal(r.until, wibDayStart('2026-09-08') - 1);
+  assert.equal(r.from, '2026-09-07');
+  assert.equal(r.to, '2026-09-07');
+  assert.equal(r.label, 'Kemarin');
+});
+
 test('day presets are rolling windows ending now', () => {
   const r = resolveRange({ preset: '30d', now: NOW });
   assert.equal(r.until - r.since, 30 * DAY);

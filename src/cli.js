@@ -65,7 +65,7 @@ Usage:
   npm run shops               List authorized shops and save shop_cipher
   npm run orders [status]     Recent orders with status, carrier and tracking number
   npm run track <order_id>    Carrier timeline plus package detail for one order
-  npm run omni [range]        Omnichannel summary. range: today | 7d | 14d | 30d
+  npm run omni [range]        Omnichannel summary. range: today | yesterday | 7d | 30d
                               or two dates: npm run omni -- 2026-08-15 2026-09-08
   npm run pick [range]        Picklist gudang: SKU yang harus diambil hari ini
   npm run stock               Stok per SKU di semua kanal + selisih vs ledger
@@ -837,7 +837,7 @@ async function mekariOrders(args) {
   // sliver moves, which is why it took a day-by-day recap to see it at all.
   const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length);
   const to = args.find((a) => a.startsWith('--to='))?.slice('--to='.length);
-  const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
+  const preset = args.find((a) => /^--(today|yesterday|7d|30d)$/.test(a))?.slice(2) ?? '30d';
   // Tracking numbers cost an extra Shopee call per batch, and they are worth it: the
   // invoice carries the waybill, which is how a delivery dispute gets settled later.
   const range = from ? resolveRange({ from, to: to ?? wibDate(Math.floor(Date.now() / 1000)) }) : resolveRange({ preset });
@@ -1715,7 +1715,7 @@ async function cmdMekariRebuild(config, args = []) {
 async function cmdDbVerify(config, args = []) {
   const from = args.find((a) => a.startsWith('--from='))?.slice('--from='.length);
   const to = args.find((a) => a.startsWith('--to='))?.slice('--to='.length);
-  const preset = args.find((a) => /^--(today|7d|14d|30d)$/.test(a))?.slice(2) ?? '30d';
+  const preset = args.find((a) => /^--(today|yesterday|7d|30d)$/.test(a))?.slice(2) ?? '30d';
   const range = from ? resolveRange({ from, to: to ?? wibDate(Math.floor(Date.now() / 1000)) }) : resolveRange({ preset });
 
   console.log(`\n  Membandingkan ${range.label} dengan platform aslinya...\n`);

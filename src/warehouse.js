@@ -383,6 +383,42 @@ export function manualMove(doc, { code, kind, qty, note = '', by, token = '' }, 
   return { doc: next, record };
 }
 
+/** Most lines one delivery may carry, and most units of one line. */
+export const RECEIPT_LIMITS = { lines: 20, qty: 100000 };
+
+/**
+ * A supplier delivery: several items in at once, all or none. Pure. The same item twice
+ * is added together; one token covers the whole delivery, so a resubmit records nothing.
+ *
+ * @param {{lines: Array<{code: string, qty: number}>, note?: string, by: string, token?: string}} input
+ * @returns {{doc, records: Array, duplicate?: boolean}}
+ */
+export function receiveGoods(doc, { lines, note = '', by, token = '' }, { now = Date.now() } = {}) {
+  if (token && doc.tokens?.[token]) return { doc, records: [], duplicate: true };
+  if (!Array.isArray(lines) || !lines.length) throw new Error('pilih minimal satu barang');
+  if (lines.length > RECEIPT_LIMITS.lines) throw new Error(`paling banyak ${RECEIPT_LIMITS.lines} barang sekali catat`);
+  const total = {};
+  for (const line of lines) {
+    const code = String(line?.code ?? '').trim();
+    const qty = Number(line?.qty);
+    if (!doc.items?.[code]) throw new Error(`barang ${code || '(kosong)'} tidak ada di gudang`);
+    if (!Number.isInteger(qty) || qty < 1 || qty > RECEIPT_LIMITS.qty) throw new Error(`jumlah ${code} harus bilangan bulat 1-${RECEIPT_LIMITS.qty}`);
+    total[code] = (total[code] ?? 0) + qty;
+  }
+  const at = Math.floor(now / 1000);
+  const tokens = { ...(doc.tokens ?? {}) };
+  if (token) {
+    tokens[token] = at;
+    const keys = Object.keys(tokens);
+    if (keys.length > MAX_TOKENS) for (const k of keys.sort((x, y) => tokens[x] - tokens[y]).slice(0, keys.length - MAX_TOKENS)) delete tokens[k];
+  }
+  const next = { ...doc, items: { ...doc.items }, moves: [...doc.moves], folded: { ...(doc.folded ?? {}) }, tokens };
+  const suffix = token || Math.random().toString(36).slice(2, 9);
+  const records = Object.entries(total).map(([code, qty]) => move(next, { id: `in-${code}-${at}-${suffix}`, at, code, kind: 'in', delta: qty, note: String(note).slice(0, 200), by }));
+  trim(next);
+  return { doc: next, records };
+}
+
 /**
  * How many of a product the shelf can make now, and which item decides it.
  * This is the real figure - unlike the channels', it is a count of things that exist.

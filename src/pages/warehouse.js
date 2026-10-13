@@ -74,6 +74,31 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     </li>`;
   };
 
+  // A supplier delivery: several items at once, recorded together as "Masuk".
+  const itemPicker = `<option value="">Pilih barang…</option>${Object.entries(GROUPS).map(([group, label]) => {
+    const list = Object.entries(items).filter(([, it]) => (it.group ?? 'pack') === group).sort(([a], [b]) => a.localeCompare(b));
+    return list.length ? `<optgroup label="${escape(label)}">${list.map(([code, it]) => `<option value="${escape(code)}">${escape(it.name)} · ${escape(code)} (${fmt(it.qty)})</option>`).join('')}</optgroup>` : '';
+  }).join('')}`;
+  const receiveRow = `<li class="rc__row rv__row">
+      <select name="code" class="rc__item" aria-label="Barang" required>${itemPicker}</select>
+      <input name="qty" type="number" min="1" max="100000" step="1" inputmode="numeric" class="rv__qty mono" placeholder="Jumlah" aria-label="Jumlah masuk" required>
+      <button type="button" class="rc__del" data-del aria-label="Hapus baris ini">${svg('trash')}</button>
+    </li>`;
+  const receive = `<section class="wh__grp wh__grp--in"><div class="wh__hrow wh__hrow--flat">
+      <div><h2 class="wh__h">Barang masuk</h2><p class="wh__sub wh__sub--flat">Kiriman dari pemasok menambah stok rak. Bisa beberapa barang sekaligus.</p></div>
+      <button type="button" class="pf__primary wh__btn--add" data-open-receive aria-expanded="false">${svg('plus')}<span>Tambah stok</span></button></div>
+    <form class="rc rv" method="post" hidden data-receive data-confirm="Catat barang masuk ini? Stok rak bertambah sesuai jumlahnya.">
+      ${hidden}<input type="hidden" name="action" value="wh_receive"><input type="hidden" name="token" value="${randomUUID()}">
+      <ul class="rc__rows" data-rows>${receiveRow}</ul>
+      <button type="button" class="rc__add" data-add>${svg('plus')}<span>Tambah barang</span></button>
+      <label class="wh__in wh__in--note"><span>Pemasok / catatan</span><input name="note" maxlength="200" placeholder="mis. PO-0123 dari pemasok, surat jalan…"></label>
+      <div class="rc__foot"><span class="rc__grow"></span>
+        <button type="button" class="rc__ghost" data-cancel>Batal</button>
+        <button type="submit" class="pf__primary">Simpan barang masuk</button>
+      </div>
+    </form>
+  </section>`;
+
   const shelf = Object.entries(GROUPS).map(([group, label]) => {
     const list = Object.entries(items).filter(([, it]) => (it.group ?? 'pack') === group).sort(([a], [b]) => a.localeCompare(b));
     if (!list.length) return '';
@@ -158,7 +183,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
 
   const body = `<div class="wh">
     <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Stok di sini berkurang saat pesanan masuk picklist (labelnya dicetak), sesuai isi tiap produk. Pesanan yang batal atau diretur setelah dikonfirmasi kembali ke rak otomatis.</p>
-    <div class="wh__cols"><div>${shelf}</div><div>${can}</div></div>
+    <div class="wh__cols"><div>${receive}${shelf}</div><div>${can}</div></div>
     ${history}
   </div>`;
 
@@ -217,6 +242,16 @@ const STYLE = `
 .wh__in input:focus-visible{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent)}
 .wh__hrow{display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.75rem}
 .wh__hrow .wh__h{margin:0}
+.wh__grp--in{border-top:2px solid color-mix(in srgb, var(--brand) 55%, var(--line))}
+.wh__hrow--flat{margin-bottom:0; align-items:center}
+.wh__sub--flat{margin:.3rem 0 0}
+.rv{margin-top:.85rem}
+.rv__row{grid-template-columns:minmax(0,1fr) 7.5rem auto}
+.rv__qty{font:inherit; font-size:.9rem; color:var(--fg); background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:.45rem .6rem; min-height:42px; width:100%; min-width:0}
+.rv__qty:focus-visible{outline:none; border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent)}
+.rv .wh__in--note input{width:100%}
+.wh .pf__primary.wh__btn--add{display:inline-flex; align-items:center; gap:.35rem; flex:none}
+.wh .pf__primary .ico{width:15px; height:15px}
 .wh__btn--add{display:inline-flex; align-items:center; gap:.35rem}
 .wh__btn .ico, .wh__edit .ico{width:15px; height:15px}
 .wh__sethead{display:flex; align-items:center; justify-content:space-between; gap:.5rem}
@@ -371,6 +406,30 @@ const SCRIPT = `
       }
     });
   });
+
+  // Barang masuk: rows of item + quantity, opened by its button.
+  var rv = document.querySelector('[data-receive]'), openRv = document.querySelector('[data-open-receive]');
+  if (rv && openRv) {
+    var rvRows = rv.querySelector('[data-rows]');
+    var rvBlank = rvRows.querySelector('.rv__row').cloneNode(true);
+    openRv.addEventListener('click', function () {
+      var open = rv.hidden; rv.hidden = !open;
+      openRv.setAttribute('aria-expanded', String(open));
+      if (open) rv.querySelector('select').focus();
+    });
+    rv.addEventListener('click', function (e) {
+      var t = e.target.closest('button'); if (!t) return;
+      if (t.hasAttribute('data-add')) {
+        var row = rvBlank.cloneNode(true); rvRows.appendChild(row); row.querySelector('select').focus();
+      } else if (t.hasAttribute('data-del')) {
+        if (rvRows.children.length > 1) t.closest('.rv__row').remove();
+        else { var r = t.closest('.rv__row'); r.querySelector('select').value = ''; r.querySelector('input').value = ''; }
+      } else if (t.hasAttribute('data-cancel')) {
+        rv.reset(); while (rvRows.children.length > 1) rvRows.lastElementChild.remove();
+        rv.hidden = true; openRv.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
 
   var q = document.getElementById('wq');
   if (q) q.addEventListener('input', function () {

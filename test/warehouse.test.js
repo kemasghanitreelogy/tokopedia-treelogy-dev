@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recipeOf, itemsForOrder, openWarehouse, applyOrders as readOrders, manualMove, makeable, emptyWarehouse, OPENING_AT, OPENING_ITEMS } from '../src/warehouse.js';
+import { recipeOf, itemsForOrder, openWarehouse, applyOrders as readOrders, manualMove, receiveGoods, verifyWarehouse, makeable, emptyWarehouse, OPENING_AT, OPENING_ITEMS } from '../src/warehouse.js';
 // Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
 // what happens once it is taken.
 const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
@@ -82,4 +82,26 @@ test('what the shelf can make is decided by the scarcest part', () => {
   assert.equal(r.can, 114);
   assert.equal(r.limit, 'M-091', 'scoop paling sedikit');
   assert.equal(makeable('OMC-270-001', opened().items).can, 82, 'floor(248/3)');
+});
+
+test('a supplier delivery adds every line at once, and a resubmit adds nothing', () => {
+  const lines = [{ code: 'M-037', qty: 200 }, { code: 'M-038', qty: 120 }, { code: 'M-037', qty: 6 }];
+  let { doc, records } = receiveGoods(opened(), { lines, note: 'PO-77', by: 'ika', token: 'rcv-aaaaaaaaaaaaaaaa' });
+  assert.equal(qty(doc, 'M-037'), 126 + 206, 'baris yang sama dijumlah');
+  assert.equal(qty(doc, 'M-038'), 58 + 120);
+  assert.deepEqual(records.map((r) => [r.code, r.kind, r.delta, r.note, r.by]), [['M-037', 'in', 206, 'PO-77', 'ika'], ['M-038', 'in', 120, 'PO-77', 'ika']]);
+  assert.deepEqual(verifyWarehouse(doc), []);
+  const again = receiveGoods(doc, { lines, by: 'ika', token: 'rcv-aaaaaaaaaaaaaaaa' });
+  assert.equal(again.duplicate, true);
+  assert.equal(qty(again.doc, 'M-037'), 126 + 206);
+});
+
+test('a delivery with one bad line records none of it', () => {
+  const start = opened();
+  assert.throws(() => receiveGoods(start, { lines: [{ code: 'M-037', qty: 5 }, { code: 'NOPE', qty: 1 }], by: 'x' }), /tidak ada/);
+  assert.throws(() => receiveGoods(start, { lines: [{ code: 'M-037', qty: 0 }], by: 'x' }), /bilangan bulat/);
+  assert.throws(() => receiveGoods(start, { lines: [{ code: 'M-037', qty: 1.5 }], by: 'x' }), /bilangan bulat/);
+  assert.throws(() => receiveGoods(start, { lines: [], by: 'x' }), /minimal satu/);
+  assert.equal(qty(start, 'M-037'), 126);
+  assert.equal(start.moves.some((m) => m.kind === 'in'), false);
 });

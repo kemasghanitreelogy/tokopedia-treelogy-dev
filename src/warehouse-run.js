@@ -1,5 +1,5 @@
 import { updateDoc, readDoc } from './store/index.js';
-import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, setRecipe, verifyWarehouse, recordPick } from './warehouse.js';
+import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, receiveGoods, setRecipe, verifyWarehouse, recordPick } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
 import { printedLabels } from './shopify/label.js';
@@ -92,6 +92,18 @@ export async function recordMove(input, { now = Date.now(), update = updateDoc }
   await update(WAREHOUSE_DOC, (current) => {
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
     out = manualMove(opened, input, { now });
+    return out.doc;
+  }, emptyWarehouse());
+  invalidate('warehouse');
+  return out;
+}
+
+/** A supplier delivery, every line in one transaction. */
+export async function recordReceipt(input, { now = Date.now(), update = updateDoc } = {}) {
+  let out = { records: [], duplicate: false };
+  await update(WAREHOUSE_DOC, (current) => {
+    const opened = openWarehouse(current ?? emptyWarehouse(), { now });
+    out = receiveGoods(opened, input, { now });
     return out.doc;
   }, emptyWarehouse());
   invalidate('warehouse');

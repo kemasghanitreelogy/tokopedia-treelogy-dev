@@ -112,7 +112,7 @@ import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
-import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, saveRecipe } from '../src/warehouse-run.js';
+import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, recordReceipt, saveRecipe } from '../src/warehouse-run.js';
 import { batchOf } from '../src/warehouse.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
 import { renderPickHistory } from '../src/pages/pick-history.js';
@@ -377,7 +377,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
   product_save: 'products', product_publish: 'products',
-  wh_move: 'stock', wh_recipe: 'stock',
+  wh_move: 'stock', wh_receive: 'stock', wh_recipe: 'stock',
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
@@ -1121,6 +1121,23 @@ export async function handleWrite(form, ip, user, csrf) {
       view: 'stock',
       message: `${code} ${label} ${record.delta > 0 ? '+' : ''}${record.delta} → ${record.after}`,
       audit: { menu: 'stock', verb: 'edit', target: code, summary: `Gudang ${code}: ${label} ${record.delta > 0 ? '+' : ''}${record.delta} (sekarang ${record.after})${note ? ` - ${note}` : ''}`, changes: [{ field: code, from: record.after - record.delta, to: record.after, note }] },
+    };
+  }
+
+  if (action === 'wh_receive') {
+    const codes = form.getAll('code').map((c) => String(c).trim());
+    const qtys = form.getAll('qty').map((q) => Number(q));
+    const lines = codes.map((code, i) => ({ code, qty: qtys[i] })).filter((l) => l.code);
+    const note = String(form.get('note') ?? '').trim();
+    const token = String(form.get('token') ?? '').slice(0, 64);
+    if (!/^[a-z0-9-]{16,64}$/.test(token)) throw new Error('formulir kedaluwarsa, muat ulang halaman');
+    const { records, duplicate } = await recordReceipt({ lines, note, by: user.name || user.email, token });
+    if (duplicate) return { view: 'stock', message: 'Barang masuk ini sudah tercatat, tidak dicatat dua kali' };
+    const list = records.map((r) => `${r.code} +${r.delta} → ${r.after}`).join(', ');
+    return {
+      view: 'stock',
+      message: `Barang masuk dicatat: ${list}`,
+      audit: { menu: 'stock', verb: 'edit', target: records.map((r) => r.code).join(', '), summary: `Gudang barang masuk: ${records.map((r) => `${r.code} +${r.delta}`).join(', ')}${note ? ` - ${note}` : ''}`, changes: records.map((r) => ({ field: r.code, from: r.after - r.delta, to: r.after, note })) },
     };
   }
 

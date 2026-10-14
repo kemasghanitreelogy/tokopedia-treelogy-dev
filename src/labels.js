@@ -781,6 +781,15 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     if (['SHIPPED', 'TO_CONFIRM_RECEIVE', 'COMPLETED'].includes(order.status)) {
       return { state: 'reprint', note: 'sudah diambil kurir' };
     }
+    // Arranged again after a failed pickup (src/shopee/retry.js): Shopee still says
+    // RETRY_SHIP, but the new booking has its waybill. A label printed before that moment
+    // was for the booking that failed.
+    if (order.status === 'RETRY_SHIP' && order.rearranged) {
+      const entry = wasPrinted(printed, order);
+      return entry && Number(entry.at) >= Number(order.rearranged)
+        ? { state: 'reprint', note: 'sudah dicetak' }
+        : { state: 'needsPrint', note: entry ? 'diatur ulang setelah pickup gagal - cetak label baru' : 'siap dicetak' };
+    }
     if (['READY_TO_SHIP', 'RETRY_SHIP'].includes(order.status)) {
       return { state: 'waiting', note: 'menunggu dokumen terbit di kurir' };
     }

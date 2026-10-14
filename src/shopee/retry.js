@@ -20,7 +20,10 @@ const MAX_CHECKS = 5;
 const ARRANGED = /mengatur pengiriman|arranged (the )?shipment/i;
 const FAILED = /gagal|fail/i;
 
-/** Whether the newest "seller arranged" event is later than the newest failed pickup. */
+/**
+ * When the seller arranged the order again after its newest failed pickup, epoch seconds;
+ * 0 when they have not (or when no pickup failed - then it is not this case at all).
+ */
 export function rearrangedAfterFailure(events) {
   let arranged = 0;
   let failed = 0;
@@ -30,7 +33,7 @@ export function rearrangedAfterFailure(events) {
     if (FAILED.test(text)) failed = Math.max(failed, at);
     else if (ARRANGED.test(text)) arranged = Math.max(arranged, at);
   }
-  return arranged > 0 && arranged > failed;
+  return failed > 0 && arranged > failed ? arranged : 0;
 }
 
 const memo = new Map();
@@ -43,8 +46,9 @@ async function readHistory(sn) {
 }
 
 /**
- * The page's orders with `rearranged: true` on every RETRY_SHIP row the team already
- * arranged again. A history that cannot be read leaves the row as it was - offered.
+ * The page's orders with `rearranged` (the moment, epoch seconds) on every RETRY_SHIP row
+ * the team already arranged again. A history that cannot be read leaves the row as it
+ * was - offered for arranging.
  */
 export async function markRearranged(data, { read = readHistory, now = Date.now() } = {}) {
   const retrying = (data?.orders ?? []).filter((o) => o.channel === 'shopee' && o.status === 'RETRY_SHIP');
@@ -61,5 +65,5 @@ export async function markRearranged(data, { read = readHistory, now = Date.now(
       console.warn(`shopee: riwayat kurir ${o.id} tidak terbaca - ${error.message}`);
     }
   }
-  return { ...data, orders: data.orders.map((o) => (o.channel === 'shopee' && o.status === 'RETRY_SHIP' && memo.get(o.id)?.rearranged ? { ...o, rearranged: true } : o)) };
+  return { ...data, orders: data.orders.map((o) => (o.channel === 'shopee' && o.status === 'RETRY_SHIP' && memo.get(o.id)?.rearranged ? { ...o, rearranged: memo.get(o.id).rearranged } : o)) };
 }

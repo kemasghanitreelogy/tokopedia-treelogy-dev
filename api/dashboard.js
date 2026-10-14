@@ -2400,7 +2400,7 @@ export default async function handler(req, res) {
       // A waybill printed for an order the platform has cancelled is a parcel that goes
       // out and comes back. Same settling, same shared cooldown.
       const labelling = await settleWorklist(data, arrangedNow);
-      data = labelling.data;
+      data = await markRearranged(labelling.data);
       const showReprints = url.searchParams.get('reprint') === '1';
       // Only the reprint list names who printed, so the roster is only read for it. An
       // email is a fine identifier and a poor label; the batch header says "Vanya".

@@ -25,6 +25,7 @@ import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
 import { refundOrder, loadRefunds, withoutRefunds } from '../src/mekari/refund.js';
+import { markRearranged } from '../src/shopee/retry.js';
 import { amendManualInvoice } from '../src/mekari/amend.js';
 import { orderById, ordersByIds, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
@@ -2429,7 +2430,7 @@ export default async function handler(req, res) {
       const arranged = await arrangedOrders().catch(() => ({}));
 
       const settling = await settleWorklist(data, arranged);
-      data = settling.data;
+      data = await markRearranged(settling.data);
 
       console.log(`dashboard/process: ${data.orders.length} orders outstanding (${took()})`);
       send(200, renderProcess({ user,

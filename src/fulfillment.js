@@ -56,6 +56,8 @@ export function nextAction(order, arranged = {}) {
   }
 
   if (order.channel === 'shopee') {
+    // A failed pickup the team already arranged again in Seller Centre (src/shopee/retry.js).
+    if (order.status === 'RETRY_SHIP' && order.rearranged) return null;
     if (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP') {
       return { action: 'shopee_ship', label: 'Atur pengiriman', needs: [] };
     }

@@ -24,6 +24,7 @@ import { printedLabels, markPrinted, markLabelStale, arrangedOrders } from '../s
 import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
+import { refundOrder, loadRefunds, withoutRefunds } from '../src/mekari/refund.js';
 import { amendManualInvoice } from '../src/mekari/amend.js';
 import { orderById, ordersByIds, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
@@ -381,7 +382,7 @@ const ACTION_MENU = {
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
-  label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', discard_manual: 'jurnal',
+  label_printed: 'labels', reviews_sync: 'reviews', refresh_order: 'orders', refund_order: 'orders', discard_manual: 'jurnal',
   manual_update: 'jurnal',
   user_invite: 'users', user_resend: 'users', user_role: 'users', user_status: 'users', user_delete: 'users',
 };
@@ -848,6 +849,25 @@ export async function handleWrite(form, ip, user, csrf) {
           ...changes,
           ...(amended.amended ? [{ field: 'faktur Jurnal', from: String(amended.transactionNo ?? amended.invoiceId), to: 'diperbarui' }] : []),
           ...(reprint ? [{ field: 'label', from: 'sudah dicetak', to: 'perlu cetak ulang' }] : []),
+        ],
+      },
+    };
+  }
+
+  if (action === 'refund_order') {
+    const channel = String(form.get('channel') ?? '').trim();
+    const id = String(form.get('order') ?? '').trim();
+    const out = await refundOrder({ channel, id, by: user.name || user.email });
+    const where = out.deleted ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum ada faktur di Jurnal';
+    console.log(`dashboard: refund_order ${channel} ${id} - ${where}`);
+    return {
+      view: 'orders', message: `${id} direfund: hilang dari daftar, ${where}`,
+      audit: {
+        menu: 'orders', verb: 'delete', target: `${channel} ${id}`,
+        summary: `Refund ${channel} ${id} senilai Rp${out.total.toLocaleString('id-ID')} - ${where}`,
+        changes: [
+          { field: 'status', from: 'aktif', to: 'refund' },
+          ...(out.deleted ? [{ field: 'faktur Jurnal', from: String(out.transactionNo ?? out.invoiceId), to: null }] : []),
         ],
       },
     };
@@ -2364,6 +2384,8 @@ export default async function handler(req, res) {
 
     const started = Date.now();
     let data = OUTSTANDING_VIEWS.has(view) ? await outstandingOrders() : await ordersFor(range);
+    // A refunded order leaves every list; the platform still has it, so it is filtered here.
+    data = withoutRefunds(data, await loadRefunds());
     const took = () => `${Date.now() - started}ms`;
 
     if (view === 'labels') {

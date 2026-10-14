@@ -120,7 +120,7 @@ test('only a Shopify order offers the button, because only Shopify is edited by 
   assert.match(html, /Ambil data terbaru/);
   // One form, not two: a marketplace announces its own changes.
   assert.equal((html.match(/value="refresh_order"/g) ?? []).length, 1);
-  assert.ok(!/name="order" value="260930ABC"/.test(html));
+  assert.ok(!/value="refresh_order">\s*<input type="hidden" name="channel" value="shopify">\s*<input type="hidden" name="order" value="260930ABC"/.test(html));
 });
 
 test('the button comes back to the filter the operator was standing on', () => {

@@ -419,6 +419,25 @@ function discardButton(order, { csrf, back }) {
 }
 
 /**
+ * A marketplace order the team refunded: its Jurnal invoice is deleted and it leaves every
+ * list here. The money goes back by hand, from finance - nothing is sent to the platform.
+ */
+function refundButton(order, { csrf, back }) {
+  if (order.channel === 'manual' || !csrf) return '';
+  return `<form class="od__sync od__sync--bad" method="post"
+      data-confirm="Refund ${escape(order.id)} senilai ${escape(rupiah(order.total))}? Pesanan ini hilang dari dashboard dan fakturnya di Mekari Jurnal dihapus. Uangnya dikembalikan tim finance, bukan sistem. Tidak bisa dibatalkan.">
+    <input type="hidden" name="csrf" value="${escape(csrf)}">
+    <input type="hidden" name="action" value="refund_order">
+    <input type="hidden" name="channel" value="${escape(order.channel)}">
+    <input type="hidden" name="order" value="${escape(order.id)}">
+    <input type="hidden" name="view" value="orders">
+    <input type="hidden" name="back" value="${escape(back)}">
+    <button class="od__sync__b um__act--bad" type="submit">${svg('trash')}<span>Refund</span></button>
+    <span class="od__sync__n">Hapus dari dashboard dan hapus fakturnya di Mekari Jurnal. Pengembalian dana dilakukan tim finance.</span>
+  </form>`;
+}
+
+/**
  * Everything known about one order, as the popup shows it.
  *
  * Rendered with the list rather than fetched on click: the page already holds the whole
@@ -493,6 +512,7 @@ function orderDetail(order, index, { csrf = null, back = '' } = {}) {
 
     ${refreshButton(order, { csrf, back })}
     ${discardButton(order, { csrf, back })}
+    ${refundButton(order, { csrf, back })}
 
     <a class="od__print" target="_blank" rel="noopener"
        href="/api/invoice?channel=${escape(order.channel)}&amp;id=${escape(encodeURIComponent(order.id))}">

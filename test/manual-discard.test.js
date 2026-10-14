@@ -141,3 +141,12 @@ test('only a typed-in sale offers the delete button, and it asks first', () => {
 test('without a token there is no delete button', () => {
   assert.ok(!/discard_manual/.test(page([manual], { csrf: null })));
 });
+
+test('a marketplace order offers Refund, a typed-in sale does not', () => {
+  const html = page([manual, { ...manual, channel: 'shopify', id: '#11107', source: undefined }]);
+  assert.equal((html.match(/value="refund_order"/g) ?? []).length, 1);
+  assert.match(html, /name="channel" value="shopify">\s*<input type="hidden" name="order" value="#11107">/);
+  assert.match(html, /data-confirm="Refund #11107 senilai [^"]*Mekari Jurnal dihapus[^"]*tim finance/);
+  assert.ok(!/refund_order/.test(page([manual])));
+  assert.ok(!/refund_order/.test(page([{ ...manual, channel: 'shopify', id: '#1', source: undefined }], { csrf: null })));
+});

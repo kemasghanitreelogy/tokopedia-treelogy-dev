@@ -60,6 +60,30 @@ test('a history read is reused for a while, and a failed read leaves the row off
   assert.equal(nextAction(data.orders[0]).action, 'shopee_ship');
 });
 
+test('a Shopee that does not answer never holds the page, and is not asked on every load', async () => {
+  resetRetryMemo();
+  let release;
+  let reads = 0;
+  const read = () => { reads += 1; return new Promise((resolve) => { release = () => resolve(history); }); };
+  const started = Date.now();
+  const first = await markRearranged({ orders: [retry] }, { read, now: 1000, wait: 20 });
+  assert.ok(Date.now() - started < 500, 'the page went out without the history');
+  assert.equal(nextAction(first.orders[0]).action, 'shopee_ship');
+  await markRearranged({ orders: [retry] }, { read, now: 1001, wait: 20 });
+  assert.equal(reads, 1, 'a read still in flight is not started twice');
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  const next = await markRearranged({ orders: [retry] }, { read, now: 1002, wait: 20 });
+  assert.equal(nextAction(next.orders[0]), null, 'the answer lands on the next load');
+
+  resetRetryMemo();
+  let failures = 0;
+  const down = async () => { failures += 1; throw new Error('fetch failed'); };
+  await markRearranged({ orders: [retry] }, { read: down, now: 5000 });
+  await markRearranged({ orders: [retry] }, { read: down, now: 5000 + RETRY_CHECK_MS - 1 });
+  assert.equal(failures, 1, 'a failed read waits RETRY_CHECK_MS like a good one');
+});
+
 test('the Label tab offers the new waybill, and a label printed before the re-arrangement is not it', () => {
   const at = 1791962066;
   const o = { ...retry, rearranged: at };

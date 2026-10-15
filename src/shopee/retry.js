@@ -16,6 +16,12 @@ import { resolveShopeeSession } from './session.js';
 export const RETRY_CHECK_MS = 2 * 60_000;
 /** Most histories read per page load; RETRY_SHIP is rare, this is only a ceiling. */
 const MAX_CHECKS = 5;
+/**
+ * The longest a page waits for those reads. Past it the page goes out with what is known
+ * and the reads finish in the background for the next load: on 15 Oct Shopee stopped
+ * answering the VPS and every Proses load hung for a minute behind one history.
+ */
+export const RETRY_WAIT_MS = 1500;
 
 const ARRANGED = /mengatur pengiriman|arranged (the )?shipment/i;
 const FAILED = /gagal|fail/i;
@@ -37,7 +43,8 @@ export function rearrangedAfterFailure(events) {
 }
 
 const memo = new Map();
-export const resetRetryMemo = () => memo.clear();
+const reading = new Map();
+export const resetRetryMemo = () => { memo.clear(); reading.clear(); };
 
 async function readHistory(sn) {
   const { config, auth } = await resolveShopeeSession();
@@ -48,22 +55,34 @@ async function readHistory(sn) {
 /**
  * The page's orders with `rearranged` (the moment, epoch seconds) on every RETRY_SHIP row
  * the team already arranged again. A history that cannot be read leaves the row as it
- * was - offered for arranging.
+ * was - offered for arranging - and is not asked again until RETRY_CHECK_MS has passed.
  */
-export async function markRearranged(data, { read = readHistory, now = Date.now() } = {}) {
+export async function markRearranged(data, { read = readHistory, now = Date.now(), wait = RETRY_WAIT_MS } = {}) {
   const retrying = (data?.orders ?? []).filter((o) => o.channel === 'shopee' && o.status === 'RETRY_SHIP');
   if (!retrying.length) return data;
-  let reads = 0;
+  const started = [];
   for (const o of retrying) {
     const seen = memo.get(o.id);
+    if (reading.has(o.id)) { started.push(reading.get(o.id)); continue; }
     if (seen && now - seen.at < RETRY_CHECK_MS) continue;
-    if (reads >= MAX_CHECKS) break;
-    reads += 1;
-    try {
-      memo.set(o.id, { at: now, rearranged: rearrangedAfterFailure(await read(o.id)) });
-    } catch (error) {
-      console.warn(`shopee: riwayat kurir ${o.id} tidak terbaca - ${error.message}`);
-    }
+    if (started.length >= MAX_CHECKS) break;
+    const job = (async () => {
+      try {
+        memo.set(o.id, { at: now, rearranged: rearrangedAfterFailure(await read(o.id)) });
+      } catch (error) {
+        memo.set(o.id, { at: now, rearranged: seen?.rearranged ?? 0 });
+        console.warn(`shopee: riwayat kurir ${o.id} tidak terbaca - ${error.message}`);
+      } finally {
+        reading.delete(o.id);
+      }
+    })();
+    reading.set(o.id, job);
+    started.push(job);
+  }
+  if (started.length) {
+    let timer;
+    await Promise.race([Promise.all(started), new Promise((resolve) => { timer = setTimeout(resolve, wait); })]);
+    clearTimeout(timer);
   }
   return { ...data, orders: data.orders.map((o) => (o.channel === 'shopee' && o.status === 'RETRY_SHIP' && memo.get(o.id)?.rearranged ? { ...o, rearranged: memo.get(o.id).rearranged } : o)) };
 }

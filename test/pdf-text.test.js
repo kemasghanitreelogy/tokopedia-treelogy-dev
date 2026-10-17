@@ -5,6 +5,7 @@ import { buildShopifyLabels, PICK_DOC } from '../src/shopify/label.js';
 import { buildFaktur } from '../src/faktur.js';
 import { buildLabelSheet } from '../src/labels.js';
 import { buildManualOrder } from '../src/mekari/manual.js';
+import { phoneForCourier } from '../src/phone.js';
 import { deleteDoc, closeStore } from '../src/store/index.js';
 
 /**
@@ -46,9 +47,24 @@ test('a WhatsApp number is stored plain, so it never reaches a label or Jurnal a
     lines: [{ sku: 'OMC-90-001', qty: 1, unitPrice: 250000, unitDiscount: 0 }],
     now: Date.parse('2026-10-17T04:00:00Z'),
   });
-  assert.equal(built.buyerPhone, '+62 822-7000-7777');
+  assert.equal(built.buyerPhone, '082270007777');
   assert.equal(built.buyer, 'Bu Sinta');
   assert.equal(built.shipTo, 'Jl. Kertha Dalem IV No 10');
+});
+
+test('every way a phone gets typed or pasted becomes the one the courier label prints', () => {
+  for (const typed of [PASTED, '+6282270007777', '6282270007777', '82270007777', '0822 7000 7777', '0822.7000.7777', '(0822) 7000-7777', '+62 (822) 7000 7777']) {
+    assert.equal(phoneForCourier(typed), '082270007777', typed);
+  }
+  assert.equal(phoneForCourier('021-7654321'), '0217654321', 'a landline is a phone too');
+  assert.equal(phoneForCourier('+65 9123 4567'), '+6591234567', 'a foreign number keeps its country');
+  assert.equal(phoneForCourier(''), '');
+  assert.equal(phoneForCourier(undefined), '');
+  for (const junk of ['123', 'besok', '0000', '08123']) assert.equal(phoneForCourier(junk), null, junk);
+  assert.throws(() => buildManualOrder({
+    source: 'DP', code: 'DP-261017-00006WH', date: '2026-10-17', buyer: 'Bu Sinta', buyerPhone: '0812', note: '', shipping: 0,
+    lines: [{ sku: 'OMC-90-001', qty: 1, unitPrice: 250000, unitDiscount: 0 }], now: Date.parse('2026-10-17T04:00:00Z'),
+  }), /nomor telepon "0812" tidak valid/);
 });
 
 test('one order the drawing chokes on fails alone; the rest of the run prints', async () => {

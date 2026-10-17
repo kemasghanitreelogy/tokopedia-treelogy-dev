@@ -352,7 +352,7 @@ test('the name typed once is both the contact billed and the name on the parcel'
   assert.equal(invoice.ship_via, 'JNE');
   assert.equal(invoice.is_shipped, true);
   // The invoice has no phone field, so the number rides in the memo where it can be read.
-  assert.match(invoice.memo, /Telp 0812-3456-7890/);
+  assert.match(invoice.memo, /Telp 081234567890/);
 
   assert.throws(() => buildManualOrder(manual({ buyerEmail: 'bukan-email' })), /email .* tidak valid/);
   assert.ok(!buildInvoice({ order: buildManualOrder(manual()) }).sales_invoice.memo.includes('Telp'), 'tanpa telepon, memo tidak menyebutnya');
@@ -1459,7 +1459,7 @@ test('a manual sale can carry who the parcel goes to, and how', () => {
     carrier: 'Lion Parcel',
   }));
   assert.equal(order.buyer, 'Dewi Lestari');
-  assert.equal(order.buyerPhone, '0812-3456-7890');
+  assert.equal(order.buyerPhone, '081234567890', 'stored the way the courier label prints it');
   assert.match(order.shipTo, /Tenggarong/);
   assert.equal(order.carrier, 'Lion Parcel');
 

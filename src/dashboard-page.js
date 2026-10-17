@@ -15,6 +15,7 @@ import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
 import { paginate, pageHref, pageWindow, PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from './paging.js';
 import { can, ROLES } from './users.js';
+import { phoneForCourier } from './phone.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
 
@@ -4876,6 +4877,14 @@ export function renderManual({
    * press and dropped the moment a save goes through; the code is not restored, because
    * a fresh one is reserved for every opening of the form.
    */
+  // The phone is tidied as soon as it is typed or pasted, the way the label will print it.
+  var phoneForCourier = ${phoneForCourier.toString()};
+  var phoneField = form.querySelector('[name="buyerPhone"]');
+  if (phoneField) phoneField.addEventListener('change', function () {
+    var tidy = phoneForCourier(phoneField.value);
+    phoneField.setCustomValidity(tidy === null ? 'Nomor telepon tidak valid - contoh: 081234567890' : '');
+    if (tidy !== null) phoneField.value = tidy; else phoneField.reportValidity();
+  });
   var DRAFT = 'mx-draft';
   var params = new URLSearchParams(location.search);
   if (form.querySelector('[name="action"]').value === 'manual_invoice') {

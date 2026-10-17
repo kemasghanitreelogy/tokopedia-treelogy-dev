@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { printableDeep } from '../pdf-text.js';
+import { phoneForCourier } from '../phone.js';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
 import { customerNote } from '../mekari/prefix.js';
@@ -288,7 +289,7 @@ function drawLabel(page, { order, pick, printedAt, font, bold, mark, width, heig
   let leftY = y;
   keyed(pad, 'Kepada', fit(bold, order.buyer || '-', 6.5, leftWidth - 48), leftY);
   leftY -= 9;
-  keyed(pad, 'No.Telp', fit(bold, order.buyerPhone || '-', 6.5, leftWidth - 48), leftY);
+  keyed(pad, 'No.Telp', fit(bold, phoneForCourier(order.buyerPhone) || order.buyerPhone || '-', 6.5, leftWidth - 48), leftY);
   leftY -= 9;
   page.drawText('Alamat Penerima', { x: pad, y: leftY, size: 6.5, font, color: GRAY });
   leftY -= 9;

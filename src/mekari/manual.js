@@ -3,6 +3,7 @@ import { MANUAL_SOURCES, PREFIXES, isManualSource, sourceShips } from './prefix.
 import { findProduct, PRODUCTS, onMasterChange } from '../master.js';
 import { InvoiceError, withoutEmoji } from './invoice.js';
 import { plainText } from '../pdf-text.js';
+import { phoneForCourier } from '../phone.js';
 import { channelDayStart, channelDate, channelToday } from '../clock.js';
 
 /**
@@ -287,9 +288,9 @@ export function buildManualOrder(input) {
   if (buyer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
   const customer = withoutEmoji(String(input.customer ?? '')).trim() || buyer || PREFIXES[source].label;
   if (customer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
-  // Pasted from WhatsApp a number carries non-breaking hyphens; stored plain.
-  const buyerPhone = plainText(input.buyerPhone).trim();
-  if (buyerPhone.length > 40) throw new InvoiceError('nomor telepon terlalu panjang');
+  // Stored the way the courier label prints it, whatever the paste looked like.
+  const buyerPhone = phoneForCourier(input.buyerPhone);
+  if (buyerPhone === null) throw new InvoiceError(`nomor telepon "${plainText(input.buyerPhone).trim()}" tidak valid - contoh: 081234567890`);
   const buyerEmail = String(input.buyerEmail ?? '').trim();
   if (buyerEmail.length > 120) throw new InvoiceError('email terlalu panjang');
   // Jurnal validates the email itself and rejects the whole invoice over it, so a typo

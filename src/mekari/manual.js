@@ -2,6 +2,7 @@ import { SOURCES } from './sources.js';
 import { MANUAL_SOURCES, PREFIXES, isManualSource, sourceShips } from './prefix.js';
 import { findProduct, PRODUCTS, onMasterChange } from '../master.js';
 import { InvoiceError, withoutEmoji } from './invoice.js';
+import { plainText } from '../pdf-text.js';
 import { channelDayStart, channelDate, channelToday } from '../clock.js';
 
 /**
@@ -282,18 +283,19 @@ export function buildManualOrder(input) {
   // customer, which is what a consignment shop's monthly invoice wants anyway.
   // Names become a Jurnal contact, and Jurnal refuses an emoji in its free text (a memo
   // with one sank a sale on 24 Sep). The memo was cleaned; the contact name never was.
-  const buyer = withoutEmoji(String(input.buyer ?? '')).trim();
+  const buyer = plainText(withoutEmoji(String(input.buyer ?? ''))).trim();
   if (buyer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
   const customer = withoutEmoji(String(input.customer ?? '')).trim() || buyer || PREFIXES[source].label;
   if (customer.length > 120) throw new InvoiceError('nama pelanggan terlalu panjang');
-  const buyerPhone = String(input.buyerPhone ?? '').trim();
+  // Pasted from WhatsApp a number carries non-breaking hyphens; stored plain.
+  const buyerPhone = plainText(input.buyerPhone).trim();
   if (buyerPhone.length > 40) throw new InvoiceError('nomor telepon terlalu panjang');
   const buyerEmail = String(input.buyerEmail ?? '').trim();
   if (buyerEmail.length > 120) throw new InvoiceError('email terlalu panjang');
   // Jurnal validates the email itself and rejects the whole invoice over it, so a typo
   // is caught here where the operator can still fix it.
   if (buyerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail)) throw new InvoiceError(`email "${buyerEmail}" tidak valid`);
-  const shipTo = String(input.shipTo ?? '').trim();
+  const shipTo = plainText(input.shipTo).trim();
   if (shipTo.length > 400) throw new InvoiceError('alamat terlalu panjang');
   const carrier = String(input.carrier ?? '').trim();
   if (carrier && !MANUAL_CARRIERS.includes(carrier)) throw new InvoiceError(`kurir "${carrier}" tidak ada di daftar`);

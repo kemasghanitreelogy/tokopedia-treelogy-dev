@@ -946,18 +946,29 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
     });
 
     const pages = [];
+    const printed = [];
+    const draw = (jobs) => buildShopifyLabels(jobs.map(({ order, pick }) => ({ order, pick })), { width: stock.width, height: stock.height });
+    const page = (bytes, jobs, channel) => {
+      pages.push({ bytes, order: { id: jobs[0].row.id, channel }, covers: jobs.map(({ row }) => ({ channel: row.channel, id: row.id })) });
+      printed.push(...jobs.map(({ row }) => row.id));
+    };
     for (const [channel, jobs] of byChannel) {
-      const bytes = await buildShopifyLabels(
-        jobs.map(({ order, pick }) => ({ order, pick })),
-        { width: stock.width, height: stock.height },
-      );
-      pages.push({
-        bytes,
-        order: { id: jobs[0].row.id, channel },
-        covers: jobs.map(({ row }) => ({ channel: row.channel, id: row.id })),
-      });
+      try {
+        page(await draw(jobs), jobs, channel);
+      } catch (error) {
+        // One order the drawing chokes on must not hold back the rest of the run (17 Oct:
+        // one phone number stopped seven labels). Drawn one by one, only it is reported.
+        console.warn(`labels: ${channel} gagal digambar sekaligus - ${error.message}; dicoba satu per satu`);
+        const good = [];
+        for (const job of jobs) {
+          try { await draw([job]); good.push(job); } catch (own) {
+            failures.push({ id: job.row.id, channel: job.row.channel, reason: own.message, kind: 'check' });
+          }
+        }
+        if (good.length) page(await draw(good), good, channel);
+      }
     }
-    return { pages, printed: found.map((row) => row.id), failures };
+    return { pages, printed, failures };
   } catch (error) {
     // Drawing is arithmetic on data we already hold, so a failure here is a bug rather
     // than a bad parcel - it is reported against all of them because it stopped all of them.

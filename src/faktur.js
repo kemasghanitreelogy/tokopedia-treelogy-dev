@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { printableDeep } from './pdf-text.js';
 import { orderCode, customerNote } from './mekari/prefix.js';
 import { termDaysFor, isAutoPaid } from './mekari/sources.js';
 import { zoneForChannel } from './clock.js';
@@ -125,6 +126,7 @@ export function fakturLines(order) {
  * @returns {Promise<Uint8Array>} a one-page A4 invoice
  */
 export async function buildFaktur(order, { printedAt = Math.floor(Date.now() / 1000), seller = SELLER } = {}) {
+  order = printableDeep(order);
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([595.28, 841.89]); // A4
   const font = await pdf.embedFont(StandardFonts.Helvetica);

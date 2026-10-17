@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { printableDeep } from '../pdf-text.js';
 import { readDoc, updateDoc } from '../store/index.js';
 import { wibDate } from '../range.js';
 import { customerNote } from '../mekari/prefix.js';
@@ -211,7 +212,7 @@ export async function buildShopifyLabels(jobs, { printedAt = Math.floor(Date.now
 
   for (const job of jobs) {
     drawLabel(pdf.addPage([width, height]), {
-      order: job.order, pick: job.pick, printedAt, font, bold, width, height,
+      order: printableDeep(job.order), pick: job.pick, printedAt, font, bold, width, height,
       mark: job.order?.channel === 'manual' ? marks.house : marks.shopify,
     });
   }

@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { plainText } from './pdf-text.js';
 import { findProduct } from './master.js';
 import { orderCode } from './mekari/prefix.js';
 
@@ -52,7 +53,7 @@ export async function picklistPdf({ date, orders, picklist, images = {}, generat
 
   // Anything Helvetica (WinAnsi) cannot draw (an emoji in a buyer's name) is left out.
   const safeCache = new Map();
-  const safe = (text) => [...String(text ?? '')].map((ch) => {
+  const safe = (text) => [...plainText(text)].map((ch) => {
     if (!safeCache.has(ch)) { try { font.encodeText(ch); safeCache.set(ch, ch); } catch { safeCache.set(ch, ''); } }
     return safeCache.get(ch);
   }).join('').replace(/\s+/g, ' ').trim();

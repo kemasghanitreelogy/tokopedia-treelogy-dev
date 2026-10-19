@@ -66,7 +66,7 @@ test('the code and the source are fixed, because both are the invoice identity',
   assert.ok(!/data-code/.test(body), 'kode tidak diregenerasi saat mengubah');
   assert.deepEqual(body.match(/name="source" value="\w+"/g), ['name="source" value="DP"']);
   assert.match(body, /Simpan perubahan/);
-  assert.match(body, /nomor fakturnya tidak berubah/);
+  assert.ok(!/Mengubah transaksi yang sudah tercatat/.test(body), "tanpa banner peringatan");
 });
 
 test('a product the storefront no longer sells keeps its place on a line already there', () => {

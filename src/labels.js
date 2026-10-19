@@ -200,6 +200,12 @@ const POLL_BACKOFF_MS = [250, 500, 900, 1400, 1800, 1800, 1800];
  * was swallowed, and all 56 - READY at Shopee - were reported as not ready yet.
  */
 export const SHOPEE_BATCH_MAX = 50;
+/**
+ * How many of those groups are in flight at once. The operator sees one stack; behind it
+ * a run of 150 is three calls side by side rather than one after another. Kept small
+ * because Shopee rate-limits per shop and the transport already retries a 429.
+ */
+const SHOPEE_BATCH_CONCURRENCY = 3;
 export const chunks = (list, size) => {
   const out = [];
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
@@ -319,18 +325,16 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
   // Shopee's error says what went wrong when nothing else does; kept for the bench.
   let statusError = null;
   const askStatus = async (sns) => {
+    const outcomes = await settleLimit(chunks(sns, SHOPEE_BATCH_MAX), SHOPEE_BATCH_CONCURRENCY, (group) =>
+      call(config, '/api/v2/logistics/get_shipping_document_result', auth, {}, {
+        order_list: group.map((order_sn) => ({ order_sn })),
+      }));
     const rows = [];
-    for (const group of chunks(sns, SHOPEE_BATCH_MAX)) {
-      try {
-        const result = await call(config, '/api/v2/logistics/get_shipping_document_result', auth, {}, {
-          order_list: group.map((order_sn) => ({ order_sn })),
-        });
-        rows.push(...(result.response?.result_list ?? []));
-      } catch (error) {
-        const partial = error.response?.result_list ?? [];
-        if (!partial.length) statusError = error;
-        rows.push(...partial);
-      }
+    for (const outcome of outcomes) {
+      if (outcome.ok) { rows.push(...(outcome.value.response?.result_list ?? [])); continue; }
+      const partial = outcome.error.response?.result_list ?? [];
+      if (!partial.length) statusError = outcome.error;
+      rows.push(...partial);
     }
     return rows;
   };
@@ -370,9 +374,8 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
       return item;
     });
     if (orderList.length === 0) return { pages: [], failures };
-    for (const group of chunks(orderList, SHOPEE_BATCH_MAX)) {
-      await createShopeeDocuments(config, auth, group, note, { left: CREATE_SPLIT_BUDGET }, { call });
-    }
+    await settleLimit(chunks(orderList, SHOPEE_BATCH_MAX), SHOPEE_BATCH_CONCURRENCY, (group) =>
+      createShopeeDocuments(config, auth, group, note, { left: CREATE_SPLIT_BUDGET }, { call }));
     for (const sn of askable) {
       if (!failures.some((f) => f.id === sn)) pending.add(sn);
     }
@@ -403,12 +406,19 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
   }
   if (ready.size === 0) return { pages: [], failures };
 
+  // Every group at once (within the limit), and back in the order they were asked for,
+  // so the stack the bench gets is one stack in a steady order however Shopee answered.
+  const groups = chunks([...ready], SHOPEE_BATCH_MAX);
+  const outcomes = await settleLimit(groups, SHOPEE_BATCH_CONCURRENCY, (group) => download(config, auth, group, documentType));
   const pages = [];
-  for (const group of chunks([...ready], SHOPEE_BATCH_MAX)) {
-    const downloaded = await download(config, auth, group, documentType);
-    pages.push(...downloaded.pages);
-    failures.push(...downloaded.failures);
-  }
+  outcomes.forEach((outcome, index) => {
+    if (outcome.ok) {
+      pages.push(...outcome.value.pages);
+      failures.push(...outcome.value.failures);
+    } else {
+      for (const id of groups[index]) note(id, outcome.error.message, isTransientShopeeError(outcome.error) ? 'retry' : 'check');
+    }
+  });
   return { pages, failures };
 }
 

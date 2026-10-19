@@ -56,6 +56,23 @@ test('documents still to be made are created and polled in groups of 50 too', as
   assert.deepEqual(calls.filter((c) => c.path.endsWith('create_shipping_document')).map((c) => c.size), [50, 50, 20]);
 });
 
+test('the groups go to Shopee side by side, and come back as one stack in order', async () => {
+  const { deps } = shopee();
+  let inFlight = 0;
+  let peak = 0;
+  deps.download = async (config, auth, sns) => {
+    inFlight += 1; peak = Math.max(peak, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight -= 1;
+    return { pages: [{ covers: sns.map((id) => ({ channel: 'shopee', id })), bytes: new Uint8Array(1) }], failures: [] };
+  };
+  const list = orders(160);
+  const out = await fetchShopeeLabels(list, 'THERMAL_AIR_WAYBILL', deps);
+  assert.ok(peak > 1, 'more than one group in flight');
+  assert.ok(peak <= 3, 'but never more than three');
+  assert.deepEqual(out.pages.flatMap((p) => p.covers.map((c) => c.id)), list.map((o) => o.id), 'same order as asked');
+});
+
 test('a status read Shopee refuses is reported as itself, not as "not ready yet"', async () => {
   const { deps } = shopee({ refuse: Object.assign(new Error('Wrong parameters (error_param)'), { code: 'error_param' }) });
   const out = await fetchShopeeLabels(orders(3), 'THERMAL_AIR_WAYBILL', deps);

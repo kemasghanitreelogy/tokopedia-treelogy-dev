@@ -61,12 +61,16 @@ test('the edit form opens on what is already there, down to the discount unit', 
 });
 
 test('the code and the source are fixed, because both are the invoice identity', () => {
-  const [body] = form({ editing: whatsapp });
+  const [body, script] = form({ editing: whatsapp });
   assert.match(body, /id="code"[^>]*value="DP-261001-000036F"[^>]*readonly/s);
   assert.ok(!/data-code/.test(body), 'kode tidak diregenerasi saat mengubah');
   assert.deepEqual(body.match(/name="source" value="\w+"/g), ['name="source" value="DP"']);
   assert.match(body, /Simpan perubahan/);
   assert.ok(!/Mengubah transaksi yang sudah tercatat/.test(body), "tanpa banner peringatan");
+  // Save stays down until the form differs from what was loaded (checked in Chrome: on
+  // load disabled, a note typed enables it, typed back disables it, a qty enables it).
+  assert.match(script, /baseline = fingerprint\(\)/);
+  assert.match(script, /Belum ada yang diubah/);
 });
 
 test('a product the storefront no longer sells keeps its place on a line already there', () => {

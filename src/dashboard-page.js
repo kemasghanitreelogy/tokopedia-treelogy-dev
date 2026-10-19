@@ -4417,6 +4417,22 @@ export function renderManual({
     if (linked) linked.required = on;
   }
 
+  var baseline = null;
+  function fingerprint() {
+    var parts = [];
+    new FormData(form).forEach(function (value, name) {
+      if (name === 'csrf' || name === 'total' || name === 'back') return;
+      parts.push(name + '=' + String(value).trim());
+    });
+    return parts.join('&');
+  }
+  function unchanged() {
+    if (!editing || baseline === null || go.disabled) return;
+    var same = fingerprint() === baseline;
+    go.disabled = same;
+    go.title = same ? 'Belum ada yang diubah' : '';
+  }
+
   function total() {
     var goods = 0;
     var complete = 0;
@@ -4493,6 +4509,7 @@ export function renderManual({
        */
       go.disabled = complete === 0;
     }
+    unchanged();
     // The confirmation quotes what is actually about to be written - the house rule for
     // anything that writes - so it is rebuilt whenever the numbers change.
     form.dataset.confirm = editing
@@ -4934,6 +4951,15 @@ export function renderManual({
   shape();
 
   total();
+
+  // Editing: nothing to save until something differs from what was loaded. Compared on
+  // the whole form, so a field typed back to its old value disables the button again.
+  if (editing) {
+    baseline = fingerprint();
+    unchanged();
+    form.addEventListener('input', function () { total(); });
+    form.addEventListener('change', function () { total(); });
+  }
 }());`,
   });
 }

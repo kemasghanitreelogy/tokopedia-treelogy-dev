@@ -193,6 +193,18 @@ const READY_POLL_ATTEMPTS = 8;
 // Backoff rather than a fixed wait: most documents are already generated, and the ones
 // that are not benefit from a couple of quick retries before we start waiting properly.
 const POLL_BACKOFF_MS = [250, 500, 900, 1400, 1800, 1800, 1800];
+
+/**
+ * The most orders one Shopee document call takes: "order_list must contain at maximum 50
+ * items" (error_param). On 19 Oct a run of 56 had every status read refused, the refusal
+ * was swallowed, and all 56 - READY at Shopee - were reported as not ready yet.
+ */
+export const SHOPEE_BATCH_MAX = 50;
+export const chunks = (list, size) => {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+};
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -293,24 +305,34 @@ export async function createShopeeDocuments(config, auth, orderList, note, budge
  * and filtered down to READY orders before anything is downloaded - otherwise one bad
  * order silently costs the operator the entire print run.
  */
-async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
+export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL', {
+  session = resolveShopeeSession, call = callShopApi, download = downloadShopeeBatch, wait = sleep,
+} = {}) {
   if (orders.length === 0) return { pages: [], failures: [] };
 
-  const { config, auth } = await resolveShopeeSession();
+  const { config, auth } = await session();
   const failures = [];
   const note = (sn, reason, kind = 'check') => failures.push({ id: sn, channel: 'shopee', reason, kind });
 
   const wanted = orders.map((o) => o.id);
 
+  // Shopee's error says what went wrong when nothing else does; kept for the bench.
+  let statusError = null;
   const askStatus = async (sns) => {
-    try {
-      const result = await callShopApi(config, '/api/v2/logistics/get_shipping_document_result', auth, {}, {
-        order_list: sns.map((order_sn) => ({ order_sn })),
-      });
-      return result.response?.result_list ?? [];
-    } catch (error) {
-      return error.response?.result_list ?? [];
+    const rows = [];
+    for (const group of chunks(sns, SHOPEE_BATCH_MAX)) {
+      try {
+        const result = await call(config, '/api/v2/logistics/get_shipping_document_result', auth, {}, {
+          order_list: group.map((order_sn) => ({ order_sn })),
+        });
+        rows.push(...(result.response?.result_list ?? []));
+      } catch (error) {
+        const partial = error.response?.result_list ?? [];
+        if (!partial.length) statusError = error;
+        rows.push(...partial);
+      }
     }
+    return rows;
   };
 
   const ready = new Set();
@@ -332,7 +354,7 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
     for (const sn of unknown) note(sn, 'READ-ONLY: dokumen belum dibuat, tidak dibuatkan', 'check');
   } else if (unknown.length > 0) {
     const byId = new Map(orders.map((order) => [order.id, order]));
-    const tracking = await shopeeTracking(config, auth, unknown.map((sn) => byId.get(sn) ?? { id: sn }));
+    const tracking = await shopeeTracking(config, auth, unknown.map((sn) => byId.get(sn) ?? { id: sn }), { call });
 
     // An order the courier has not numbered yet cannot have a document, and saying so is
     // more use to the bench than repeating Shopee's line about an invalid number.
@@ -348,7 +370,9 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
       return item;
     });
     if (orderList.length === 0) return { pages: [], failures };
-    await createShopeeDocuments(config, auth, orderList, note, { left: CREATE_SPLIT_BUDGET });
+    for (const group of chunks(orderList, SHOPEE_BATCH_MAX)) {
+      await createShopeeDocuments(config, auth, group, note, { left: CREATE_SPLIT_BUDGET }, { call });
+    }
     for (const sn of askable) {
       if (!failures.some((f) => f.id === sn)) pending.add(sn);
     }
@@ -368,16 +392,24 @@ async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYBILL') {
       }
     }
     if (pending.size > 0 && attempt < READY_POLL_ATTEMPTS - 1) {
-      await sleep(POLL_BACKOFF_MS[Math.min(attempt, POLL_BACKOFF_MS.length - 1)]);
+      await wait(POLL_BACKOFF_MS[Math.min(attempt, POLL_BACKOFF_MS.length - 1)]);
     }
   }
 
-  for (const sn of pending) note(sn, 'dokumen belum siap di kurir setelah menunggu', 'wait');
+  // Not ready is only said when Shopee said it; a refused question is reported as itself.
+  for (const sn of pending) {
+    if (statusError) note(sn, `status dokumen tidak terbaca - ${statusError.message}`, isTransientShopeeError(statusError) ? 'retry' : 'check');
+    else note(sn, 'dokumen belum siap di kurir setelah menunggu', 'wait');
+  }
   if (ready.size === 0) return { pages: [], failures };
 
-  const readyList = [...ready];
-  const downloaded = await downloadShopeeBatch(config, auth, readyList, documentType);
-  return { pages: downloaded.pages, failures: [...failures, ...downloaded.failures] };
+  const pages = [];
+  for (const group of chunks([...ready], SHOPEE_BATCH_MAX)) {
+    const downloaded = await download(config, auth, group, documentType);
+    pages.push(...downloaded.pages);
+    failures.push(...downloaded.failures);
+  }
+  return { pages, failures };
 }
 
 /** Shopee refuses to combine some packages in one document, and only says so on download. */

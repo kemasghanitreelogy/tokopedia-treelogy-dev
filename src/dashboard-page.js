@@ -4147,7 +4147,6 @@ export function renderManual({
     body: `
       ${live ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Sinkronisasi belum aktif.</span></div>`}
       ${fromShopify ? '' : `<div class="alert alert--soft">${svg('warn')}<span>Harga Shopify belum tersinkron, jadi daftar produk masih menampilkan seluruh katalog dan harga harus diisi manual.</span></div>`}
-      ${edit ? `<div class="alert alert--soft">${svg('warn')}<span>Mengubah transaksi yang sudah tercatat. Fakturnya di Mekari Jurnal ikut diperbarui di tempat - nomor fakturnya tidak berubah - dan kalau labelnya sudah dicetak, tandanya dilepas supaya dicetak ulang.</span></div>` : ''}
       <form method="post" id="mxform" data-confirm="${edit
         ? `Simpan perubahan pada ${escape(edit.id)} dan perbarui fakturnya di Mekari Jurnal?`
         : 'Simpan transaksi ini dan kirim ke Mekari Jurnal?'}">

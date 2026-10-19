@@ -184,14 +184,19 @@ const page = (orders, over = {}) => renderDashboard({
   generatedAt: Date.now(), baseQuery: 'view=orders&channel=manual', csrf: 'tok', ...over,
 });
 
-test('only a WhatsApp sale offers the edit button', () => {
-  assert.deepEqual([...EDITABLE_MANUAL_SOURCES], ['DP']);
+test('every typed-in sale offers the edit button; a resend does not', () => {
+  assert.deepEqual([...EDITABLE_MANUAL_SOURCES].sort(), ['CS', 'DP', 'DW', 'LB', 'WS']);
 
-  const html = page([whatsapp, { ...whatsapp, id: 'CS-1', source: 'CS' }]);
+  const html = page([
+    whatsapp,
+    { ...whatsapp, id: 'CS-1', source: 'CS' },
+    { ...whatsapp, id: 'LB-261019-00007G8', source: 'LB' },
+    { ...whatsapp, id: 'RS-1', source: 'RS' },
+  ]);
   assert.match(html, /href="\?view=jurnal&amp;edit=DP-261001-000036F/);
-  assert.equal((html.match(/view=jurnal&amp;edit=/g) ?? []).length, 1, 'konsinyasi tidak ditawari ubah');
-  // Both still offer delete: taking back a slip entered twice is every source's problem.
-  assert.equal((html.match(/value="discard_manual"/g) ?? []).length, 2);
+  assert.match(html, /href="\?view=jurnal&amp;edit=LB-261019-00007G8/);
+  assert.equal((html.match(/view=jurnal&amp;edit=/g) ?? []).length, 3, 'kirim ulang tidak ditawari ubah');
+  assert.equal((html.match(/value="discard_manual"/g) ?? []).length, 4);
 });
 
 test('an order that has been edited says so, and by whom', () => {

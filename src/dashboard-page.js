@@ -8,7 +8,7 @@ import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, familyOf, isBundle, buildableFrom, unmapped, allProducts, isRemoved } from './master.js';
 import { pending, nextAction } from './fulfillment.js';
-import { orderCode, PREFIXES } from './mekari/prefix.js';
+import { orderCode, PREFIXES, SELLING_SOURCES } from './mekari/prefix.js';
 import { defaultSlot } from './shopee/pickup.js';
 import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS, sellableInShopify } from './mekari/manual.js';
 import { ageOf } from './mekari/heartbeat.js';
@@ -382,14 +382,10 @@ function refreshButton(order, { csrf, back }) {
  * leaving this list still showing it.
  */
 /**
- * Correct a WhatsApp order that was agreed in a conversation that carried on.
- *
- * Only WhatsApp. A consignment slip or a walk-in is written down after the fact from
- * something that already happened; a WhatsApp sale is still being negotiated while it
- * sits here, and until now a jar added meant deleting the whole transaction and typing it
- * again - which loses the invoice number in Jurnal along with it.
+ * Correct a typed-in sale in place: every source that is a sale, not only WhatsApp (19 Oct).
+ * The edit rewrites its Jurnal invoice too. A resend has no invoice and is left out.
  */
-export const EDITABLE_MANUAL_SOURCES = new Set(['DP']);
+export const EDITABLE_MANUAL_SOURCES = new Set(SELLING_SOURCES);
 
 function editButton(order, { back }) {
   if (order.channel !== 'manual' || !EDITABLE_MANUAL_SOURCES.has(String(order.source ?? '').toUpperCase())) return '';

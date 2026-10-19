@@ -30,14 +30,12 @@ import { amendManualInvoice } from '../src/mekari/amend.js';
 import { orderById, ordersByIds, ordersMatchingId, ID_SEARCH_MIN } from '../src/db/orders.js';
 
 /**
- * Which typed-in sources can be corrected in place rather than deleted and re-entered.
- *
- * WhatsApp alone, by decision. It is the one whose order is agreed in a conversation that
- * keeps going - a jar added, an address corrected - while a consignment slip or a walk-in
- * is written down after the fact from something that already happened. Widening this is
- * one entry; it is deliberately not wide.
+ * Which typed-in sources can be corrected in place rather than deleted and re-entered:
+ * every one that is a sale (19 Oct, widened from WhatsApp alone). The edit rewrites the
+ * Jurnal invoice in the same step, and Jurnal refuses once a payment is recorded on it.
+ * A resend is not here - it has no invoice, and is tied to the order it replaces.
  */
-const EDITABLE_SOURCES = new Set(['DP']);
+const EDITABLE_SOURCES = new Set(SELLING_SOURCES);
 
 /** One Shopee detail call takes fifty ids; a worklist never needs more than a handful. */
 const SETTLE_MAX = 20;
@@ -144,6 +142,7 @@ import { notifySyncFailures } from '../src/notify/telegram.js';
 import { ensureReady } from '../src/mekari/setup.js';
 import { isMekariConfigured } from '../src/mekari/client.js';
 import { withFallback } from '../src/snapshot.js';
+import { SELLING_SOURCES } from '../src/mekari/prefix.js';
 import {
   COOKIE_NAME, isConfigured, login, tokenMatches, parseCookies,
   issueSession, authenticate, sessionCookie, clearedCookie, safeRedirect, readFormBody,
@@ -755,7 +754,7 @@ export async function handleWrite(form, ip, user, csrf) {
     const before = await orderById('manual', code);
     if (!before) throw new Error(`transaksi ${code} tidak ada di daftar`);
     if (!EDITABLE_SOURCES.has(String(before.source ?? '').toUpperCase())) {
-      throw new Error(`${code} bukan pesanan WhatsApp, tidak bisa diubah di sini`);
+      throw new Error(`${code} adalah kirim ulang, tidak bisa diubah di sini - hapus lalu masukkan ulang`);
     }
 
     const lines = form.getAll('sku').map((sku, index) => ({
@@ -2206,7 +2205,7 @@ export default async function handler(req, res) {
         return;
       }
       if (!EDITABLE_SOURCES.has(String(order.source ?? '').toUpperCase())) {
-        send(403, dashboardError('Tidak bisa diubah', `${code} bukan pesanan WhatsApp. Hapus lalu masukkan ulang kalau datanya salah.`));
+        send(403, dashboardError('Tidak bisa diubah', `${code} adalah kirim ulang. Hapus lalu masukkan ulang kalau datanya salah.`));
         return;
       }
       const ledger = await cached('jurnal', LEDGER_TTL_MS, () => loadSyncLedger().catch(() => ({ orders: {} })), SWR);

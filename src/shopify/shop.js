@@ -66,10 +66,23 @@ query TreelogyOrders($cursor: String, $query: String) {
           quantity sku title variantTitle
           originalUnitPriceSet { shopMoney { amount } }
           totalDiscountSet { shopMoney { amount } }
-          discountAllocations { allocatedAmountSet { shopMoney { amount } } }
+          discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } }
         }
       }
-      shippingLine { originalPriceSet { shopMoney { amount } } }
+      discountApplications(first: 10) {
+        nodes {
+          index targetType
+          value { ... on MoneyV2 { amount } ... on PricingPercentageValue { percentage } }
+          ... on DiscountCodeApplication { code }
+          ... on ManualDiscountApplication { title }
+          ... on AutomaticDiscountApplication { title }
+          ... on ScriptDiscountApplication { title }
+        }
+      }
+      shippingLine {
+        originalPriceSet { shopMoney { amount } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } }
+      }
       fulfillments(first: 5) {
         trackingInfo { number company }
       }
@@ -228,10 +241,23 @@ query TreelogyOrderByGid($id: ID!) {
         quantity sku title variantTitle
         originalUnitPriceSet { shopMoney { amount } }
         totalDiscountSet { shopMoney { amount } }
-        discountAllocations { allocatedAmountSet { shopMoney { amount } } }
+        discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } }
       }
     }
-    shippingLine { originalPriceSet { shopMoney { amount } } }
+    discountApplications(first: 10) {
+      nodes {
+        index targetType
+        value { ... on MoneyV2 { amount } ... on PricingPercentageValue { percentage } }
+        ... on DiscountCodeApplication { code }
+        ... on ManualDiscountApplication { title }
+        ... on AutomaticDiscountApplication { title }
+        ... on ScriptDiscountApplication { title }
+      }
+    }
+    shippingLine {
+      originalPriceSet { shopMoney { amount } }
+      discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } }
+    }
     fulfillments(first: 5) { trackingInfo { number company } }
   }
 }`;

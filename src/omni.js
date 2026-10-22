@@ -356,8 +356,42 @@ export function financeFromShopify(order) {
     // received by the seller, so unlike the marketplaces it is genuine revenue.
     lines: foldLines(lines),
     shipping: toNumber(order.shippingLine?.originalPriceSet?.shopMoney?.amount),
+    discounts: shopifyDiscounts(order),
     currency: order.totalPriceSet?.shopMoney?.currencyCode ?? 'IDR',
   };
+}
+
+/**
+ * Which discounts an order carried, as the buyer saw them: the code, how it was given
+ * (a percentage or a fixed amount), and what it actually took off.
+ *
+ * Display only. The per-line amounts above are what the books use; this is the reason
+ * behind them, so somebody looking at #11845 sees "WELCOME10 · 10%" and not just a
+ * subtotal that does not match the price. What it took off is the sum of its
+ * allocations, because the application's own value is the instruction - "Rp65.000 per
+ * item" on three items is not Rp65.000.
+ */
+export function shopifyDiscounts(order) {
+  const taken = new Map();
+  const allocations = [
+    ...(order.lineItems?.nodes ?? []).flatMap((li) => li.discountAllocations ?? []),
+    ...(order.shippingLine?.discountAllocations ?? []),
+  ];
+  for (const a of allocations) {
+    const index = a.discountApplication?.index;
+    if (index === undefined) continue;
+    taken.set(index, (taken.get(index) ?? 0) + toNumber(a.allocatedAmountSet?.shopMoney?.amount));
+  }
+  return (order.discountApplications?.nodes ?? []).map((d) => {
+    const percent = d.value?.percentage;
+    return {
+      label: d.code || d.title || 'Diskon',
+      code: Boolean(d.code),
+      ...(percent !== undefined && percent !== null ? { percent: toNumber(percent) } : { fixed: toNumber(d.value?.amount) }),
+      amount: taken.get(d.index) ?? 0,
+      shipping: d.targetType === 'SHIPPING_LINE',
+    };
+  });
 }
 
 /** Identical SKUs at the same price become one line with a quantity. */

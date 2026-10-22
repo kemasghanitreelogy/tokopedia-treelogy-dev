@@ -434,6 +434,40 @@ function refundButton(order, { csrf, back }) {
   </form>`;
 }
 
+/** 10 → "10%", 12.5 → "12,5%". */
+const percentText = (n) => `${Number(n).toLocaleString('id-ID', { maximumFractionDigits: 2 })}%`;
+
+/**
+ * The discount on one line, the way it was given.
+ *
+ * A typed-in sale remembers whether somebody wrote "20%" or "Rp50.000"; that is shown as
+ * written, with what it came to beside it. A platform line only knows the rupiah.
+ */
+function lineDiscount(l) {
+  const unit = Number(l.unitDiscount) || 0;
+  if (unit <= 0) return '';
+  const total = unit * (Number(l.qty) || 0);
+  const how = l.discountPercent !== undefined && Number.isFinite(Number(l.discountPercent))
+    ? `${escape(percentText(l.discountPercent))} &middot; ` : '';
+  return `<span class="od__disc">Diskon ${how}-${escape(rupiah(total))}</span>`;
+}
+
+/**
+ * Which discounts the order carried and what each took off - a Shopify code, an automatic
+ * discount, one given in the order editor. Older stored orders have no list until they
+ * are read again; their per-line amounts are still shown above.
+ */
+function discountDetail(applied, discounted) {
+  const rows = applied.filter((d) => d.amount > 0 || d.percent || d.fixed);
+  if (rows.length === 0) return '';
+  return `<ul class="od__dl" aria-label="Rincian diskon">${rows.map((d) => `<li>
+    <span class="od__dl__n">${d.code ? '<span class="od__dl__t">Kode</span>' : ''}<b class="mono">${escape(d.label)}</b>${
+      d.shipping ? ' <span class="dim">ongkir</span>' : ''}</span>
+    <span class="od__dl__v">${d.percent ? escape(percentText(d.percent)) : escape(rupiah(d.fixed ?? 0))}</span>
+    <b class="od__dl__a mono">-${escape(rupiah(d.amount))}</b>
+  </li>`).join('')}</ul>`;
+}
+
 /**
  * Everything known about one order, as the popup shows it.
  *
@@ -441,7 +475,7 @@ function refundButton(order, { csrf, back }) {
  * order, so opening it costs nothing and works with the network off. Escaping happens
  * here, once, which is why the dialog copies markup instead of parsing a data attribute.
  */
-function orderDetail(order, index, { csrf = null, back = '' } = {}) {
+export function orderDetail(order, index, { csrf = null, back = '' } = {}) {
   const stage = STAGE_META[order.stage];
   const lines = order.finance?.lines?.length ? order.finance.lines : (order.lines ?? []);
   const units = lines.reduce((n, l) => n + (Number(l.qty) || 0), 0);
@@ -455,13 +489,18 @@ function orderDetail(order, index, { csrf = null, back = '' } = {}) {
       <span class="od__n">${escape(l.name || l.sku)}</span>
       ${l.variant ? `<span class="od__v">${escape(l.variant)}</span>` : ''}
       <span class="od__s mono">${escape(l.sku ?? '')}</span>
+      ${lineDiscount(l)}
     </td>
     <td class="num mono">${escape(String(l.qty ?? 0))}</td>
-    ${l.unitPrice === undefined ? '' : `<td class="num mono">${escape(rupiah(l.unitPrice))}</td>`}
+    ${l.unitPrice === undefined ? '' : `<td class="num mono">${escape(rupiah(l.unitPrice))}${
+      Number(l.unitDiscount) > 0 ? `<span class="od__dp">-${escape(rupiah(l.unitDiscount))}</span>` : ''}</td>`}
     ${l.unitPrice === undefined ? '' : `<td class="num mono">${escape(rupiah((l.unitPrice - (l.unitDiscount ?? 0)) * (l.qty ?? 0)))}</td>`}
   </tr>`).join('');
 
   const priced = lines.some((l) => l.unitPrice !== undefined);
+  const gross = lines.reduce((n, l) => n + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0), 0);
+  const discounted = lines.reduce((n, l) => n + (Number(l.unitDiscount) || 0) * (Number(l.qty) || 0), 0);
+  const applied = order.finance?.discounts ?? [];
 
   return `<div id="od-${index}">
     <div class="od__head">
@@ -501,8 +540,12 @@ function orderDetail(order, index, { csrf = null, back = '' } = {}) {
       <tbody>${items}</tbody>
     </table>` : ''}
 
+    ${discountDetail(applied, discounted)}
+
     <dl class="od__sum">
       <div><dt>Unit</dt><dd class="mono">${escape(String(units))}</dd></div>
+      ${discounted > 0 ? `<div><dt>Harga barang</dt><dd class="mono">${escape(rupiah(gross))}</dd></div>
+      <div class="od__sum--disc"><dt>Diskon</dt><dd class="mono">-${escape(rupiah(discounted))}</dd></div>` : ''}
       ${order.finance?.shipping ? `<div><dt>Ongkir</dt><dd class="mono">${escape(rupiah(order.finance.shipping))}</dd></div>` : ''}
       <div class="od__total"><dt>Total</dt><dd class="mono">${escape(rupiah(order.total))}</dd></div>
     </dl>
@@ -3057,6 +3100,18 @@ a.od__sync__b{text-decoration:none}
 .od__sync__b[disabled]{opacity:.6; cursor:default}
 .od__sync__b .ico{width:16px; height:16px}
 .od__sync__n{font-size:.78rem; color:var(--dim); flex:1 1 14rem; min-width:0}
+/* A discount sits under what it reduced: the line, then the order's codes, then the sum. */
+.od__disc{display:block; margin-top:.2rem; font-size:.74rem; color:var(--good)}
+.od__dp{display:block; font-size:.72rem; color:var(--good)}
+.od__dl{list-style:none; margin:0 0 1rem; padding:.5rem .75rem; border-radius:9px; display:grid; gap:.3rem;
+  background:color-mix(in srgb,var(--good) 8%,transparent); border:1px solid color-mix(in srgb,var(--good) 22%,transparent);
+  font-size:.82rem}
+.od__dl li{display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap}
+.od__dl__n{display:inline-flex; align-items:baseline; gap:.4rem; min-width:0; overflow-wrap:anywhere}
+.od__dl__t{font-size:.66rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted)}
+.od__dl__v{color:var(--muted)}
+.od__dl__a{margin-left:auto; color:var(--good)}
+.od__sum--disc dd{color:var(--good)}
 .od__total{margin-left:auto; text-align:right}
 .od__total dd{font-size:1.15rem}
 @media (max-width:640px){ .od{width:calc(100vw - 1rem)} .od>div{padding:1.1rem} }

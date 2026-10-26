@@ -20,7 +20,7 @@ const order = (id, over = {}) => ({
 const page = (orders) => renderExpressLog({
   orders, range: { from: '2026-09-22', to: '2026-09-29', label: '7 hari' },
   errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf: 'TOKEN', flash: null,
-  user: { name: 'Kemas', email: 'k@t.com', role: 'owner' },
+  user: { name: 'Kemas', email: 'k@t.com', role: 'owner', status: 'active' },
 });
 
 test('the log is reachable by its own url', () => {

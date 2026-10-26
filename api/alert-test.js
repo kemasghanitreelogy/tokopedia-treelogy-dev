@@ -1,4 +1,5 @@
 import { authenticate, parseCookies, COOKIE_NAME, csrfValid, readFormBody } from '../src/dashboard-auth.js';
+import { can } from '../src/users.js';
 import { randomUUID } from 'node:crypto';
 import { raiseAlert } from '../src/alerts.js';
 import { zoneForChannel, BENCH_CHANNEL } from '../src/clock.js';
@@ -33,6 +34,11 @@ export default async function handler(req, res) {
   if (!user) {
     res.writeHead(401, { 'Content-Type': 'text/plain' });
     res.end('unauthorized');
+    return;
+  }
+  if (!can(user, 'orders')) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('forbidden');
     return;
   }
 

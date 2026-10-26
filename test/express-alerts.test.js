@@ -180,13 +180,13 @@ test('every script the page emits actually parses', () => {
    *
    * Compiling is enough to catch it, and needs no browser.
    */
-  for (const src of scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner' }))) {
+  for (const src of scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner', status: 'active' }))) {
     assert.doesNotThrow(() => new Function(src), `script tidak bisa diurai: ${src.slice(0, 120)}`);
   }
 });
 
 test('the doorbell is wired for a signed-in page and absent from a signed-out one', () => {
-  const inside = pageFor({ name: 'K', email: 'k@t.com', role: 'owner' });
+  const inside = pageFor({ name: 'K', email: 'k@t.com', role: 'owner', status: 'active' });
   assert.match(inside, /id="alerts"/);
   assert.match(inside, /new EventSource\('\/api\/events\?since=' \+ seen\(\)\)/);
 
@@ -200,7 +200,7 @@ test('the doorbell is wired for a signed-in page and absent from a signed-out on
 });
 
 test('values from a marketplace go through the escaper, never straight into innerHTML', () => {
-  const [doorbell] = scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner' }))
+  const [doorbell] = scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner', status: 'active' }))
     .filter((s) => s.includes('EventSource'));
   // A buyer's name is typed by a stranger. Caught by a headless browser first: "Dewi
   // <b>x</b>" rendered as markup because the row value was interpolated raw.
@@ -313,7 +313,7 @@ test('the doorbell makes a sound, and copes with a browser that will not let it'
    * is resumed on the first click or key anywhere, and until then the card carries a
    * button that says so. Silence the operator cannot explain is worse than no sound.
    */
-  const [doorbell] = scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner' }))
+  const [doorbell] = scriptsIn(pageFor({ name: 'K', email: 'k@t.com', role: 'owner', status: 'active' }))
     .filter((s) => s.includes('EventSource'));
 
   assert.match(doorbell, /AudioContext \|\| window\.webkitAudioContext/);

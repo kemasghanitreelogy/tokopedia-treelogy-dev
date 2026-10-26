@@ -14,7 +14,7 @@ import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS, sellableInShopify } from './
 import { ageOf } from './mekari/heartbeat.js';
 import { REVIEW_CHANNELS } from './reviews/combined.js';
 import { paginate, pageHref, pageWindow, PER_PAGE_OPTIONS, DEFAULT_PER_PAGE } from './paging.js';
-import { can, ROLES } from './users.js';
+import { can, canView, homeView, ROLES } from './users.js';
 import { phoneForCourier } from './phone.js';
 
 /** Server-rendered omnichannel dashboard. No secrets and no user input reach the markup unescaped. */
@@ -124,7 +124,7 @@ export const LOGGED_MENUS = new Set(['process', 'labels', 'stock', 'products', '
 
 function viewNav(current, rangeQuery, user = null, { log = false } = {}) {
   const tabs = Object.entries(VIEWS)
-    .filter(([id]) => !TAB_PERMISSION[id] || can(user, TAB_PERMISSION[id]))
+    .filter(([id]) => (!TAB_PERMISSION[id] || can(user, TAB_PERMISSION[id])) && (!user || canView(user, id)))
     .map(([id, label]) => {
       const query = id === 'products' || id === 'users' ? `?view=${id}` : `?view=${id}${rangeQuery}`;
       return `<a class="viewtab ${id === current ? 'is-on' : ''}" href="${escape(query)}">${escape(label)}</a>`;
@@ -137,7 +137,7 @@ function viewNav(current, rangeQuery, user = null, { log = false } = {}) {
   if (current === 'orders' && can(user, 'write')) {
     end.push(`<a class="viewadd" href="?view=jurnal&amp;add=1">${svg('plus')}<span>Tambah transaksi</span></a>`);
   }
-  if (!log && LOGGED_MENUS.has(current)) {
+  if (!log && LOGGED_MENUS.has(current) && (!user || canView(user, 'activity'))) {
     end.push(`<a class="viewlog" href="${escape(`?view=activity&menu=${current}${rangeQuery}`)}">${svg('history')}<span>Log aktivitas</span></a>`);
   }
   return {
@@ -598,10 +598,11 @@ export function shell({
    */
   const dataAge = ageOfData(readAt, generatedAt, settleFailed);
   const who = user
-    ? `<a class="who" href="?view=activity&amp;actor=${escape(user.id)}" title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
+    // A role that may not open the activity log gets the same chip, but not a link to it.
+    ? `<${canView(user, 'activity') ? `a class="who" href="?view=activity&amp;actor=${escape(user.id)}"` : 'span class="who"'} title="${escape(user.email)} · ${escape(ROLES[user.role]?.label ?? user.role)}">
         <span class="who__av" aria-hidden="true">${escape(initials(user.name || user.email))}</span>
         <span class="who__t"><span class="who__n">${escape(user.name || user.email)}</span><span class="who__r">${escape(ROLES[user.role]?.label ?? user.role)}</span></span>
-      </a>`
+      </${canView(user, 'activity') ? 'a' : 'span'}>`
     : '';
   const nav = viewNav(view, rangeQuery(range), user, { log });
   const presetLink = (id) => `?view=${view}&preset=${id}`;
@@ -2060,14 +2061,14 @@ ${user ? '<div id="alerts" class="alerts" aria-live="assertive" aria-label="Pemb
 ${celebration(flash)}
 <div class="wrap">
   <header class="top">
-    <a class="brandline" href="?view=orders" aria-label="Treelogy, ke halaman pesanan">
+    <a class="brandline" href="?view=${escape(homeView(user))}" aria-label="Treelogy, ke halaman utama">
       <span class="logo" aria-hidden="true">T</span>
       <span class="brand__n">Treelogy</span>
     </a>
     ${nav.tabs}
     <div class="tools">
       ${who}
-      ${user ? `<a class="iconbtn${view === 'express' ? ' is-on' : ''}" href="?view=express"
+      ${can(user, 'orders') ? `<a class="iconbtn${view === 'express' ? ' is-on' : ''}" href="?view=express"
         aria-label="Riwayat pickup instant" title="Riwayat pesanan instant &amp; instant prioritas">${svg('bell')}</a>` : ''}
       <button class="iconbtn" id="theme" type="button" aria-label="Ganti tema terang/gelap">${svg('sun')}</button>
       <a class="iconbtn" href="${escape(self)}" aria-label="Muat ulang data">${svg('refresh')}</a>
@@ -2345,7 +2346,7 @@ ${celebration(flash)}
  * id it saw so a dropped connection costs nothing, and needs no upstream channel. Only
  * for a signed-in page; the login screen has nothing to be told.
  */
-${user ? `(function () {
+${can(user, 'orders') ? `(function () {
   if (!window.EventSource) return;
   var box = document.getElementById('alerts');
   if (!box) return;

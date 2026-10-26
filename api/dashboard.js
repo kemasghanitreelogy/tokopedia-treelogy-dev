@@ -5,7 +5,7 @@ import { saveOrders } from '../src/db/orders.js';
 import { renderDashboard, renderPicklist, renderProducts, renderLabels, renderLabelLookup, renderProcess, renderStock, renderJurnal, renderManual, renderForecast, renderReviews, renderExpressLog, renderLogin, dashboardError, renderOrderPicks, VALID_VIEWS } from '../src/dashboard-page.js';
 import { renderUsers } from '../src/pages/users.js';
 import { renderActivity } from '../src/pages/activity.js';
-import { can, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
+import { can, canView, homeView, listUsers, inviteUser, renewInvite, updateUser, removeUser, touchLogin, ROLES, STATUS } from '../src/users.js';
 import { recordActivity, readActivity, actorsIn, MENUS } from '../src/audit.js';
 import { sendMail, isSmtpConfigured } from '../src/mail/smtp.js';
 import { invitationMail } from '../src/mail/invitation.js';
@@ -2067,6 +2067,12 @@ export default async function handler(req, res) {
   const requestedView = url.searchParams.get('view') ?? 'orders';
   // The stock tab was folded into products; old links and bookmarks still land somewhere useful.
   const view = Object.hasOwn(VALID_VIEWS, requestedView) ? requestedView : 'orders';
+  // A role held to a few menus is sent to its own page rather than shown an error: the
+  // brand link, an old bookmark and the bare address all land somewhere it may look.
+  if (!canView(user, view)) {
+    redirect(`?view=${homeView(user)}`);
+    return;
+  }
   // Page and page size come from the URL, and every page link is the current URL with
   // only those two changed - so filters, range and page survive reload and history.
   const paging = parsePaging(url.searchParams);

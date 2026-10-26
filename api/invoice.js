@@ -2,6 +2,7 @@ import { ordersForPrinting } from '../src/orders-by-id.js';
 import { buildFaktur } from '../src/faktur.js';
 import { dashboardError } from '../src/dashboard-page.js';
 import { COOKIE_NAME, isConfigured, parseCookies, authenticate, callerIp } from '../src/dashboard-auth.js';
+import { can } from '../src/users.js';
 import { recordActivity } from '../src/audit.js';
 import { orderCode } from '../src/mekari/prefix.js';
 
@@ -30,6 +31,8 @@ export default async function handler(req, res) {
 
   const user = await authenticate(parseCookies(req.headers.cookie)[COOKIE_NAME]);
   if (!user) return fail(401, 'Sesi berakhir', 'Masuk kembali lewat dashboard, lalu ulangi pencetakan.');
+  // A role held to the stock and forecast menus never sees an order, a buyer or a label.
+  if (!can(user, 'orders')) return fail(403, 'Tidak berwenang', 'Peran ini tidak bisa mencetak invoice.');
 
   const channel = String(url.searchParams.get('channel') ?? '');
   const id = String(url.searchParams.get('id') ?? '').trim();

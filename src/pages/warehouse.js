@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { shell, svg, escape } from '../dashboard-page.js';
 import { PRODUCTS, familyOf } from '../master.js';
 import { GROUPS, recipeOf, verifyWarehouse } from '../warehouse.js';
+import { can as allowed } from '../users.js';
 
 /**
  * The Stok tab: the real warehouse, item by item.
@@ -29,6 +30,9 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
   const isToday = (at) => new Date(at * 1000 + 7 * 3600_000).toISOString().slice(0, 10) === today;
   const units = Object.values(items).reduce((n, i) => n + Math.max(0, i.qty), 0);
+  // Someone who may only look sees the shelf, the recipes and the history - no form that
+  // the server would refuse anyway.
+  const writer = allowed(user, 'write');
 
   const kpis = `<section class="strip" aria-label="Ringkasan gudang">
     <span class="stat"><span class="stat__n">${fmt(Object.keys(items).length)}</span><span class="stat__l">barang</span></span>
@@ -51,14 +55,14 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     // Bar length is relative to the fullest item in the same group, on a square-root scale
     // so a 7.473 mailerbox does not flatten every other bar to nothing.
     const level = top > 0 ? Math.round(Math.sqrt(Math.max(0, it.qty) / top) * 100) : 0;
-    return `<li class="wh__row ${TONE[it.group ?? 'pack'] ?? ''}" tabindex="0" aria-expanded="false" title="Klik untuk mencatat barang masuk, keluar, atau opname" data-code="${escape(code)}" data-text="${escape(`${code} ${it.name}`.toLowerCase())}">
+    return `<li class="wh__row ${TONE[it.group ?? 'pack'] ?? ''}"${writer ? ' tabindex="0" aria-expanded="false" title="Klik untuk mencatat barang masuk, keluar, atau opname"' : ''} data-code="${escape(code)}" data-text="${escape(`${code} ${it.name}`.toLowerCase())}">
       <span class="wh__code mono">${escape(code)}</span>
       <span class="wh__name"><span class="wh__nm">${escape(it.name)}</span><span class="wh__bar" aria-hidden="true"><i style="width:${level}%"></i></span></span>
       <span class="wh__qty"><b class="mono${it.qty <= 0 ? ' is-zero' : ''}">${fmt(it.qty)}</b><small>${escape(it.uom)}</small></span>
       <span class="wh__acts">
         <a class="wh__hist" href="?view=stock&amp;item=${encodeURIComponent(code)}#riwayat" title="Riwayat ${escape(it.name)}">${svg('history')}<span class="visually-hidden">Riwayat</span></a>
       </span>
-      <form class="wh__form" method="post" hidden data-confirm="Catat gerakan ${escape(it.name)}?">
+      ${writer ? `<form class="wh__form" method="post" hidden data-confirm="Catat gerakan ${escape(it.name)}?">
         ${hidden}
         <input type="hidden" name="action" value="wh_move"><input type="hidden" name="code" value="${escape(code)}">
         <input type="hidden" name="token" value="${randomUUID()}">
@@ -70,7 +74,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
         <label class="wh__in"><span data-qty-label>Jumlah</span><input name="qty" type="number" min="0" step="1" inputmode="numeric" required class="mono"></label>
         <label class="wh__in wh__in--note"><span>Catatan</span><input name="note" maxlength="200" placeholder="mis. PO supplier, rusak, sampel KOL…"></label>
         <button class="pf__primary" type="submit">Simpan</button>
-      </form>
+      </form>` : ''}
     </li>`;
   };
 
@@ -84,7 +88,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
       <input name="qty" type="number" min="1" max="100000" step="1" inputmode="numeric" class="rv__qty mono" placeholder="Jumlah" aria-label="Jumlah masuk" required>
       <button type="button" class="rc__del" data-del aria-label="Hapus baris ini">${svg('trash')}</button>
     </li>`;
-  const receive = `<section class="wh__grp wh__grp--in"><div class="wh__hrow wh__hrow--flat">
+  const receive = !writer ? '' : `<section class="wh__grp wh__grp--in"><div class="wh__hrow wh__hrow--flat">
       <div><h2 class="wh__h">Barang masuk</h2><p class="wh__sub wh__sub--flat">Kiriman dari pemasok menambah stok rak. Bisa beberapa barang sekaligus.</p></div>
       <button type="button" class="pf__primary wh__btn--add" data-open-receive aria-expanded="false">${svg('plus')}<span>Tambah stok</span></button></div>
     <form class="rc rv" method="post" hidden data-receive data-confirm="Catat barang masuk ini? Stok rak bertambah sesuai jumlahnya.">
@@ -145,25 +149,25 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   const unlisted = PRODUCTS.filter((p) => !sets.some((x) => x.p.sku === p.sku))
     .sort((a, b) => productLabel(a).localeCompare(productLabel(b)));
   const can = `<section class="wh__grp wh__grp--can" id="isi"><div class="wh__hrow"><h2 class="wh__h">Isi produk<span>${sets.length}</span></h2>
-      <button type="button" class="wh__btn wh__btn--add" data-open-new aria-expanded="false">${svg('plus')}<span>Atur isi produk</span></button></div>
+      ${writer ? `<button type="button" class="wh__btn wh__btn--add" data-open-new aria-expanded="false">${svg('plus')}<span>Atur isi produk</span></button>` : ''}</div>
     <p class="wh__sub">Setiap produk yang keluar mengurangi semua barang di dalamnya.</p>
-    <div class="rc__new" hidden data-new>
+    ${writer ? `<div class="rc__new" hidden data-new>
       <label class="wh__in rc__pick"><span>Produk</span><select data-pick><option value="">Pilih produk…</option>${unlisted.map((p) => `<option value="${escape(p.sku)}">${escape(productLabel(p))}</option>`).join('')}</select></label>
       ${unlisted.map((p) => `<div data-new-for="${escape(p.sku)}" hidden>${editor(p.sku, recipeOf(p.sku, edited), false, productLabel(p))}</div>`).join('')}
-    </div>
+    </div>` : ''}
     <ul class="wh__sets">${sets.map(({ p, recipe }) => `<li class="wh__set" data-set>
       <div class="wh__sethead">
         <span class="wh__setname">${escape(p.name)}${p.variant ? `<small>${escape(p.variant)}</small>` : ''}${edited[p.sku] ? '<em class="wh__edited">Diubah</em>' : ''}</span>
-        <span class="wh__setacts">
+        ${writer ? `<span class="wh__setacts">
           <button type="button" class="wh__edit" data-edit aria-expanded="false" aria-label="Ubah isi ${escape(productLabel(p))}">${svg('pencil')}<span>Ubah</span></button>
           <form method="post" class="wh__delform" data-confirm="Hapus isi ${escape(productLabel(p))}? Produk ini tidak lagi mengurangi stok gudang saat dikirim. Bisa diatur lagi lewat Atur isi produk.">
             ${hidden}<input type="hidden" name="action" value="wh_recipe"><input type="hidden" name="sku" value="${escape(p.sku)}"><input type="hidden" name="remove" value="1">
             <button type="submit" class="wh__edit wh__edit--del" aria-label="Hapus isi ${escape(productLabel(p))}">${svg('trash')}<span>Hapus</span></button>
           </form>
-        </span>
+        </span>` : ''}
       </div>
       <span class="wh__parts" data-chips>${chips(recipe) || '<span class="dim">Belum ada isi</span>'}</span>
-      ${editor(p.sku, recipe, Boolean(edited[p.sku]), productLabel(p))}
+      ${writer ? editor(p.sku, recipe, Boolean(edited[p.sku]), productLabel(p)) : ''}
     </li>`).join('')}</ul></section>`;
 
   const shown = moves.filter((m) => (!item || m.code === item) && (!kind || m.kind === kind)).slice(0, 150);
@@ -338,6 +342,7 @@ const SCRIPT = `
   // A click on a shelf row opens its movement form under it; one open at a time.
   function toggleRow(row) {
     var form = row.querySelector('.wh__form');
+    if (!form) return;
     var open = form.hidden;
     document.querySelectorAll('.wh__form').forEach(function (f) { f.hidden = true; });
     document.querySelectorAll('.wh__row').forEach(function (r) { r.setAttribute('aria-expanded', 'false'); r.classList.remove('is-open'); });

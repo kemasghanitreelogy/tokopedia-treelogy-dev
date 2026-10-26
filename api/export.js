@@ -3,6 +3,7 @@ import { resolveRange } from '../src/range.js';
 import { dashboardError } from '../src/dashboard-page.js';
 import { buildExport, renderExport, exportFilename, DATASETS, DEFAULT_DATASET } from '../src/export/orders.js';
 import { COOKIE_NAME, isConfigured, parseCookies, authenticate, callerIp } from '../src/dashboard-auth.js';
+import { can } from '../src/users.js';
 import { recordActivity } from '../src/audit.js';
 
 /**
@@ -39,6 +40,11 @@ export default async function handler(req, res) {
   const user = await authenticate(session);
   if (!user) {
     fail(401, 'Sesi berakhir', 'Masuk kembali lewat dashboard, lalu ulangi ekspor.');
+    return;
+  }
+  // A role held to the stock and forecast menus never sees an order, a buyer or a label.
+  if (!can(user, 'orders')) {
+    fail(403, 'Tidak berwenang', 'Peran ini tidak bisa mengekspor pesanan.');
     return;
   }
 

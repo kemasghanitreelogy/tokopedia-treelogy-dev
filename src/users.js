@@ -26,9 +26,10 @@ export const ROLES = {
   admin: { label: 'Admin', desc: 'Semua menu, termasuk mengundang dan mengelola pengguna.' },
   operator: { label: 'Operator', desc: 'Mengubah stok, harga, pengiriman dan Jurnal. Tidak mengelola pengguna.' },
   viewer: { label: 'Peninjau', desc: 'Hanya melihat. Setiap tombol simpan ditolak.' },
+  factory: { label: 'Factory', desc: 'Hanya melihat Stok gudang dan Prakiraan. Tidak melihat pesanan, tidak mengubah apa pun.' },
 };
 /** Roles an admin may hand out. `owner` is not one of them. */
-export const ASSIGNABLE_ROLES = ['admin', 'operator', 'viewer'];
+export const ASSIGNABLE_ROLES = ['admin', 'operator', 'viewer', 'factory'];
 
 export const STATUS = {
   invited: 'Diundang',
@@ -39,11 +40,34 @@ export const STATUS = {
 const PERMISSIONS = {
   write: new Set(['owner', 'admin', 'operator']),
   users: new Set(['owner', 'admin']),
+  // Orders carry buyers' names, phones and addresses: the factory sees none of them.
+  orders: new Set(['owner', 'admin', 'operator', 'viewer']),
+};
+
+/**
+ * Roles held to a few menus. Any other view is refused, not merely left out of the menu;
+ * a role not listed here sees every menu its permissions allow.
+ */
+export const ROLE_VIEWS = {
+  factory: new Set(['stock', 'forecast']),
 };
 
 /** @param {{role?: string, status?: string}|null|undefined} user */
 export const can = (user, permission) =>
   Boolean(user && user.status === 'active' && PERMISSIONS[permission]?.has(user.role));
+
+/** Whether this person may open a dashboard view at all. */
+export const canView = (user, view) => {
+  if (!user || user.status !== 'active') return false;
+  const only = ROLE_VIEWS[user.role];
+  return !only || only.has(view);
+};
+
+/** Where a person lands when the view they asked for is not theirs. */
+export const homeView = (user) => {
+  const only = ROLE_VIEWS[user?.role];
+  return only ? [...only][0] : 'orders';
+};
 
 export const INVITE_TTL_SECONDS = 3 * 24 * 3600;
 export const MIN_PASSWORD_LENGTH = 8;

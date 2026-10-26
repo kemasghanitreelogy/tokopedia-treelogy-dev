@@ -1,4 +1,5 @@
 import { authenticate, parseCookies, COOKIE_NAME } from '../src/dashboard-auth.js';
+import { can } from '../src/users.js';
 import { alertBus, alertsSince } from '../src/alerts.js';
 
 /**
@@ -75,6 +76,13 @@ export default async function handler(req, res) {
     // arriving as an event stream would only make the browser retry it for ever.
     res.writeHead(401, { 'Content-Type': 'text/plain' });
     res.end('unauthorized');
+    return;
+  }
+  // The doorbell rings for orders. A role that never sees one gets 204, which tells
+  // EventSource to stop rather than to retry.
+  if (!can(user, 'orders')) {
+    res.writeHead(204);
+    res.end();
     return;
   }
 

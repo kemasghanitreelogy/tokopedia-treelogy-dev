@@ -8,6 +8,7 @@ import {
   COOKIE_NAME, isConfigured, parseCookies, authenticate, csrfValid, csrfToken, readFormBody, callerIp,
 } from '../src/dashboard-auth.js';
 import { recordActivity } from '../src/audit.js';
+import { can } from '../src/users.js';
 
 /**
  * Streams a merged, print-ready PDF of official carrier waybills.
@@ -43,6 +44,11 @@ export default async function handler(req, res) {
   const user = await authenticate(session);
   if (!user) {
     fail(401, 'Sesi berakhir', 'Masuk kembali lewat dashboard, lalu ulangi pencetakan.');
+    return;
+  }
+  // A role held to the stock and forecast menus never sees an order, a buyer or a label.
+  if (!can(user, 'orders')) {
+    fail(403, 'Tidak berwenang', 'Peran ini tidak bisa mencetak label.');
     return;
   }
 

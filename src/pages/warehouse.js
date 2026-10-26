@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { shell, svg, escape } from '../dashboard-page.js';
 import { PRODUCTS, familyOf } from '../master.js';
-import { GROUPS, recipeOf, verifyWarehouse } from '../warehouse.js';
+import { GROUPS, recipeOf, verifyWarehouse, REFUND_REASONS } from '../warehouse.js';
 import { can as allowed } from '../users.js';
 
 /**
@@ -48,7 +48,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
         : `<span class="wh__ok" title="Setiap jumlah sama persis dengan saldo awal ditambah semua gerakannya">${svg('check2')}<span>Seimbang dengan riwayat</span></span>`;
     })()}
     <input class="search" id="wq" type="search" aria-label="Cari barang" placeholder="Cari kode atau nama barang…" autocomplete="off">
-  </section>`;
+  </section>${refundRows(warehouse, { csrf, user, writer })}`;
 
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="view" value="stock"><input type="hidden" name="back" value="?view=stock">`;
   const row = (code, it, top) => {
@@ -186,7 +186,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   </section>`;
 
   const body = `<div class="wh">
-    <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Stok di sini berkurang saat pesanan masuk picklist (labelnya dicetak), sesuai isi tiap produk. Pesanan yang batal atau diretur setelah dikonfirmasi kembali ke rak otomatis.</p>
+    <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Stok di sini berkurang saat pesanan masuk picklist (labelnya dicetak), sesuai isi tiap produk. Pesanan yang batal, diretur atau direfund setelah labelnya dicetak muncul di atas sampai tim memastikan barangnya kembali ke rak atau tidak.</p>
     <div class="wh__cols"><div>${receive}${shelf}</div><div>${can}</div></div>
     ${history}
   </div>`;
@@ -194,7 +194,62 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   return shell({ ...common, csrf, flash, user, kpis, body, title: 'Stok gudang', scope: 'gudang', view: 'stock', hideRangeControls: true, style: STYLE, script: SCRIPT });
 }
 
+/**
+ * Every order that left the shelf and was then cancelled, returned or refunded, one row
+ * each, newest first, until someone says whether its goods came back. Nothing moves on
+ * the shelf until they do. Buyers' names only for those who may see orders.
+ */
+function refundRows(warehouse, { csrf, user, writer }) {
+  const rows = Object.entries(warehouse.refunds ?? {}).sort(([, a], [, b]) => b.at - a.at);
+  if (!rows.length) return '';
+  const items = warehouse.items ?? {};
+  const seesBuyer = allowed(user, 'orders');
+  const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="view" value="stock"><input type="hidden" name="back" value="?view=stock">`;
+  const answer = (key, row, decision) => `<form method="post" class="rf__f" data-confirm="${escape(decision === 'back'
+    ? `Barang ${row.label} sudah kembali ke rak? Stok bertambah sesuai isinya.`
+    : `Barang ${row.label} tidak kembali? Stok tidak berubah.`)}">
+      ${hidden}<input type="hidden" name="action" value="wh_refund"><input type="hidden" name="key" value="${escape(key)}">
+      <input type="hidden" name="decision" value="${decision}"><input type="hidden" name="token" value="${randomUUID()}">
+      <button type="submit" class="${decision === 'back' ? 'pf__primary rf__yes' : 'wh__btn rf__no'}">${decision === 'back' ? `${svg('check2')}<span>Kembali ke rak</span>` : `${svg('x')}<span>Tidak kembali</span>`}</button>
+    </form>`;
+  return `<section class="rf" aria-label="Refund dan batal menunggu konfirmasi barang">
+    <ul class="rf__list">${rows.map(([key, row]) => {
+      const buyer = seesBuyer ? warehouse.orders?.[key]?.buyer : '';
+      const parts = Object.entries(row.items ?? {}).map(([code, n]) => `<span class="rf__part"><b class="mono">${fmt(n)}×</b> ${escape(items[code]?.name ?? code)}</span>`).join('');
+      return `<li class="rf__row">
+        <span class="rf__ic" aria-hidden="true">${svg('warn')}</span>
+        <div class="rf__main">
+          <p class="rf__t"><span class="rf__k">${escape(REFUND_REASONS[row.reason] ?? 'Batal')}</span><span class="mono">${escape(row.label)}</span>${buyer ? `<span class="dim">${escape(buyer)}</span>` : ''}<span class="dim">${escape(when(row.at))}</span></p>
+          <p class="rf__items">${parts || '<span class="dim">Tidak ada barang gudang</span>'}</p>
+        </div>
+        ${writer
+          ? `<div class="rf__acts"><span class="rf__q">Barangnya kembali ke rak?</span>${answer(key, row, 'back')}${answer(key, row, 'gone')}</div>`
+          : '<span class="rf__q">Menunggu konfirmasi tim gudang</span>'}
+      </li>`;
+    }).join('')}</ul>
+  </section>`;
+}
+
 const STYLE = `
+/* Refund rows: one per order undone after it left the shelf, stacked under the strip. */
+.rf{margin:-.4rem 0 1rem; animation:rise var(--t-slow) var(--ease-out) both}
+.rf__list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.5rem}
+.rf__row{display:flex; align-items:center; gap:.75rem 1rem; flex-wrap:wrap; padding:.7rem 1rem; border-radius:var(--radius-s);
+  border:1px solid color-mix(in srgb, var(--warn) 40%, var(--line)); background:color-mix(in srgb, var(--warn) 9%, var(--panel))}
+.rf__ic{color:var(--warn); display:grid; place-items:center; flex:none}
+.rf__main{flex:1 1 18rem; min-width:0; display:flex; flex-direction:column; gap:.3rem}
+.rf__t{margin:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:.25rem .6rem; font-size:.86rem}
+.rf__k{font-size:.68rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--warn)}
+.rf__items{margin:0; display:flex; flex-wrap:wrap; gap:.3rem .9rem; font-size:.8rem; color:var(--muted)}
+.rf__part b{color:var(--fg); font-weight:600}
+.rf__acts{display:flex; align-items:center; flex-wrap:wrap; gap:.5rem}
+.rf__q{font-size:.78rem; color:var(--muted)}
+.rf__f{margin:0}
+.rf .pf__primary{font:inherit; font-size:.8rem; font-weight:600; padding:.35rem 1rem; border-radius:999px; border:1px solid var(--brand); background:var(--brand); color:var(--bg, #0f1512); cursor:pointer; transition:filter .15s}
+.rf .pf__primary:hover{filter:brightness(1.08)}
+.rf__yes, .rf__no{display:inline-flex; align-items:center; gap:.35rem; min-height:36px}
+.rf__yes .ico, .rf__no .ico{width:16px; height:16px}
+@media (max-width:640px){ .rf__acts{width:100%} .rf__q{flex-basis:100%} }
 .wh{padding:1rem; display:flex; flex-direction:column; gap:1.25rem}
 .wh__intro{margin:0; font-size:.84rem; color:var(--muted); max-width:62rem}
 .wh__cols{display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:1.25rem; align-items:start}

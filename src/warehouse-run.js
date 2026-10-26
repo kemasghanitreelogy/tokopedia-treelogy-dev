@@ -1,5 +1,5 @@
 import { updateDoc, readDoc } from './store/index.js';
-import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, receiveGoods, setRecipe, verifyWarehouse, recordPick } from './warehouse.js';
+import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, receiveGoods, setRecipe, verifyWarehouse, recordPick, holdRefund, resolveRefund } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
 import { printedLabels } from './shopify/label.js';
@@ -116,6 +116,40 @@ export async function saveRecipe(input, { now = Date.now(), update = updateDoc }
   await update(WAREHOUSE_DOC, (current) => {
     const opened = openWarehouse(current ?? emptyWarehouse(), { now });
     out = setRecipe(opened, input, { now });
+    return out.doc;
+  }, emptyWarehouse());
+  invalidate('warehouse');
+  return out;
+}
+
+/**
+ * An order refunded from the dashboard, or a typed-in sale deleted: if its goods had
+ * left the shelf, it becomes a refund row on the Stok page. Never throws - the refund
+ * itself has already happened, and the row is only a question about the shelf.
+ */
+export async function holdRefundFor({ channel, id, reason }, { now = Date.now(), update = updateDoc } = {}) {
+  const key = `${channel}|${id}`;
+  let held = false;
+  try {
+    await update(WAREHOUSE_DOC, (current) => {
+      const opened = openWarehouse(current ?? emptyWarehouse(), { now });
+      const out = holdRefund(opened, key, { at: Math.floor(now / 1000), reason, label: `${channel === 'manual' ? '' : `${channel} `}${id}` });
+      held = Boolean(out.refunds);
+      return held ? { ...opened, ...out } : opened;
+    }, emptyWarehouse());
+    if (held) invalidate('warehouse');
+  } catch (error) {
+    console.warn(`gudang: refund ${key} tidak tercatat - ${error.message}`);
+  }
+  return { held };
+}
+
+/** The answer to a refund row, in one transaction with the shelf. */
+export async function decideRefund(input, { now = Date.now(), update = updateDoc } = {}) {
+  let out = { records: [], duplicate: false };
+  await update(WAREHOUSE_DOC, (current) => {
+    const opened = openWarehouse(current ?? emptyWarehouse(), { now });
+    out = resolveRefund(opened, input, { now });
     return out.doc;
   }, emptyWarehouse());
   invalidate('warehouse');

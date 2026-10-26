@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recipeOf, itemsForOrder, openWarehouse, applyOrders as readOrders, manualMove, receiveGoods, verifyWarehouse, makeable, emptyWarehouse, OPENING_AT, OPENING_ITEMS } from '../src/warehouse.js';
+import { recipeOf, itemsForOrder, openWarehouse, applyOrders as readOrders, manualMove, resolveRefund, holdRefund, receiveGoods, verifyWarehouse, makeable, emptyWarehouse, OPENING_AT, OPENING_ITEMS } from '../src/warehouse.js';
 // Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
 // what happens once it is taken.
 const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
@@ -51,12 +51,67 @@ test('orders from before the migration were the sheet\'s to count', () => {
   assert.equal(qty(doc, 'M-036'), 248);
 });
 
-test('a cancelled or returned order goes back on, once', () => {
+test('a cancelled or returned order waits for a person, and goes back on once if they say so', () => {
   let { doc } = applyOrders(opened(), [order('A', 'shipping', [['OMC-270-001', 1]])]);
   assert.equal(qty(doc, 'M-036'), 245);
   ({ doc } = applyOrders(doc, [order('A', 'returned', [['OMC-270-001', 1]])]));
   ({ doc } = applyOrders(doc, [order('A', 'returned', [['OMC-270-001', 1]])]));
+  assert.equal(qty(doc, 'M-036'), 245, 'nothing moves on the status alone');
+  assert.deepEqual(Object.keys(doc.refunds), ['shopee|A']);
+  assert.deepEqual([doc.refunds['shopee|A'].reason, doc.refunds['shopee|A'].items], ['returned', { 'M-036': 3 }]);
+  let records;
+  ({ doc, records } = resolveRefund(doc, { key: 'shopee|A', back: true, by: 'ika', token: 't1' }));
   assert.equal(qty(doc, 'M-036'), 248);
+  assert.deepEqual([records.length, records[0].kind, records[0].by], [1, 'return', 'ika']);
+  assert.deepEqual(doc.refunds, {});
+  // The same press twice, or a second answer, moves nothing more.
+  assert.equal(resolveRefund(doc, { key: 'shopee|A', back: true, token: 't1' }).duplicate, true);
+  assert.throws(() => resolveRefund(doc, { key: 'shopee|A', back: true }), /sudah diputuskan/);
+  ({ doc } = applyOrders(doc, [order('A', 'returned', [['OMC-270-001', 1]])]));
+  assert.equal(qty(doc, 'M-036'), 248);
+  assert.deepEqual(doc.refunds, {});
+  assert.deepEqual(verifyWarehouse(doc), []);
+});
+
+test('goods the buyer kept never come back, and the refunds stack one row each', () => {
+  let { doc } = applyOrders(opened(), [order('A', 'shipping', [['OMO-30-001', 1]]), order('B', 'shipping', [['OMO-30-001', 2]]), order('C', 'to_ship', [['OMO-30-001', 1]])]);
+  assert.equal(qty(doc, 'M-038'), 54);
+  ({ doc } = applyOrders(doc, [order('A', 'returned', [['OMO-30-001', 1]]), order('B', 'cancelled', [['OMO-30-001', 2]])]));
+  assert.deepEqual(Object.keys(doc.refunds).sort(), ['shopee|A', 'shopee|B']);
+  ({ doc } = resolveRefund(doc, { key: 'shopee|A', back: false, by: 'ika' }));
+  ({ doc } = resolveRefund(doc, { key: 'shopee|B', back: true, by: 'ika' }));
+  assert.equal(qty(doc, 'M-038'), 56, 'only B came back');
+  assert.deepEqual(doc.refundLog.map((r) => [r.key, r.back]), [['shopee|A', false], ['shopee|B', true]]);
+  assert.deepEqual(verifyWarehouse(doc), []);
+});
+
+test('a refund from the dashboard holds the order the same way, once', () => {
+  let { doc } = applyOrders(opened(), [order('A', 'shipping', [['OMO-30-001', 1]])]);
+  doc = { ...doc, ...holdRefund(doc, 'shopee|A', { at: 1, reason: 'refund', label: 'shopee A' }) };
+  assert.equal(doc.refunds['shopee|A'].reason, 'refund');
+  assert.deepEqual(holdRefund(doc, 'shopee|A', { at: 2, reason: 'refund' }), {}, 'already held');
+  assert.deepEqual(holdRefund(doc, 'shopee|NEVER', { at: 2, reason: 'refund' }), {}, 'never left the shelf');
+  // The platform still reading "shipping" does not revive it, before or after the answer.
+  ({ doc } = applyOrders(doc, [order('A', 'shipping', [['OMO-30-001', 1]])]));
+  assert.equal(doc.refunds['shopee|A'].reason, 'refund');
+  ({ doc } = resolveRefund(doc, { key: 'shopee|A', back: true }));
+  ({ doc } = applyOrders(doc, [order('A', 'shipping', [['OMO-30-001', 1]])]));
+  assert.equal(qty(doc, 'M-038'), 58, 'came back once, never taken again');
+  // The platform reporting the cancel afterwards is not a second row.
+  ({ doc } = applyOrders(doc, [order('A', 'cancelled', [['OMO-30-001', 1]])]));
+  assert.deepEqual(doc.refunds, {});
+  assert.equal(qty(doc, 'M-038'), 58);
+  assert.deepEqual(verifyWarehouse(doc), []);
+});
+
+test('an order revived before anyone answered is live again, its goods still out', () => {
+  let { doc } = applyOrders(opened(), [order('A', 'shipping', [['OMO-30-001', 1]])]);
+  ({ doc } = applyOrders(doc, [order('A', 'cancelled', [['OMO-30-001', 1]])]));
+  ({ doc } = applyOrders(doc, [order('A', 'shipping', [['OMO-30-001', 1]])]));
+  assert.equal(qty(doc, 'M-038'), 57, 'taken once, never twice');
+  assert.deepEqual(doc.refunds, {});
+  assert.equal(doc.orders['shopee|A'].undone, undefined);
+  assert.deepEqual(verifyWarehouse(doc), []);
 });
 
 test('a line the recipes cannot place is remembered, not guessed', () => {

@@ -14,7 +14,9 @@ import { numberOrNull } from './numbers.js';
  *   an order confirmed on the picklist - only then do its lines come off, by the
  *   product's recipe (a Ritual Set is a bowl, a whisk, a scoop and a wooden box), once;
  *   nothing leaves on an order arriving, a label printing or a parcel shipping;
- *   the same order cancelled or returned after that - the recipe goes back on, once;
+ *   the same order cancelled, returned or refunded after that - nothing moves yet: it
+ *   waits on the Stok page until a person says whether the goods came back to the shelf
+ *   (they go back on, once) or not (the buyer kept them, the parcel was lost);
  *   a person - goods received, goods out for another reason, or a count (stock opname).
  */
 
@@ -176,7 +178,7 @@ const UNDONE = new Set(['cancelled', 'returned']);
 export const REMEMBER_DAYS = 45;
 const MAX_MOVES = 5000;
 
-export const emptyWarehouse = () => ({ version: 1, items: {}, moves: [], orders: {}, folded: {}, tokens: {}, recipes: {}, opened_at: null });
+export const emptyWarehouse = () => ({ version: 1, items: {}, moves: [], orders: {}, folded: {}, tokens: {}, recipes: {}, refunds: {}, opened_at: null });
 
 /*
  * The invariant every write keeps, and verifyWarehouse proves:
@@ -277,7 +279,7 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
   // `admit` is true, false, or a test of each order: the run decides which new orders
   // have reached the picklist and so leave the shelf now.
   const admits = typeof admit === 'function' ? admit : () => Boolean(admit);
-  const next = { ...doc, items: { ...doc.items }, moves: [...doc.moves], orders: { ...(doc.orders ?? {}) }, folded: { ...(doc.folded ?? {}) } };
+  const next = { ...doc, items: { ...doc.items }, moves: [...doc.moves], orders: { ...(doc.orders ?? {}) }, folded: { ...(doc.folded ?? {}) }, refunds: { ...(doc.refunds ?? {}) } };
   const at = Math.floor(now / 1000);
   const moved = [];
   // Each order's movements carry a revision, so an order that moves more than once (an
@@ -294,7 +296,7 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
   for (const order of orders ?? []) {
     if (!order?.id || !order.channel) continue;
     const key = `${order.channel}|${order.id}`;
-    const seen = next.orders[key];
+    let seen = next.orders[key];
     const label = `${order.channel === 'manual' ? '' : `${order.channel} `}${order.id}`;
     const undone = UNDONE.has(order.stage);
     const lines = linesOf(order);
@@ -316,15 +318,28 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
     if (!seen.created && Number(order.createdAt) > 0) next.orders[key] = { ...seen, ...about(order), buyer: seen.buyer || about(order).buyer };
     const rev = (seen.rev ?? 1) + 1;
     if (undone && !seen.undone) {
-      apply(key, rev, seen.items ?? {}, +1, 'return', `${order.stage === 'returned' ? 'Retur' : 'Batal'} ${label}`);
-      next.orders[key] = { ...seen, rev, undone: at };
+      // Whether the goods come back is not something a status can say: a refunded parcel
+      // may be on its way home or lost for good. It waits for a person on the Stok page.
+      Object.assign(next, holdRefund(next, key, { at, rev, reason: order.stage, label }));
       continue;
     }
-    if (!undone && seen.undone && known && admits(order)) {
-      // Cancelled, put back, and confirmed on the picklist again: it leaves again.
-      apply(key, rev, read.items, -1, 'order', `Picklist ulang ${label}`);
-      next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}), ...about(order) };
-      continue;
+    // A refund from the dashboard or a deleted sale is final whatever the platform still
+    // says: the order there may well read "shipping" for days.
+    if (!undone && seen.undone && !FINAL_REASONS.has(seen.reason) && known && admits(order)) {
+      // Cancelled and confirmed on the picklist again. Goods that were put back leave
+      // again; goods that never came back (still undecided, or kept by the buyer) are
+      // still out, and leave nothing.
+      if (putBack(seen)) {
+        apply(key, rev, read.items, -1, 'order', `Picklist ulang ${label}`);
+        next.orders[key] = { at, rev, lines, items: read.items, unknown: read.unknown, picked: at, ...(by ? { by } : {}), ...about(order) };
+        continue;
+      }
+      // Revived with its goods still out: it is simply live again, and a change to its
+      // lines since it left is read below like any other edit.
+      const { undone: _u, back: _b, reason: _r, decided: _d, decidedBy: _db, ...still } = seen;
+      seen = { ...still, rev };
+      next.orders[key] = seen;
+      delete next.refunds[key];
     }
     if (!undone && !seen.undone && known && seen.lines && !sameItems(seen.lines, lines)) {
       // The order's lines changed after it was counted - a typed-in sale edited, a line
@@ -353,6 +368,58 @@ export function applyOrders(doc, orders, { now = Date.now(), admit = false, by =
   for (const [key, row] of Object.entries(next.orders)) if (row.at < cutoff) delete next.orders[key];
   trim(next);
   return { doc: next, moved };
+}
+
+/**
+ * Whether an undone order's goods are back on the shelf. Before refund rows existed a
+ * cancel put them back by itself, and those orders carry no reason.
+ */
+export const putBack = (row) => Boolean(row?.undone) && (row.back ?? !row.reason);
+
+/** What a refund row says the order was. */
+export const REFUND_REASONS = { cancelled: 'Batal', returned: 'Retur', refund: 'Refund', deleted: 'Dihapus' };
+/** Undone by a person here, not by the platform: no status read later revives them. */
+const FINAL_REASONS = new Set(['refund', 'deleted']);
+
+/**
+ * An order that left the shelf is undone - cancelled, returned, refunded from the
+ * dashboard, or a typed-in sale deleted. Nothing moves: it is held as a refund row until
+ * someone says whether its goods came back. Pure; returns the parts of the document it
+ * changed. An order never taken, or already undone, holds nothing.
+ */
+export function holdRefund(doc, key, { at, rev, reason, label }) {
+  const seen = doc.orders?.[key];
+  if (!seen || seen.undone) return {};
+  const orders = { ...doc.orders, [key]: { ...seen, rev: rev ?? (seen.rev ?? 1) + 1, undone: at, reason } };
+  const refunds = { ...(doc.refunds ?? {}), [key]: { at, reason, label: label ?? key.replace('|', ' '), items: { ...(seen.items ?? {}) }, lines: { ...(seen.lines ?? {}) } } };
+  return { orders, refunds };
+}
+
+/**
+ * The answer to a refund row: the goods came back (`back`, its items go on the shelf,
+ * once) or they did not (nothing moves). Either way the row is gone. Pure.
+ */
+export function resolveRefund(doc, { key, back, by = '', token = '' }, { now = Date.now() } = {}) {
+  if (token && doc.tokens?.[token]) return { doc, records: [], duplicate: true };
+  const row = doc.refunds?.[key];
+  if (!row) throw new Error('refund ini sudah diputuskan');
+  const at = Math.floor(now / 1000);
+  const next = { ...doc, items: { ...doc.items }, moves: [...doc.moves], folded: { ...(doc.folded ?? {}) }, refunds: { ...doc.refunds }, orders: { ...doc.orders }, tokens: { ...(doc.tokens ?? {}) } };
+  if (token) next.tokens[token] = at;
+  delete next.refunds[key];
+  const seen = next.orders[key];
+  const rev = (seen?.rev ?? 1) + 1;
+  const records = [];
+  if (back) {
+    for (const [code, qty] of Object.entries(row.items ?? {})) {
+      const r = move(next, { id: `${key}|${rev}|${code}`, at, code, kind: 'return', delta: qty, ref: key, note: `${REFUND_REASONS[row.reason] ?? 'Batal'} ${row.label}: kembali ke rak`, ...(by ? { by } : {}) });
+      if (r) records.push(r);
+    }
+  }
+  if (seen) next.orders[key] = { ...seen, rev, back: Boolean(back), decided: at, ...(by ? { decidedBy: by } : {}) };
+  next.refundLog = [...(doc.refundLog ?? []), { at, key, label: row.label, reason: row.reason, back: Boolean(back), items: row.items, by }].slice(-500);
+  trim(next);
+  return { doc: next, records };
 }
 
 /**
@@ -487,12 +554,13 @@ export function setRecipe(doc, { sku, parts, remove = false, by = '' }, { now = 
 
 /**
  * Whether an order is still waiting for its picklist confirmation: from after the
- * migration, not cancelled, and not already taken (or taken and put back by a cancel).
+ * migration, not cancelled, and not already taken (or taken, undone and its goods put
+ * back on the shelf).
  */
 export function awaitingPick(doc, order) {
   if (!order?.id || !order.channel || UNDONE.has(order.stage) || !afterOpening(order)) return false;
   const seen = doc?.orders?.[`${order.channel}|${order.id}`];
-  return !seen || Boolean(seen.undone);
+  return !seen || putBack(seen);
 }
 
 /** Picklist confirmations kept for the history; older ones fall off the front. */

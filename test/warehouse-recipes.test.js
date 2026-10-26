@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openWarehouse, applyOrders as readOrders, setRecipe, recipeOf, verifyWarehouse, emptyWarehouse, OPENING_AT } from '../src/warehouse.js';
+import { openWarehouse, applyOrders as readOrders, resolveRefund, setRecipe, recipeOf, verifyWarehouse, emptyWarehouse, OPENING_AT } from '../src/warehouse.js';
 // Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
 // what happens once it is taken.
 const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
@@ -34,6 +34,7 @@ test('editing a recipe never re-counts an order that already left, and its cance
   ({ doc } = applyOrders(doc, [order('A', 'delivered', [['MRS-001', 1]])]));
   assert.equal(qty(doc, 'M-051'), 263, 'pouch untouched: the order left before the recipe had it');
   ({ doc } = applyOrders(doc, [order('A', 'returned', [['MRS-001', 1]])]));
+  ({ doc } = resolveRefund(doc, { key: 'shopee|A', back: true }));
   assert.deepEqual([qty(doc, 'M-093'), qty(doc, 'M-051')], [218, 263], 'back exactly as it was, no pouch conjured');
   assert.deepEqual(verifyWarehouse(doc), []);
 });
@@ -44,6 +45,7 @@ test('a line edit after a recipe change moves only the changed lines', () => {
   ({ doc } = applyOrders(doc, [order('A', 'shipping', [['MRS-001', 1], ['OMO-30-001', 1]])]));
   assert.deepEqual([qty(doc, 'M-038'), qty(doc, 'M-051'), qty(doc, 'M-093')], [57, 263, 217]);
   ({ doc } = applyOrders(doc, [order('A', 'cancelled', [['MRS-001', 1], ['OMO-30-001', 1]])]));
+  ({ doc } = resolveRefund(doc, { key: 'shopee|A', back: true }));
   assert.deepEqual([qty(doc, 'M-038'), qty(doc, 'M-051'), qty(doc, 'M-093')], [58, 263, 218]);
   assert.deepEqual(verifyWarehouse(doc), []);
 });
@@ -133,8 +135,12 @@ test('nothing leaves the shelf until the picklist is confirmed; the sheet era ne
   assert.equal(qty(doc, 'M-036'), 245);
   assert.equal(doc.moves.at(-1).by, 'ika');
   assert.deepEqual([late, fresh].map((o) => awaitingPick(doc, o)), [false, false]);
-  // Cancelled after picking: back on the shelf automatically, and waiting again if revived.
+  // Cancelled after picking: nothing moves until a person says the goods came back; then
+  // they are on the shelf, and the order waits again if revived.
   ({ doc } = readOrders(doc, [{ ...late, stage: 'cancelled' }]));
+  assert.equal(qty(doc, 'M-036'), 245);
+  assert.equal(awaitingPick(doc, late), false, 'undecided: its goods are still out');
+  ({ doc } = resolveRefund(doc, { key: 'shopee|LATE', back: true }));
   assert.equal(qty(doc, 'M-036'), 247);
   assert.equal(awaitingPick(doc, late), true);
   ({ doc } = readOrders(doc, [late]));
@@ -210,9 +216,10 @@ test('an order leaves the shelf when its label is printed; a sale with no parcel
   // Shipped with a label from some other printer: gone all the same.
   await run([o('E', 'tiktok_shop', 'shipping')]);
   assert.equal(state.items['M-036'].qty, 242);
-  // Cancelled after it was taken: back on the shelf.
+  // Cancelled after it was taken: a refund row, nothing moves until someone answers.
   await run([o('A', 'shopee', 'cancelled')], printed);
-  assert.equal(state.items['M-036'].qty, 243);
+  assert.equal(state.items['M-036'].qty, 242);
+  assert.deepEqual(Object.keys(state.refunds), ['shopee|A']);
   assert.deepEqual(verifyWarehouse(state), []);
 });
 

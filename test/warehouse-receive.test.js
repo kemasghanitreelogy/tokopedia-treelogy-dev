@@ -40,3 +40,41 @@ test('a delivery with a bad line is refused and moves nothing', async () => {
   await assert.rejects(() => handleWrite(form(pairs), '127.0.0.1', owner, 'csrf'), /bilangan bulat/);
   assert.equal((await loadWarehouse()).items['M-037'].qty, before.items['M-037'].qty);
 });
+
+test('a refund row sits under the strip with both answers, and only asks people who may write', async () => {
+  const { holdRefund, applyOrders } = await import('../src/warehouse.js');
+  let warehouse = openWarehouse(emptyWarehouse(), { now: (OPENING_AT + 60) * 1000 });
+  const placed = { id: 'X1', channel: 'shopee', stage: 'shipping', createdAt: OPENING_AT + 600, buyer: 'Gree', lines: [{ sku: 'OMO-30-001', qty: 2 }] };
+  ({ doc: warehouse } = applyOrders(warehouse, [placed], { admit: true }));
+  warehouse = { ...warehouse, ...holdRefund(warehouse, 'shopee|X1', { at: OPENING_AT + 900, reason: 'refund', label: 'shopee X1' }) };
+  const render = (user) => renderWarehouse({ warehouse, csrf: 'c', user, range: { preset: '7d' }, errors: {}, generatedAt: Date.now() });
+  const html = render(owner);
+  assert.ok(html.indexOf('class="rf"') > html.indexOf('class="strip"'), 'under the strip');
+  assert.match(html, /<span class="rf__k">Refund<\/span><span class="mono">shopee X1<\/span><span class="dim">Gree<\/span>/);
+  assert.match(html, /<b class="mono">2×<\/b> Organic Moringa Oil 30 mL/);
+  assert.match(html, /name="decision" value="back"/);
+  assert.match(html, /name="decision" value="gone"/);
+  const factory = render({ id: 'f', email: 'f@x', name: 'F', role: 'factory', status: 'active' });
+  assert.match(factory, /class="rf__row"/);
+  assert.doesNotMatch(factory, /name="decision"/);
+  assert.doesNotMatch(factory, /Gree/, 'no buyer for a role that never sees orders');
+});
+
+test('answering a refund row puts the goods back once, and the factory cannot answer', async () => {
+  const { holdRefund, applyOrders } = await import('../src/warehouse.js');
+  const { updateDoc } = await import('../src/store/index.js');
+  const { WAREHOUSE_DOC } = await import('../src/warehouse.js');
+  await updateDoc(WAREHOUSE_DOC, (current) => {
+    let doc = openWarehouse(current ?? emptyWarehouse(), { now: (OPENING_AT + 60) * 1000 });
+    ({ doc } = applyOrders(doc, [{ id: 'R9', channel: 'shopee', stage: 'shipping', createdAt: OPENING_AT + 600, lines: [{ sku: 'OMO-60-001', qty: 1 }] }], { admit: true }));
+    return { ...doc, ...holdRefund(doc, 'shopee|R9', { at: OPENING_AT + 900, reason: 'cancelled', label: 'shopee R9' }) };
+  }, emptyWarehouse());
+  const before = (await loadWarehouse()).items['M-039'].qty;
+  const answer = (user, decision, token) => handleWrite(form([['action', 'wh_refund'], ['key', 'shopee|R9'], ['decision', decision], ['token', token]]), '127.0.0.1', user, 'csrf');
+  await assert.rejects(() => answer({ id: 'f', email: 'f@x', name: 'F', role: 'factory', status: 'active' }, 'back', 'aaaaaaaaaaaaaaaa-1'), /hanya bisa melihat/);
+  const out = await answer(owner, 'back', 'aaaaaaaaaaaaaaaa-2');
+  assert.match(out.message, /kembali ke rak/);
+  assert.equal((await loadWarehouse()).items['M-039'].qty, before + 1);
+  await assert.rejects(() => answer(owner, 'gone', 'aaaaaaaaaaaaaaaa-3'), /sudah diputuskan/);
+  assert.equal((await loadWarehouse()).items['M-039'].qty, before + 1);
+});

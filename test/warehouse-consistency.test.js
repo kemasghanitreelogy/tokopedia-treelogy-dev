@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openWarehouse, applyOrders as readOrders, manualMove, verifyWarehouse, emptyWarehouse, OPENING_AT, OPENING_ITEMS, itemsForOrder } from '../src/warehouse.js';
+import { openWarehouse, applyOrders as readOrders, manualMove, verifyWarehouse, emptyWarehouse, OPENING_AT, OPENING_ITEMS, itemsForOrder, putBack } from '../src/warehouse.js';
 // Taking an order off the shelf is a picklist confirmation (`admit`); these cases are about
 // what happens once it is taken.
 const applyOrders = (doc, orders, options = {}) => readOrders(doc, orders, { admit: true, ...options });
@@ -73,7 +73,7 @@ test('fuzz: every order nets to exactly what its last effective state says', () 
     for (const [key, row] of Object.entries(doc.orders)) {
       const net = {};
       for (const m of doc.moves) if (m.ref === key) net[m.code] = (net[m.code] ?? 0) + m.delta;
-      const expected = row.undone ? {} : Object.fromEntries(Object.entries(row.items).map(([c, q]) => [c, -q]));
+      const expected = putBack(row) ? {} : Object.fromEntries(Object.entries(row.items).map(([c, q]) => [c, -q]));
       for (const code of new Set([...Object.keys(net), ...Object.keys(expected)])) {
         assert.equal(net[code] ?? 0, expected[code] ?? 0, `seed ${seed} ${key} ${code}`);
       }

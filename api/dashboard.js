@@ -112,7 +112,7 @@ import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
-import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, recordReceipt, saveRecipe } from '../src/warehouse-run.js';
+import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, recordReceipt, saveRecipe, holdRefundFor, decideRefund } from '../src/warehouse-run.js';
 import { batchOf } from '../src/warehouse.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
 import { renderPickHistory } from '../src/pages/pick-history.js';
@@ -378,7 +378,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
   product_save: 'products', product_publish: 'products',
-  wh_move: 'stock', wh_receive: 'stock', wh_recipe: 'stock',
+  wh_move: 'stock', wh_receive: 'stock', wh_recipe: 'stock', wh_refund: 'stock',
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
@@ -858,7 +858,9 @@ export async function handleWrite(form, ip, user, csrf) {
     const channel = String(form.get('channel') ?? '').trim();
     const id = String(form.get('order') ?? '').trim();
     const out = await refundOrder({ channel, id, by: user.name || user.email });
-    const where = out.deleted ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum ada faktur di Jurnal';
+    // If its goods had left the shelf, the Stok page now asks whether they came back.
+    const { held } = await holdRefundFor({ channel, id, reason: 'refund' });
+    const where = `${out.deleted ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum ada faktur di Jurnal'}${held ? ', menunggu konfirmasi barang di Stok' : ''}`;
     console.log(`dashboard: refund_order ${channel} ${id} - ${where}`);
     return {
       view: 'orders', message: `${id} direfund: hilang dari daftar, ${where}`,
@@ -878,10 +880,12 @@ export async function handleWrite(form, ip, user, csrf) {
     if (!id) throw new Error('tidak ada transaksi yang disebut');
 
     const out = await discardManual(id);
+    const { held } = await holdRefundFor({ channel: 'manual', id, reason: 'deleted' });
 
     const where = [
       out.wasInvoiced ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum pernah masuk Jurnal',
       out.removedFromList ? 'baris pesanan dihapus' : 'tidak ada baris pesanan untuk dihapus',
+      ...(held ? ['menunggu konfirmasi barang di Stok'] : []),
     ].join(', ');
 
     console.log(`dashboard: discard_manual ${id} - ${where}`);
@@ -1123,6 +1127,29 @@ export async function handleWrite(form, ip, user, csrf) {
       view: 'stock',
       message: remove ? `${name}: isi dihapus - tidak lagi mengurangi stok gudang` : `${name}: ${reset ? 'kembali ke isi bawaan' : 'isi disimpan'} - ${fmtRecipe(recipe)}`,
       audit: { menu: 'stock', verb: 'edit', target: product.sku, summary: `Isi produk ${name}: ${remove ? 'dihapus' : `${fmtRecipe(recipe)}${reset ? ' (bawaan)' : ''}`}`, changes: [{ field: 'isi', from: before ? fmtRecipe(before) : 'bawaan', to: fmtRecipe(recipe) }] },
+    };
+  }
+
+  if (action === 'wh_refund') {
+    const key = String(form.get('key') ?? '').trim().slice(0, 100);
+    const decision = String(form.get('decision') ?? '');
+    const token = String(form.get('token') ?? '').slice(0, 64);
+    if (!/^[a-z_]+\|[A-Za-z0-9_#-]{1,64}$/.test(key)) throw new Error('refund tidak dikenal');
+    if (decision !== 'back' && decision !== 'gone') throw new Error('pilih barang kembali atau tidak');
+    if (!/^[a-z0-9-]{16,64}$/.test(token)) throw new Error('formulir kedaluwarsa, muat ulang halaman');
+    const back = decision === 'back';
+    const { records, duplicate } = await decideRefund({ key, back, by: user.name || user.email, token });
+    const label = key.replace('|', ' ');
+    if (duplicate) return { view: 'stock', message: `${label}: sudah diputuskan, tidak dicatat dua kali` };
+    const list = records.map((r) => `${r.code} +${r.delta}`).join(', ');
+    return {
+      view: 'stock',
+      message: back ? `${label}: barang kembali ke rak${list ? ` (${list})` : ''}` : `${label}: barang tidak kembali, stok tidak berubah`,
+      audit: {
+        menu: 'stock', verb: 'edit', target: label,
+        summary: `Refund ${label}: ${back ? `barang kembali ke rak${list ? ` - ${list}` : ''}` : 'barang tidak kembali'}`,
+        changes: back ? records.map((r) => ({ field: r.code, from: r.after - r.delta, to: r.after })) : [{ field: 'barang', from: 'menunggu', to: 'tidak kembali' }],
+      },
     };
   }
 

@@ -23,6 +23,11 @@ ExecStart=/usr/bin/node bin/tts.mjs history:pull
 # satu perintah, dan ketika kuota bulanan Jurnal habis perintah itu mati di permintaan
 # pertamanya - dashboard lalu menampilkan "tanpa gambar" untuk semua produk karena alasan
 # yang sama sekali tidak ada hubungannya dengan gambar.
+# "Trusted by more than N customers" on treelogy.com: every distinct buyer since each
+# channel's first sale, written to the shop metafield treelogy.unique_buyers that the
+# theme reads (Theme settings > Pembeli Unik). A few minutes of order reads; a run with
+# an unreadable month writes nothing and the site keeps yesterday's figure.
+ExecStart=-/usr/bin/node bin/tts.mjs buyers:count --yes
 ExecStart=-/usr/bin/node bin/tts.mjs images
 ExecStart=-/usr/bin/node bin/tts.mjs shopify:prices
 ExecStart=-/usr/bin/node bin/tts.mjs mekari:images --yes

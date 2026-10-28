@@ -27,6 +27,7 @@ import { followStock } from './stock-watch.js';
 import { syncWarehouse, loadWarehouse, verifyWarehouse } from './warehouse-run.js';
 import { recordSample, loadHistory, drops } from './stock-history.js';
 import { raiseAlert } from './alerts.js';
+import { countUniqueBuyers, publishUniqueBuyers } from './unique-buyers.js';
 import { backendName } from './store/index.js';
 import { loadBudget, setBudget, dailyRation, RESERVE } from './mekari/budget.js';
 import { ordersForPrinting } from './orders-by-id.js';
@@ -1768,6 +1769,32 @@ async function cmdHistoryPull(config, args = []) {
   return 0;
 }
 
+/**
+ * Count every distinct buyer since each channel's first sale and, with --yes, publish it
+ * to the shop metafield the storefront's "Trusted by more than N customers" reads.
+ */
+async function cmdBuyersCount(config, args = []) {
+  const t0 = Date.now();
+  const result = await countUniqueBuyers();
+  for (const [channel, c] of Object.entries(result.channels)) {
+    console.log(`  ${channel.padEnd(12)} ${String(c.orders).padStart(6)} pesanan terjual  ${String(c.buyers).padStart(6)} pembeli unik`);
+  }
+  console.log(`  ${'total'.padEnd(12)} ${' '.repeat(22)}${String(result.total).padStart(6)} pembeli unik  (${Math.round((Date.now() - t0) / 1000)} detik)`);
+  for (const month of result.failed) console.log(`  ${warn(`tidak terbaca: ${month}`)}`);
+  if (!args.includes('--yes')) {
+    console.log(`\n  ${warn('belum ditulis. Ulangi dengan --yes untuk memperbarui angka di website')}\n`);
+    return result.failed.length ? 1 : 0;
+  }
+  try {
+    const { before, after, changed } = await publishUniqueBuyers(result);
+    console.log(`  ${ok(changed ? `website: ${before} -> ${after}` : `website sudah ${after}`)}\n`);
+    return 0;
+  } catch (error) {
+    console.log(`  ${fail(`tidak ditulis: ${error.message}`)}\n`);
+    return 1;
+  }
+}
+
 const URGENCY_LABEL = { stockout: 'HABIS', critical: 'KRITIS', watch: 'AWASI', ok: 'aman', idle: 'diam' };
 
 async function cmdForecast(config, args = []) {
@@ -1922,6 +1949,7 @@ const COMMANDS = {
   'db:status': cmdDbStatus,
   'db:verify': cmdDbVerify,
   'history:pull': cmdHistoryPull,
+  'buyers:count': cmdBuyersCount,
   forecast: cmdForecast,
   doctor: cmdDoctor,
   api: cmdApi,

@@ -127,7 +127,9 @@ function viewNav(current, rangeQuery, user = null, { log = false } = {}) {
     .filter(([id]) => (!TAB_PERMISSION[id] || can(user, TAB_PERMISSION[id])) && (!user || canView(user, id)))
     .map(([id, label]) => {
       const query = id === 'products' || id === 'users' ? `?view=${id}` : `?view=${id}${rangeQuery}`;
-      return `<a class="viewtab ${id === current ? 'is-on' : ''}" href="${escape(query)}">${escape(label)}</a>`;
+      const count = Number(user?.badges?.[id]) || 0;
+      const badge = count ? `<span class="viewtab__n" title="${count} perlu konfirmasi">${count > 99 ? '99+' : count}</span>` : '';
+      return `<a class="viewtab ${id === current ? 'is-on' : ''}" href="${escape(query)}">${escape(label)}${badge}</a>`;
     })
     .join('');
 
@@ -775,6 +777,9 @@ body{
   transition:background var(--t-fast) var(--ease-out),color var(--t-fast) var(--ease-out)}
 .viewtab:hover{color:var(--fg); background:var(--glass-2)}
 .viewtab.is-on{color:var(--bg); background:var(--fg); font-weight:600; box-shadow:0 8px 18px -12px rgba(0,0,0,.6)}
+.viewtab__n{display:inline-grid; place-items:center; min-width:1.15rem; height:1.15rem; margin-left:.4rem; padding:0 .3rem;
+  border-radius:999px; font-size:.68rem; font-weight:700; line-height:1; vertical-align:.1em;
+  color:var(--bg); background:var(--warn); font-variant-numeric:tabular-nums}
 @media (max-width:1280px){
   :root{--top-offset:7.6rem}
   .top{flex-wrap:wrap; border-radius:26px}
@@ -2140,7 +2145,7 @@ ${celebration(flash)}
     // mailto:, tel: and javascript: hand off to another app or run in place; the page stays
     // and a skeleton armed for them sat over it for good - the Pengguna tab's emails did.
     if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^https?:/i.test(href)) return;
-    beginNavigation(link.classList.contains('viewtab') ? 'Memuat ' + link.textContent.trim() + '…' : 'Memuat…');
+    beginNavigation(link.classList.contains('viewtab') ? 'Memuat ' + link.firstChild.textContent.trim() + '…' : 'Memuat…');
   }, true);
 
   document.addEventListener('submit', function (e) {

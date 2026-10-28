@@ -79,3 +79,10 @@ test('the forecast page renders for the factory', () => {
   const html = renderForecast({ forecast: null, range: { preset: '7d', label: '7 hari' }, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf: 'c', flash: null, user: factory });
   assert.match(html, /class="viewtab is-on" href="\?view=forecast/);
 });
+
+test('the stock tab counts the refunds still waiting for the warehouse, and shows nothing at zero', () => {
+  const tab = (html) => html.match(/<a class="viewtab[^"]*" href="\?view=stock[^"]*">[\s\S]*?<\/a>/)[0];
+  assert.match(tab(page({ ...operator, badges: { stock: 3 } })), /<span class="viewtab__n"[^>]*>3<\/span>/);
+  assert.match(tab(page({ ...factory, badges: { stock: 120 } })), />99\+<\/span>/);
+  assert.doesNotMatch(tab(page(operator)), /viewtab__n/);
+});

@@ -1977,7 +1977,7 @@ export default async function handler(req, res) {
 
   // Who is asking. Null on every path that is not signed in, including a cookie whose
   // user has since been disabled or deleted.
-  const user = await authenticate(session);
+  let user = await authenticate(session);
 
   // An authenticated POST is a write action, not a login attempt.
   if (req.method === 'POST' && user) {
@@ -2099,6 +2099,15 @@ export default async function handler(req, res) {
   if (!canView(user, view)) {
     redirect(`?view=${homeView(user)}`);
     return;
+  }
+  // The stock tab carries how many cancelled or refunded orders still wait for the
+  // warehouse to say whether the goods came back. Read from the copy the stock page
+  // caches; a failed read shows no badge rather than failing the page.
+  if (canView(user, 'stock')) {
+    const waiting = await cached('warehouse', 15_000, () => loadWarehouse(), SWR)
+      .then((w) => Object.keys(w?.refunds ?? {}).length)
+      .catch(() => 0);
+    if (waiting) user = { ...user, badges: { stock: waiting } };
   }
   // Page and page size come from the URL, and every page link is the current URL with
   // only those two changed - so filters, range and page survive reload and history.

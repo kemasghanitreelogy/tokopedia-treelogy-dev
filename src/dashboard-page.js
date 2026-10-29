@@ -587,7 +587,7 @@ export function shell({
   title, range, errors = {}, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
   view, kpis = '', body = '', hideRangeControls = false, script = '', flash = null, scope = null,
   stale = false, staleSince = null, user = null, style = '', log = false, csrf = null,
-  readAt = null, settleFailed = false,
+  readAt = null, settleFailed = false, actions = '',
 }) {
   /*
    * How old the rows are, said out loud.
@@ -2087,7 +2087,7 @@ ${celebration(flash)}
       <p class="sub">${escape(shopeeShop?.shop_name ?? 'Treelogy Moringa')} &middot; ${escape(scope ?? range.label)} &middot; diperbarui ${escape(new Date(generatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: zoneName() }))} ${zoneLabel()}${
       dataAge ? ` &middot; <span class="${dataAge.tone}">${escape(dataAge.text)}</span>` : ''}</p>
     </div>
-    ${rangeControls || nav.actions ? `<div class="pagehead__acts">${rangeControls}${nav.actions}</div>` : ''}
+    ${rangeControls || nav.actions || actions ? `<div class="pagehead__acts">${rangeControls}${nav.actions}${actions}</div>` : ''}
   </section>
 
   ${problems}
@@ -3624,7 +3624,7 @@ const testButton = (csrf) => `<button class="chip" type="button" id="alerttest" 
   title="Bunyikan alert uji lewat server, seperti pesanan sungguhan">&#128276; Tes bunyi alert</button>`;
 
 /** Warehouse view: what to pick, biggest first, with the channel split for packing. */
-export function renderPicklist({ picklist, orders = [], images = {}, batch = null, range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false }) {
+export function renderPicklist({ picklist, orders = [], images = {}, batch = null, range, errors, shopeeShop, generatedAt, user = null, csrf = null, flash = null, readAt = null, settleFailed = false, stockExport = null }) {
   // A picker reads quantity first and everything else only to confirm, so the number
   // leads and the channel split collapses into one line of small tags.
   const split = (by) => Object.entries({ tokopedia: 'Tokped', tiktok_shop: 'TikTok', shopee: 'Shopee', shopify: 'Shopify', manual: 'Manual' })
@@ -3716,7 +3716,9 @@ export function renderPicklist({ picklist, orders = [], images = {}, batch = nul
     view: 'picklist',
     hideRangeControls: true, scope: batch ? `batch ${new Date(`${batch.date}T00:00:00Z`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' })} · tutup 15.00 WITA` : 'semua yang perlu dipetik',
     readAt, settleFailed,
-    style: PICK_STYLE, script: PICK_SCRIPT,
+    style: PICK_STYLE + (stockExport ? EXPORT_STYLE + STOCK_EXPORT_STYLE : ''),
+    script: PICK_SCRIPT + (stockExport ? STOCK_EXPORT_SCRIPT : ''),
+    actions: stockExport ? `<button class="exbtn exbtn--head" type="button" id="stock-export-open" aria-haspopup="dialog">${svg('export')}Export</button>` : '',
     kpis: `
       <div class="strip" id="pick-kpis">
         ${stat('Unit dipetik', String(picklist.unitCount))}
@@ -3732,9 +3734,333 @@ export function renderPicklist({ picklist, orders = [], images = {}, batch = nul
           </tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
-        <div class="foot"><span>${picklist.orderCount} pesanan &middot; ${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span>${isLive ? `<span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span>` : ''}</div>`}</div>`,
+        <div class="foot"><span>${picklist.orderCount} pesanan &middot; ${picklist.skuCount} SKU &middot; ${picklist.unitCount} unit</span>${isLive ? `<span class="pick__live" aria-live="polite">${svg('refresh')} diperbarui otomatis</span>` : ''}</div>`}</div>${stockExport ? stockExportDialog(stockExport) : ''}`,
   });
 }
+
+/* --- the stock export: the warehouse movement log, as the team's old sheet filed it --- */
+
+/**
+ * The picklist's Export button and the sheet it opens.
+ *
+ * Two decisions, the format and the days, and then the one thing somebody wants to know
+ * before they wait for a file: what is in it. The page carries the movement count per
+ * day (a few hundred bytes), so the name of the file and how much it holds are on screen
+ * while the dates are still being chosen, and a range with nothing in it says so instead
+ * of handing over an empty sheet.
+ *
+ * It downloads with fetch rather than by navigating, so the button can say what is
+ * happening - preparing, done, or why not - and the page underneath never blinks.
+ */
+function stockExportDialog({ today, first, days }) {
+  const formats = [
+    ['xlsx', 'Excel', 'Siap diolah & di-pivot'],
+    ['csv', 'CSV', 'Teks untuk tool lain'],
+  ].map(([value, label, hint], i) => `
+      <label class="ix__fmt">
+        <input type="radio" name="format" value="${value}"${i === 0 ? ' checked' : ''}>
+        <span class="ix__fmtb">
+          <span class="ix__doc ix__doc--${value}" aria-hidden="true"><i>${value.toUpperCase()}</i></span>
+          <span class="ix__fmtt">${label}<small>${hint}</small></span>
+          <span class="ix__tick" aria-hidden="true">${svg('check')}</span>
+        </span>
+      </label>`).join('');
+  const presets = [['today', 'Hari ini'], ['yesterday', 'Kemarin'], ['7d', '7 hari'], ['month', 'Bulan ini'], ['last-month', 'Bulan lalu'], ['all', 'Semua']]
+    .map(([key, label]) => `<button class="ix__q" type="button" data-preset="${key}" aria-pressed="${key === 'month'}">${label}</button>`).join('');
+  const from = `${today.slice(0, 8)}01`;
+
+  return `<dialog class="ex ix" id="stock-export" aria-labelledby="ix-title" aria-describedby="ix-text">
+  <form class="ex__box ix__box" method="get" action="/api/export" data-download data-today="${escape(today)}" data-first="${escape(first)}">
+    <input type="hidden" name="dataset" value="inventory">
+    <button class="ix__x" type="button" data-ix-close aria-label="Tutup">${svg('x')}</button>
+    <span class="ex__ico" aria-hidden="true">${svg('export')}</span>
+    <h2 class="ex__title" id="ix-title" tabindex="-1" autofocus>Ekspor stok gudang</h2>
+    <p class="ex__text" id="ix-text">Riwayat barang masuk dan keluar gudang, satu baris per gerakan &mdash; format yang sama dengan sheet Inventory Movement.</p>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Format</legend>
+      <div class="ix__fmts">${formats}</div>
+    </fieldset>
+
+    <fieldset class="ex__set">
+      <legend class="ex__leg">Rentang tanggal</legend>
+      <div class="ix__quick" role="group" aria-label="Pilihan cepat">${presets}</div>
+      <div class="ix__dates">
+        <label><span>Dari</span><input type="date" name="from" id="ix-from" value="${escape(from)}" max="${escape(today)}" required></label>
+        <span class="ix__arrow" aria-hidden="true">${svg('chevR')}</span>
+        <label><span>Sampai</span><input type="date" name="to" id="ix-to" value="${escape(today)}" max="${escape(today)}" required></label>
+      </div>
+      <p class="ex__note">Gudang tercatat di dashboard sejak ${escape(new Date(`${first}T00:00:00Z`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }))}.</p>
+    </fieldset>
+
+    <section class="ix__out" aria-live="polite">
+      <span class="ix__doc ix__doc--xlsx ix__doc--lg" id="ix-doc" aria-hidden="true"><i>XLSX</i></span>
+      <div class="ix__outb">
+        <span class="ix__outl">Akan diunduh</span>
+        <b class="ix__name" id="ix-name">Inventory.xlsx</b>
+        <span class="ix__stats" id="ix-stats"></span>
+      </div>
+    </section>
+    <p class="ix__err" id="ix-err" role="alert" hidden></p>
+
+    <div class="ex__row">
+      <button class="pu__no" type="button" data-ix-close>Batal</button>
+      <button class="pu__yes ix__go" type="submit" id="ix-go">
+        <span class="ix__go-idle">${svg('export')}Unduh</span>
+        <span class="ix__go-busy" aria-hidden="true"><i class="ix__spin"></i>Menyiapkan&hellip;</span>
+        <span class="ix__go-done" aria-hidden="true">${svg('check')}Terunduh</span>
+      </button>
+    </div>
+  </form>
+  <script type="application/json" id="ix-days">${JSON.stringify(days).replaceAll('<', '\\u003c')}</script>
+</dialog>`;
+}
+
+const STOCK_EXPORT_STYLE = `
+/* The top-right button: same pill as the orders page, without the push to the far edge
+   the filter row needs - the page head already puts it there. */
+.exbtn--head{margin-left:0}
+.ix{width:min(34rem,calc(100vw - 2rem))}
+.ix__box{gap:1.05rem}
+.ix__x{position:absolute; top:.85rem; right:.85rem; width:40px; height:40px; border-radius:50%; cursor:pointer;
+  display:grid; place-items:center; color:var(--muted); border:1px solid var(--glass-line); background:var(--glass);
+  transition:color var(--t-fast), border-color var(--t-fast), background var(--t-fast)}
+.ix__x:hover{color:var(--fg); border-color:var(--brand); background:var(--glass-2)}
+.ix__x:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.ix__x .ico{width:16px; height:16px}
+/* The heading takes the first focus so the sheet opens without a ring on any control;
+   Tab goes on to the formats from there. */
+.ix .ex__title:focus{outline:none}
+/* Short enough not to scroll, so the button row sits in the flow: the orders sheet's
+   sticky footer, with its fade and negative margins, rode up over the preview here. */
+.ix .ex__row{position:static; margin:.35rem 0 0; padding:0; background:none}
+.ix .ex__row::before{display:none}
+.ix__fmts{display:grid; grid-template-columns:1fr 1fr; gap:.5rem}
+.ix__fmt{display:block; cursor:pointer; position:relative}
+.ix__fmt input{position:absolute; opacity:0; width:0; height:0}
+.ix__fmtb{display:flex; align-items:center; gap:.75rem; padding:.75rem .85rem; min-height:64px; border-radius:16px;
+  border:1px solid var(--glass-line); background:var(--glass);
+  transition:border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-base) var(--ease-out)}
+.ix__fmt:hover .ix__fmtb{background:var(--glass-2)}
+.ix__fmt input:checked + .ix__fmtb{border-color:color-mix(in srgb,var(--cta-a) 65%,transparent);
+  background:color-mix(in srgb,var(--cta-a) 12%,transparent);
+  box-shadow:0 10px 26px -18px color-mix(in srgb,var(--cta-a) 90%,transparent)}
+.ix__fmt input:focus-visible + .ix__fmtb{outline:2px solid var(--brand); outline-offset:2px}
+.ix__fmtt{display:flex; flex-direction:column; font-size:.9rem; font-weight:600; line-height:1.25; min-width:0}
+.ix__fmtt small{font-size:.72rem; font-weight:400; color:var(--muted); margin-top:.12rem}
+.ix__tick{margin-left:auto; width:22px; height:22px; flex:none; border-radius:50%; display:grid; place-items:center;
+  border:1px solid var(--glass-line); color:transparent;
+  transition:background var(--t-fast), border-color var(--t-fast), color var(--t-fast), transform var(--t-base) var(--ease-out)}
+.ix__tick .ico{width:13px; height:13px; stroke-width:2.4}
+.ix__fmt input:checked + .ix__fmtb .ix__tick{background:var(--cta-a); border-color:var(--cta-a); color:#fff; transform:scale(1.04)}
+/* A sheet of paper with its corner folded and the format stamped on it: the format is
+   recognised before it is read. Excel's green and a neutral slate for plain text. */
+.ix__doc{--tone:#1D7A47; position:relative; flex:none; width:34px; height:42px; border-radius:6px 11px 6px 6px;
+  background:linear-gradient(160deg,#FFFFFF,#E4E8E1);
+  box-shadow:0 6px 14px -8px rgba(0,0,0,.55), inset 0 0 0 1px rgba(20,30,25,.10)}
+.ix__doc::before{content:''; position:absolute; top:0; right:0; width:11px; height:11px; border-bottom-left-radius:4px;
+  background:linear-gradient(225deg,transparent 50%,#C9CFC6 50%)}
+.ix__doc::after{content:''; position:absolute; left:7px; right:7px; top:12px; height:10px;
+  background:repeating-linear-gradient(to bottom, color-mix(in srgb,var(--tone) 35%,transparent) 0 1.5px, transparent 1.5px 4px)}
+.ix__doc i{position:absolute; left:-5px; bottom:5px; padding:1px 4px; border-radius:4px; font-style:normal;
+  font-size:.56rem; font-weight:800; letter-spacing:.04em; color:#fff; background:var(--tone);
+  box-shadow:0 3px 8px -3px color-mix(in srgb,var(--tone) 80%,transparent); transition:background var(--t-base)}
+.ix__doc--csv{--tone:#5B6B79}
+.ix__doc--lg{width:46px; height:58px; border-radius:8px 14px 8px 8px}
+.ix__doc--lg::before{width:15px; height:15px}
+.ix__doc--lg::after{left:9px; right:9px; top:17px; height:16px}
+.ix__doc--lg i{font-size:.66rem; bottom:8px; left:-7px; padding:2px 5px}
+.ix__quick{display:flex; flex-wrap:wrap; gap:.4rem}
+.ix__q{font:inherit; font-size:.78rem; padding:.42rem .85rem; min-height:36px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--glass-line); background:var(--glass); color:var(--muted);
+  transition:background var(--t-fast), color var(--t-fast), border-color var(--t-fast)}
+.ix__q:hover{background:var(--glass-2); color:var(--fg)}
+.ix__q[aria-pressed="true"]{color:var(--fg); border-color:color-mix(in srgb,var(--brand) 60%,transparent);
+  background:color-mix(in srgb,var(--brand) 16%,transparent)}
+.ix__q:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.ix__dates{display:flex; align-items:stretch; gap:.4rem}
+.ix__dates label{flex:1; min-width:0; display:flex; flex-direction:column; gap:.1rem; padding:.45rem .8rem;
+  border-radius:14px; border:1px solid var(--glass-line); background:var(--glass); cursor:text;
+  transition:border-color var(--t-fast), background var(--t-fast)}
+.ix__dates label:focus-within{border-color:color-mix(in srgb,var(--brand) 65%,transparent); background:var(--glass-2)}
+.ix__dates span{font-size:.64rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--dim)}
+.ix__dates input{min-width:0; min-height:30px; font:inherit; font-size:.9rem; font-weight:600; color:var(--fg);
+  background:transparent; border:0; padding:0}
+.ix__dates input:focus-visible{outline:none}
+.ix__arrow{display:grid; place-items:center; color:var(--dim); flex:none}
+.ix__arrow .ico{width:16px; height:16px}
+.ix__out{display:flex; align-items:center; gap:1rem; padding:1rem 1.1rem; border-radius:18px;
+  border:1px solid color-mix(in srgb,var(--brand) 30%,var(--glass-line));
+  background:radial-gradient(120% 140% at 0% 0%, color-mix(in srgb,var(--brand) 16%,transparent), transparent 60%), var(--glass)}
+.ix__outb{display:flex; flex-direction:column; gap:.18rem; min-width:0}
+.ix__outl{font-size:.64rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--dim)}
+.ix__name{font-size:.98rem; font-weight:650; letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.ix__stats{display:flex; flex-wrap:wrap; gap:.25rem .8rem; font-size:.78rem; color:var(--muted)}
+.ix__stats b{color:var(--fg); font-weight:650; font-variant-numeric:tabular-nums}
+.ix__stats .is-in b{color:var(--good)}
+.ix__stats .is-out b{color:var(--act)}
+.ix__stats .is-empty{color:var(--warn)}
+.ix__stats.is-fresh{animation:ixfresh var(--t-base) var(--ease-out)}
+@keyframes ixfresh{from{opacity:.25; transform:translateY(3px)}to{opacity:1; transform:none}}
+.ix__err{margin:-.4rem 0 0; font-size:.8rem; color:var(--bad)}
+.ix__go{position:relative}
+.ix__go > span{display:inline-flex; align-items:center; justify-content:center; gap:.45rem}
+.ix__go-busy,.ix__go-done{display:none !important}
+.ix__go[data-state="busy"] .ix__go-idle,.ix__go[data-state="done"] .ix__go-idle{display:none}
+.ix__go[data-state="busy"] .ix__go-busy,.ix__go[data-state="done"] .ix__go-done{display:inline-flex !important}
+.ix__go[data-state="busy"]{cursor:progress; opacity:.92}
+.ix__go[data-state="done"]{background:linear-gradient(155deg,#3E8F5E,#2C6E47)}
+.ix__go:disabled:not([data-state]){opacity:.45; cursor:not-allowed; filter:saturate(.4)}
+.ix__go .ico{width:16px; height:16px}
+.ix__spin{width:15px; height:15px; border-radius:50%; border:2px solid rgba(255,255,255,.35); border-top-color:#fff;
+  animation:ixspin .7s linear infinite}
+@keyframes ixspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){
+  .ix__stats.is-fresh{animation:none}
+  .ix__spin{animation-duration:1.6s}
+  .ix__fmtb,.ix__tick,.ix__q{transition:none}
+}
+@media (max-width:520px){
+  .ix__fmts{grid-template-columns:1fr}
+  .ix__dates{flex-direction:column}
+  .ix__arrow{display:none}
+}
+`;
+
+const STOCK_EXPORT_SCRIPT = `
+(function () {
+  var dialog = document.getElementById('stock-export');
+  var open = document.getElementById('stock-export-open');
+  if (!dialog || !open) return;
+  var form = dialog.querySelector('form');
+  var from = document.getElementById('ix-from');
+  var to = document.getElementById('ix-to');
+  var go = document.getElementById('ix-go');
+  var nameEl = document.getElementById('ix-name');
+  var stats = document.getElementById('ix-stats');
+  var doc = document.getElementById('ix-doc');
+  var err = document.getElementById('ix-err');
+  // Read as attributes: the hidden input named "dataset" shadows form.dataset.
+  var today = form.getAttribute('data-today');
+  var first = form.getAttribute('data-first');
+  var days = {};
+  try { days = JSON.parse(document.getElementById('ix-days').textContent) || {}; } catch (e) {}
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var idNum = function (n) { return Number(n).toLocaleString('id-ID'); };
+  var busy = false;
+
+  function show() { reset(); if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open', ''); }
+  function hide() { if (busy) return; if (dialog.close) dialog.close(); else dialog.removeAttribute('open'); }
+  open.addEventListener('click', show);
+  dialog.querySelectorAll('[data-ix-close]').forEach(function (b) { b.addEventListener('click', hide); });
+  dialog.addEventListener('cancel', function (e) { if (busy) e.preventDefault(); });
+  dialog.addEventListener('click', function (e) { if (e.target === dialog) hide(); });
+
+  // Dates are plain YYYY-MM-DD strings in the house calendar; arithmetic happens at UTC
+  // midnight so no browser timezone can shift a day.
+  function shift(d, n) { return new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10); }
+  var PRESETS = {
+    today: function () { return [today, today]; },
+    yesterday: function () { var y = shift(today, -1); return [y, y]; },
+    '7d': function () { return [shift(today, -6), today]; },
+    month: function () { return [today.slice(0, 8) + '01', today]; },
+    'last-month': function () { var end = shift(today.slice(0, 8) + '01', -1); return [end.slice(0, 8) + '01', end]; },
+    all: function () { return [first, today]; },
+  };
+
+  // The same name the server gives the file: "Inventory 1 - 29 Oct 2026.xlsx".
+  function filename(a, b, ext) {
+    var p = a.split('-').map(Number), q = b.split('-').map(Number);
+    var day = function (y, m, d) { return d + ' ' + MONTHS[m - 1] + ' ' + y; };
+    var span;
+    if (a === b) span = day(q[0], q[1], q[2]);
+    else if (p[0] === q[0] && p[1] === q[1]) span = p[2] + ' - ' + day(q[0], q[1], q[2]);
+    else if (p[0] === q[0]) span = p[2] + ' ' + MONTHS[p[1] - 1] + ' - ' + day(q[0], q[1], q[2]);
+    else span = day(p[0], p[1], p[2]) + ' - ' + day(q[0], q[1], q[2]);
+    return 'Inventory ' + span + '.' + ext;
+  }
+  function format() { return form.querySelector('input[name=format]:checked').value; }
+  // What the server will be asked for: in order and not past today. The days asked for
+  // name the file even where the log has nothing yet - "1 - 29 Oct" is the month the
+  // team means, though the warehouse only started on the 6th.
+  function range() {
+    var a = from.value || today, b = to.value || today;
+    if (a > b) { var t = a; a = b; b = t; }
+    if (b > today) b = today;
+    if (a > today) a = today;
+    return { from: a, to: b, empty: b < first };
+  }
+
+  function render() {
+    var r = range(), ext = format();
+    nameEl.textContent = filename(r.from, r.to, ext);
+    nameEl.title = nameEl.textContent;
+    doc.className = 'ix__doc ix__doc--lg ix__doc--' + ext;
+    doc.firstChild.textContent = ext.toUpperCase();
+    var n = 0, inU = 0, outU = 0;
+    if (!r.empty) for (var d = r.from; d <= r.to; d = shift(d, 1)) {
+      var v = days[d];
+      if (v) { n += v[0]; inU += v[1]; outU += v[2]; }
+    }
+    stats.innerHTML = n
+      ? '<span><b>' + idNum(n) + '</b> gerakan</span>'
+        + (inU ? '<span class="is-in"><b>+' + idNum(inU) + '</b> masuk</span>' : '')
+        + (outU ? '<span class="is-out"><b>&minus;' + idNum(outU) + '</b> keluar</span>' : '')
+      : '<span class="is-empty">' + (r.empty ? 'Gudang baru tercatat mulai ' + first.split('-').reverse().join('/') : 'Tidak ada gerakan stok di rentang ini') + '</span>';
+    stats.classList.remove('is-fresh'); void stats.offsetWidth; stats.classList.add('is-fresh');
+    go.disabled = !n;
+    err.hidden = true;
+  }
+  function press(key) {
+    dialog.querySelectorAll('[data-preset]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.preset === key)); });
+  }
+  function reset() { busy = false; go.removeAttribute('data-state'); render(); }
+
+  dialog.querySelectorAll('[data-preset]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var r = PRESETS[b.dataset.preset]();
+      from.value = r[0]; to.value = r[1];
+      press(b.dataset.preset); render();
+    });
+  });
+  [from, to].forEach(function (input) {
+    input.addEventListener('change', function () {
+      if (from.value && to.value && from.value > to.value) { var t = from.value; from.value = to.value; to.value = t; }
+      // Typed past today: the field says what will be used.
+      if (from.value > today) from.value = today;
+      if (to.value > today) to.value = today;
+      press(''); render();
+    });
+  });
+  form.querySelectorAll('input[name=format]').forEach(function (r) { r.addEventListener('change', render); });
+
+  // Fetched, not navigated: the button can say "preparing" and then "done", an error
+  // stays in the sheet next to the button, and the page's loading veil never arms.
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (busy || go.disabled) return;
+    var r = range(), ext = format();
+    var url = form.getAttribute('action') + '?dataset=inventory&format=' + ext + '&from=' + r.from + '&to=' + r.to;
+    busy = true; go.setAttribute('data-state', 'busy'); err.hidden = true;
+    fetch(url, { credentials: 'same-origin' }).then(function (res) {
+      if (!res.ok) throw new Error(res.status === 401 ? 'Sesi berakhir - masuk lagi lalu ulangi.' : 'Server menolak (' + res.status + '). Coba lagi sebentar.');
+      return res.blob();
+    }).then(function (blob) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename(r.from, r.to, ext);
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+      go.setAttribute('data-state', 'done');
+      setTimeout(function () { busy = false; hide(); }, 1100);
+    }).catch(function (error) {
+      busy = false; go.removeAttribute('data-state');
+      err.textContent = error.message || 'Unduhan gagal.'; err.hidden = false;
+    });
+  });
+  render();
+})();
+`;
 
 const PICK_STYLE = `
 .pick__confirm{display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin:0 0 1rem; padding:.9rem 1.1rem; border-radius:var(--radius); border:1px solid color-mix(in srgb, var(--brand) 45%, var(--line)); background:color-mix(in srgb, var(--brand) 9%, var(--panel))}

@@ -101,6 +101,7 @@ async function settleWorklist(data, arranged, { now = Date.now() } = {}) {
 import { priceBySku } from '../src/shopify/prices.js';
 import { buildPicklist, batchOrders, batchesIn } from '../src/picklist.js';
 import { picklistPdf } from '../src/picklist-pdf.js';
+import { movementsByDay, FIRST_DAY } from '../src/export/inventory.js';
 import { readCatalog } from '../src/inventory.js';
 import { LISTING_CHANNELS, refOf, diffPatch, isManaged, UNMANAGED_MESSAGE } from '../src/listing.js';
 import { findProduct, isBaseProduct } from '../src/master.js';
@@ -134,7 +135,7 @@ import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
 import { listContacts } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
-import { channelToday, channelDate } from '../src/clock.js';
+import { channelToday, channelDate, businessToday } from '../src/clock.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
 import { loadImageManifest } from '../src/mekari/images.js';
 import { loadForecast } from '../src/forecast/engine.js';
@@ -2543,6 +2544,8 @@ export default async function handler(req, res) {
         ...data, orders, range, picklist, csrf, flash, images: await imagesByKey(),
         batch: { date, current, list: batchesIn(shelf) },
         readAt: picking.readAt, settleFailed: picking.failed,
+        // The Export button's sheet says what a range holds before anyone downloads it.
+        stockExport: { today: businessToday(), first: FIRST_DAY, days: movementsByDay(shelf) },
       }));
       return;
     }

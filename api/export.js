@@ -3,8 +3,11 @@ import { resolveRange } from '../src/range.js';
 import { dashboardError } from '../src/dashboard-page.js';
 import { buildExport, renderExport, exportFilename, DATASETS, DEFAULT_DATASET } from '../src/export/orders.js';
 import { COOKIE_NAME, isConfigured, parseCookies, authenticate, callerIp } from '../src/dashboard-auth.js';
-import { can } from '../src/users.js';
+import { can, canView } from '../src/users.js';
 import { recordActivity } from '../src/audit.js';
+import { loadWarehouse } from '../src/warehouse-run.js';
+import { businessToday } from '../src/clock.js';
+import { buildInventoryExport, renderInventoryExport, inventoryFilename, inventoryRange } from '../src/export/inventory.js';
 
 /**
  * The spreadsheet behind the Export button.
@@ -42,13 +45,18 @@ export default async function handler(req, res) {
     fail(401, 'Sesi berakhir', 'Masuk kembali lewat dashboard, lalu ulangi ekspor.');
     return;
   }
+  const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
+  if (url.searchParams.get('dataset') === 'inventory') {
+    await inventoryExport({ req, res, url, user, fail });
+    return;
+  }
+
   // A role held to the stock and forecast menus never sees an order, a buyer or a label.
   if (!can(user, 'orders')) {
     fail(403, 'Tidak berwenang', 'Peran ini tidak bisa mengekspor pesanan.');
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
   const dataset = DATASETS[url.searchParams.get('dataset')] ? url.searchParams.get('dataset') : DEFAULT_DATASET;
   const format = url.searchParams.get('format') === 'csv' ? 'csv' : 'xlsx';
   // The same resolver the dashboard uses, so the file and the screen agree about what
@@ -92,6 +100,44 @@ export default async function handler(req, res) {
     res.end(req.method === 'HEAD' ? undefined : body);
   } catch (error) {
     console.error(`export: gagal - ${error.message}`);
+    fail(502, 'Ekspor gagal', error.message);
+  }
+}
+
+/**
+ * The warehouse movement log, from the Export button on the picklist: jars and boxes in
+ * and out, no buyer anywhere in it, so anyone who may open the picklist or the stock
+ * page may take it. Read fresh, never cached - a movement made a moment ago belongs in it.
+ */
+async function inventoryExport({ req, res, url, user, fail }) {
+  if (!canView(user, 'picklist') && !canView(user, 'stock')) {
+    fail(403, 'Tidak berwenang', 'Peran ini tidak bisa mengekspor stok gudang.');
+    return;
+  }
+  const format = url.searchParams.get('format') === 'csv' ? 'csv' : 'xlsx';
+  const { from, to } = inventoryRange({ from: url.searchParams.get('from'), to: url.searchParams.get('to'), today: businessToday() });
+  try {
+    const started = Date.now();
+    const sheet = buildInventoryExport(await loadWarehouse(), { from, to });
+    const { body, type } = renderInventoryExport(sheet, format);
+    const filename = inventoryFilename(from, to, format);
+    console.log(`export: inventory ${format}, ${sheet.rows.length} gerakan, ${from} s/d ${to} (${Date.now() - started}ms)`);
+    await recordActivity({
+      actor: user, ip: callerIp(req), menu: 'picklist', action: 'export', verb: 'print',
+      target: filename,
+      summary: `Mengekspor riwayat stok gudang sebagai ${format.toUpperCase()}: ${sheet.rows.length} gerakan, ${from} s/d ${to}`,
+      changes: [{ field: 'Rentang', to: `${from} s/d ${to}` }],
+    }).catch(() => {});
+    res.statusCode = 200;
+    res.setHeader('Content-Type', type);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Length', String(body.length));
+    // The name has spaces; the quoted form carries it, the encoded one survives anything.
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader('X-Rows', String(sheet.rows.length));
+    res.end(req.method === 'HEAD' ? undefined : body);
+  } catch (error) {
+    console.error(`export: inventory gagal - ${error.message}`);
     fail(502, 'Ekspor gagal', error.message);
   }
 }

@@ -90,3 +90,10 @@ test('a store reply that itself makes a claim is not shown', () => {
   const { pages } = buildHub({ doc: doc([review({ reply: { text: 'Semoga sendinya cepat membaik ya Kak' } })]) });
   assert.equal(pages[0][0].rp, null);
 });
+
+test('product stars for structured data count treelogy.com reviews only', () => {
+  const site = [{ id: 's1', channel: 'site', productHandle: 'organic-moringa-powder', rating: 4, text: 'Enak', images: [], createdAtEpoch: 1 }];
+  const { summary } = buildHub({ doc: doc([review()]), site });
+  assert.deepEqual(summary.site_products, { 'organic-moringa-powder': { ratings: 1, average: 4 } });
+  assert.equal(summary.site_products['organic-moringa-capsules'], undefined, 'a Shopee rating is never a treelogy.com rating');
+});

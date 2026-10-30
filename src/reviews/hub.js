@@ -152,6 +152,15 @@ export function buildHub({ doc, site = [], media = {}, now = new Date().toISOStr
     .filter((p) => p.ratings > 0)
     .sort((a, b) => b.ratings - a.ratings);
 
+  // Product stars in structured data may only count reviews collected on treelogy.com.
+  const siteProducts = {};
+  for (const r of site) {
+    const p = productOf(r);
+    if (!p) continue;
+    siteProducts[p.handle] ??= emptyDist();
+    if (r.rating >= 1 && r.rating <= 5) siteProducts[p.handle][r.rating] += 1;
+  }
+
   const latest = cards.find((c) => c.d)?.d ?? null;
   const summary = {
     updated_at: now,
@@ -159,6 +168,10 @@ export function buildHub({ doc, site = [], media = {}, now = new Date().toISOStr
     ...stats(total),
     channels,
     products: productList,
+    site_products: Object.fromEntries(Object.entries(siteProducts).map(([handle, dist]) => {
+      const { ratings, average } = stats(dist);
+      return [handle, { ratings, average }];
+    })),
     written: {
       total: all.filter(hasContent).length,
       shown: cards.length,

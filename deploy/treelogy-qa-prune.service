@@ -1,6 +1,6 @@
 # /etc/systemd/system/treelogy-qa-prune.service  (dijalankan oleh treelogy-qa-prune.timer)
 [Unit]
-Description=Treelogy QA: hapus laporan run yang lebih tua dari 1 hari
+Description=Treelogy QA: hapus laporan run yang lebih tua dari 12 jam
 
 [Service]
 Type=oneshot

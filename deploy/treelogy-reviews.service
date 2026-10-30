@@ -1,0 +1,21 @@
+# /etc/systemd/system/treelogy-reviews.service  (run by treelogy-reviews.timer)
+[Unit]
+Description=Treelogy: ulasan baru Tokopedia + Shopee -> halaman ulasan treelogy.com
+After=treelogy.service
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+# Neither marketplace pushes a webhook when a review is written, so this is the push: a
+# quick check every ten minutes, and whatever is new goes straight to the storefront.
+# --notify stays on the quick runs: the low-rating alert fires on reviews a sync *adds*,
+# and after a quick run has stored them the nightly full sync would see nothing new.
+# Each step may fail on its own (a marketplace down) without stopping the publish.
+ExecStart=-/usr/bin/node bin/tokopedia.mjs reviews --quick --notify
+ExecStart=-/usr/bin/node bin/shopee.mjs reviews --quick --notify
+ExecStart=/usr/bin/node bin/reviews.mjs hub
+TimeoutStartSec=20min

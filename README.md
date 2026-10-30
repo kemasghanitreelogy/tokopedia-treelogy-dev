@@ -61,6 +61,7 @@ npm run doctor      # verify end to end
 | `npm run reviews:stats` | Per channel, per star, per SKU, last 30 days, unreplied |
 | `npm run reviews:export -- --csv` | Write stored reviews to `state/reviews.csv` (or `--json`) |
 | `npm run reviews:media` | Download every stored review photo into the media cache |
+| `npm run reviews:hub [-- --dry --json]` | Publish the treelogy.com review page: photos to Shopify Files, pages to metaobjects, numbers to `shop.metafields.reviews_hub.summary` |
 | `npm test` | Offline tests |
 
 ### Reviews (Tokopedia + Shopee)
@@ -98,6 +99,25 @@ unit runs `bin/tokopedia.mjs reviews --notify` and `bin/shopee.mjs reviews --not
 new reviews at or under three stars go to Telegram one by one, the first import of a
 channel as a single digest. Override the Tokopedia shop with `TOKOPEDIA_SHOP_ID` and
 `TOKOPEDIA_SHOP_SLUG`.
+
+### The review page on treelogy.com
+
+`/pages/reviews` is rendered by Liquid from data this service writes, so crawlers that do
+not run JavaScript read the same numbers a buyer does. `src/reviews/hub.js` builds it,
+`src/reviews/publish.js` writes it with `SHOPIFY_CONTENT_TOKEN` (metaobjects + files):
+
+- written reviews that pass `src/reviews/moderation.js` (BPOM advertising rules: no disease,
+  recovery or vitality claims; no contact details - the same rule for every star), newest
+  first, 40 to a `treelogy_review_page` metaobject (handles `p-001`...), photos copied to
+  Shopify Files once;
+- `shop.metafields.reviews_hub.summary`: every rating counted, per channel (each
+  marketplace's own shop summary), per star, per product, and how many were held and why;
+- treelogy.com's own reviews come from Klaviyo (`src/reviews/site.js`): verified, published,
+  not one of our marketplace imports. Unverified ones are never shown or counted.
+
+Neither marketplace sends a webhook for a new review, so `treelogy-reviews.timer` is the
+push: every 10 minutes a quick Tokopedia and Shopee sync (with `--notify`), then
+`reviews hub`. Unchanged pages and summary are not rewritten.
 
 Review photos (Tokopedia's come through signed URLs that expire in about three days)
 are cached on disk under `state/tokopedia-media` (or `TOKOPEDIA_MEDIA_DIR`; on the VPS

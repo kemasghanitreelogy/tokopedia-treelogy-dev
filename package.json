@@ -50,6 +50,7 @@
     "reviews:stats": "node bin/reviews.mjs stats",
     "reviews:export": "node bin/reviews.mjs export",
     "reviews:media": "node bin/reviews.mjs media",
+    "reviews:hub": "node bin/reviews.mjs hub",
     "mekari:setup": "node bin/tts.mjs mekari:setup",
     "mekari:plan": "node bin/tts.mjs mekari:plan",
     "mekari:sync": "node bin/tts.mjs mekari:sync",

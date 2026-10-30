@@ -3,6 +3,7 @@ import { loadAllReviews, REVIEW_CHANNELS } from './combined.js';
 import { selectReviews, reviewStats, toCsv, LOW_RATING_MAX } from '../tokopedia/reviews.js';
 import { prefetchMedia, mediaDir } from '../tokopedia/media.js';
 import { ok, fail, warn, info } from '../format.js';
+import { publishHub } from './publish.js';
 
 /**
  * Reading reviews across both marketplaces. Syncing stays with each channel's own CLI
@@ -17,6 +18,8 @@ Pakai:
   npm run reviews:stats      Rangkuman: per kanal, per bintang, per SKU, 30 hari terakhir, belum dibalas
   npm run reviews:export     Tulis ke berkas: --csv[=path] | --json[=path] (bawaan state/reviews.csv / .json), filter sama seperti list
   npm run reviews:media      Unduh foto semua ulasan ke cache lokal (--limit=600 berkas per jalan)
+  npm run reviews:hub        Terbitkan halaman ulasan treelogy.com (/pages/reviews): foto, halaman, ringkasan
+      --dry  hitung saja tanpa menulis ke Shopify   --json  cetak ringkasan sebagai JSON
 
 Sinkron: npm run tokopedia:reviews  ·  npm run shopee:reviews
 `;
@@ -125,7 +128,20 @@ export async function cmdMedia(args) {
   return result.failed && !result.fetched && !result.cached ? 1 : 0;
 }
 
-const COMMANDS = { list: cmdList, stats: cmdStats, export: cmdExport, media: cmdMedia };
+export async function cmdHub(args) {
+  const result = await publishHub({ dryRun: flag(args, 'dry'), log: (line) => console.log(warn(line)) });
+  if (flag(args, 'json')) {
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+  const s = result.summary;
+  console.log(ok(`${s.ratings} penilaian, rata-rata ${s.average} · ${s.written.shown} ulasan tampil di ${result.pages} halaman, ${s.written.held.health_claim} ditahan (klaim kesehatan), ${s.written.held.contact} (kontak), ${s.written.held.hidden} (disembunyikan)`));
+  if (result.dryRun) console.log(info(`kering: ${result.wantedImages} foto belum ada di Shopify`));
+  else console.log(info(`${result.pagesWritten} halaman ditulis, ringkasan ${result.summaryWritten ? 'diperbarui' : 'tetap'}, ${result.photosRequested} foto diunggah, ${result.photosWaiting} foto menunggu`));
+  return 0;
+}
+
+const COMMANDS = { list: cmdList, stats: cmdStats, export: cmdExport, media: cmdMedia, hub: cmdHub };
 
 export async function run(argv) {
   const [command, ...args] = argv;

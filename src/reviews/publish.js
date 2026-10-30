@@ -83,10 +83,22 @@ async function uploadPhotos(wanted, ledger, { gql, log, limit = UPLOADS_PER_RUN 
       alt: `Foto ulasan pembeli Treelogy dari ${SOURCES[w.review.channel]?.label ?? 'treelogy.com'}`,
     }));
     const data = await gql(FILE_CREATE, { files });
-    userErrors('fileCreate', data.fileCreate.userErrors);
-    data.fileCreate.files.forEach((file, j) => {
-      media[batch[j].key] = { id: file.id, pending: true };
-    });
+    if (!data.fileCreate.userErrors?.length) {
+      data.fileCreate.files.forEach((file, j) => {
+        media[batch[j].key] = { id: file.id, pending: true };
+      });
+      continue;
+    }
+    // One bad source rejects the whole batch; send them one by one so a single dead
+    // marketplace URL is recorded as such and never blocks the photos around it.
+    for (let j = 0; j < batch.length; j++) {
+      const one = await gql(FILE_CREATE, { files: [files[j]] });
+      const error = one.fileCreate.userErrors?.[0];
+      if (error) {
+        media[batch[j].key] = { failed: true, error: error.message };
+        log(`foto ${batch[j].key} ditolak: ${error.message}`);
+      } else media[batch[j].key] = { id: one.fileCreate.files[0].id, pending: true };
+    }
   }
   // Shopify processes uploads asynchronously; collect whatever is ready now, the rest next run.
   const pending = Object.entries(media).filter(([, m]) => m.pending);

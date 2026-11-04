@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { shell, svg, escape } from '../dashboard-page.js';
 import { PRODUCTS, familyOf } from '../master.js';
-import { GROUPS, recipeOf, verifyWarehouse, REFUND_REASONS } from '../warehouse.js';
+import { GROUPS, recipeOf, REFUND_REASONS } from '../warehouse.js';
 import { can as allowed } from '../users.js';
 
 /**
@@ -40,13 +40,6 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     <span class="stat"><span class="stat__n">${fmt(moves.filter((m) => isToday(m.at) && m.kind !== 'opening').length)}</span><span class="stat__l">gerakan hari ini</span></span>
     <span class="stat"><span class="stat__n">${fmt(new Set(moves.filter((m) => isToday(m.at) && m.kind === 'order').map((m) => m.ref)).size)}</span><span class="stat__l">pesanan keluar hari ini</span></span>
     <span class="strip__grow"></span>
-    ${(() => {
-      // Proved on every render: each quantity is exactly the sum of its movements.
-      const drift = verifyWarehouse(warehouse);
-      return drift.length
-        ? `<span class="wh__ok wh__ok--bad" role="status">${svg('warn')}<span>${drift.length} barang tidak seimbang dengan riwayatnya</span></span>`
-        : `<span class="wh__ok" title="Setiap jumlah sama persis dengan saldo awal ditambah semua gerakannya">${svg('check2')}<span>Seimbang dengan riwayat</span></span>`;
-    })()}
     <input class="search" id="wq" type="search" aria-label="Cari barang" placeholder="Cari kode atau nama barang…" autocomplete="off">
   </section>${refundRows(warehouse, { csrf, user, writer })}`;
 
@@ -374,15 +367,12 @@ const STYLE = `
 .wh__after{text-align:right; color:var(--muted)}
 .wh__note{font-size:.76rem; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .wh__empty{margin:0; font-size:.84rem; color:var(--dim)}
-.wh__ok{display:inline-flex; align-items:center; gap:.35rem; font-size:.74rem; color:var(--muted); padding:.3rem .65rem; border:1px solid var(--line); border-radius:999px}
-.wh__ok .ico{width:14px; height:14px; color:var(--good, #6fbf73)}
-.wh__ok--bad{color:var(--fg); border-color:var(--bad)} .wh__ok--bad .ico{color:var(--bad)}
 @media (max-width:1100px){.wh__cols{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:700px){
-  .strip:has(.wh__ok){display:grid; grid-template-columns:1fr 1fr; gap:.75rem}
-  .strip:has(.wh__ok) .stat{border:0; padding:0}
-  .strip:has(.wh__ok) .strip__grow{display:none}
-  .strip:has(.wh__ok) .wh__ok, .strip:has(.wh__ok) .search{grid-column:1/-1; width:100%}
+  .strip:has(#wq){display:grid; grid-template-columns:1fr 1fr; gap:.75rem}
+  .strip:has(#wq) .stat{border:0; padding:0}
+  .strip:has(#wq) .strip__grow{display:none}
+  .strip:has(#wq) .search{grid-column:1/-1; width:100%}
   .wh__row{grid-template-columns:minmax(0,1fr) auto; row-gap:.2rem}
   .wh__code{grid-column:1} .wh__name{grid-column:1} .wh__nm{white-space:normal} .wh__qty{grid-column:2; grid-row:1}
   .wh__acts{grid-column:2; grid-row:2}

@@ -16,9 +16,8 @@ import { callShopApi } from './shopee/client.js';
  *
  *   Shopee   get_escrow_detail answers from the moment an order exists. It stays an
  *            estimate until the order completes.
- *   TikTok   Tokopedia included. statement_transactions answers zero until the order
- *            settles; before that only the unsettled list has an estimate, and an order
- *            leaves that list when it settles.
+ *   TikTok   Tokopedia included. Until an order settles only the unsettled list has a
+ *            figure, an estimate. After that it is in a daily statement.
  */
 
 /** A month per document, so a page reads only the months its orders fall in. */
@@ -27,16 +26,18 @@ export const receivedDoc = (month) => `finance/received/${month}.json`;
 
 const SHOPEE_BATCH = 50;
 const SHOPEE_FINAL = new Set(['completed', 'cancelled', 'returned']);
-const NEVER_PAID = new Set(['unpaid', 'cancelled']);
 const UNSETTLED_MAX_PAGES = 60;
-/**
- * One at a time, on purpose. Four in parallel tripped TikTok's rate limit within seconds, and
- * that limit is shared by the whole app: the order reads live behind the same one.
- */
-const LOOKUP_PAUSE_MS = 400;
-/** An order with no answer yet is asked again after this, not on every run. */
-const RETRY_SECONDS = 6 * 3600;
 const DEFAULT_LOOKBACK_DAYS = 60;
+/** Statements re-read on every run; wider than any outage the timer should sleep through. */
+const STATEMENT_LOOKBACK_DAYS = 7;
+/**
+ * TikTok's limit is shared across the app group, order reads included, and it is tight:
+ * asking per order tripped it after 23 sequential calls. A statement carries a whole day of
+ * orders, which is why settled figures come from there, and it is still paced.
+ */
+const TIKTOK_PAUSE_MS = 1000;
+const TIKTOK_RETRY_MS = 60_000;
+const TIKTOK_ATTEMPTS = 3;
 
 const amount = (value) => Math.round(Number(value) || 0);
 
@@ -89,31 +90,77 @@ async function readTikTokUnsettled() {
   return found;
 }
 
-/** Null until the order has settled: the endpoint answers zero rows rather than an error. */
-async function readTikTokSettled(id) {
-  const config = await tiktokConfig();
-  const { data } = await callApi({ config, path: `/finance/202501/orders/${id}/statement_transactions` });
-  return Number(data?.total_count) > 0 ? amount(data.settlement_amount) : null;
+const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/** One paced call, with room for the limit to clear before giving up. */
+async function askTikTok(config, path, query, { pauseMs = TIKTOK_PAUSE_MS, retryMs = TIKTOK_RETRY_MS, call = callApi } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const { data } = await call({ config, path, query });
+      await wait(pauseMs);
+      return data ?? {};
+    } catch (error) {
+      if (attempt >= TIKTOK_ATTEMPTS) throw error;
+      await wait(retryMs);
+    }
+  }
+}
+
+/**
+ * Every order settled in statements since `since`. `error` rather than a throw, so a run cut
+ * short still stores the statements it did read: a long backfill must not lose them.
+ */
+export async function readTikTokStatements({ since, now, ask = askTikTok, config = null }) {
+  const session = config ?? await tiktokConfig();
+  const found = new Map();
+  try {
+    let pageToken = '';
+    do {
+      const query = {
+        sort_field: 'statement_time', sort_order: 'DESC', page_size: '100',
+        statement_time_ge: String(since), statement_time_lt: String(now),
+      };
+      if (pageToken) query.page_token = pageToken;
+      const page = await ask(session, '/finance/202309/statements', query);
+      for (const statement of page.statements ?? []) {
+        // A statement of adjustments alone has no order in it worth a call.
+        if (amount(statement.revenue_amount) === 0) continue;
+        let rowToken = '';
+        do {
+          const rowQuery = { sort_field: 'order_create_time', page_size: '100' };
+          if (rowToken) rowQuery.page_token = rowToken;
+          const rows = await ask(session, `/finance/202501/statements/${statement.id}/statement_transactions`, rowQuery);
+          for (const row of rows.transactions ?? []) {
+            if (row.type === 'ORDER' && row.order_id) {
+              found.set(row.order_id, (found.get(row.order_id) ?? 0) + amount(row.settlement_amount));
+            }
+          }
+          rowToken = rows.next_page_token ?? '';
+        } while (rowToken);
+      }
+      pageToken = page.next_page_token ?? '';
+    } while (pageToken);
+    return { found };
+  } catch (error) {
+    return { found, error: error.message };
+  }
 }
 
 /**
  * One pass over every marketplace order that has no final figure yet.
  *
- * Each platform is its own attempt: Shopee being down must not cost TikTok's run. A failed
- * TikTok lookup ends that platform's pass, because the next one would only press on a limit
- * the app shares; what was read so far is still stored. Only reads the platforms, and
- * `dryRun` leaves the store alone too.
+ * Each platform is its own attempt: Shopee being down must not cost TikTok's run. Only
+ * reads the platforms, and `dryRun` leaves the store alone too.
  */
 export async function syncReceived({
   now = Math.floor(Date.now() / 1000),
   since = now - DEFAULT_LOOKBACK_DAYS * 86400,
-  maxLookups = 100,
-  pauseMs = LOOKUP_PAUSE_MS,
+  statementsSince = now - STATEMENT_LOOKBACK_DAYS * 86400,
   dryRun = false,
   readOrders = ordersInRange,
   readShopee = readShopeeEscrow,
   readUnsettled = readTikTokUnsettled,
-  readSettled = readTikTokSettled,
+  readSettled = readTikTokStatements,
 } = {}) {
   const orders = (await readOrders({ since, until: now, channels: ['tokopedia', 'tiktok_shop', 'shopee'] }))
     .filter(isMarketplace);
@@ -121,7 +168,7 @@ export async function syncReceived({
   const open = orders.filter((order) => !(Number.isFinite(known[order.id]?.a) && !known[order.id].e));
 
   const entries = new Map();
-  const tally = { open: open.length, final: 0, estimate: 0, waiting: 0, skipped: 0, errors: {} };
+  const tally = { open: open.length, final: 0, estimate: 0, errors: {} };
   const put = (order, value, estimate) => {
     entries.set(order, estimate ? { a: value, e: 1 } : { a: value });
     tally[estimate ? 'estimate' : 'final'] += 1;
@@ -141,23 +188,11 @@ export async function syncReceived({
   if (tiktok.length > 0) {
     try {
       const unsettled = await readUnsettled();
-      const lookups = [];
+      const { found: settled, error } = await readSettled({ since: statementsSince, now });
+      if (error) tally.errors.tiktok = error;
       for (const order of tiktok) {
-        if (unsettled.has(order.id)) put(order, unsettled.get(order.id), true);
-        else if (!NEVER_PAID.has(order.stage) && now - (known[order.id]?.t ?? 0) >= RETRY_SECONDS) lookups.push(order);
-      }
-      // Longest-waiting first, so a backfill bigger than one run still gets through all of it.
-      lookups.sort((a, b) => (known[a.id]?.t ?? 0) - (known[b.id]?.t ?? 0) || a.createdAt - b.createdAt);
-      tally.skipped = Math.max(0, lookups.length - maxLookups);
-      for (const order of lookups.slice(0, maxLookups)) {
-        const settled = await readSettled(order.id);
-        if (settled !== null) put(order, settled, false);
-        else {
-          // Keep an estimate already held: "not settled yet" says nothing against it.
-          entries.set(order, { ...known[order.id], t: now });
-          tally.waiting += 1;
-        }
-        if (pauseMs) await new Promise((done) => setTimeout(done, pauseMs));
+        if (settled.has(order.id)) put(order, settled.get(order.id), false);
+        else if (unsettled.has(order.id)) put(order, unsettled.get(order.id), true);
       }
     } catch (error) { tally.errors.tiktok = error.message; }
   }

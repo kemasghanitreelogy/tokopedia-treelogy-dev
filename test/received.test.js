@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { syncReceived, loadReceived, applyReceived, receivedDoc } from '../src/received.js';
+import { syncReceived, loadReceived, applyReceived, receivedDoc, readTikTokStatements } from '../src/received.js';
 import { summarize } from '../src/omni.js';
 import { readDoc, deleteDoc } from '../src/store/index.js';
 
 const NOV = Date.UTC(2026, 10, 3) / 1000;
 const order = (channel, id, stage, extra = {}) => ({ channel, id, stage, createdAt: NOV, total: 100, ...extra });
 const none = async () => new Map();
-const quick = { pauseMs: 0 };
+const noStatements = async () => ({ found: new Map() });
 const clean = () => deleteDoc(receivedDoc('2026-11')).catch(() => {});
 
 test('Shopee is an estimate until the order completes, and a final figure is not asked again', async (t) => {
@@ -16,7 +16,7 @@ test('Shopee is an estimate until the order completes, and a final figure is not
   const orders = [order('shopee', 'A', 'shipping'), order('shopee', 'B', 'completed')];
   const asked = [];
   const readShopee = async (ids) => { asked.push(ids); return new Map(ids.map((id) => [id, 481825])); };
-  const run = () => syncReceived({ now: NOV + 60, readOrders: async () => orders, readShopee, readUnsettled: none });
+  const run = () => syncReceived({ now: NOV + 60, readOrders: async () => orders, readShopee, readUnsettled: none, readSettled: noStatements });
   await run();
   await run();
   assert.deepEqual(asked, [['A', 'B'], ['A']]);
@@ -24,44 +24,59 @@ test('Shopee is an estimate until the order completes, and a final figure is not
   assert.deepEqual(got.map((o) => o.received), [{ amount: 481825, estimate: true }, { amount: 481825, estimate: false }]);
 });
 
-test('TikTok reads the unsettled list first, and only asks per order for what left it', async (t) => {
+test('a settled figure beats an estimate, and an order in neither stays unread', async (t) => {
   t.after(clean);
   await clean();
-  const orders = [
-    order('tokopedia', 'U', 'shipping'), order('tiktok_shop', 'S', 'completed'),
-    order('tokopedia', 'W', 'delivered'), order('tokopedia', 'X', 'cancelled'),
-  ];
-  const asked = [];
+  const orders = [order('tokopedia', 'U', 'shipping'), order('tiktok_shop', 'S', 'completed'), order('tokopedia', 'W', 'delivered')];
   const r = await syncReceived({
-    ...quick, now: NOV + 60,
+    now: NOV + 60,
     readOrders: async () => orders,
-    readUnsettled: async () => new Map([['U', 378675]]),
-    readSettled: async (id) => { asked.push(id); return id === 'S' ? 363742 : null; },
+    readUnsettled: async () => new Map([['U', 378675], ['S', 1]]),
+    readSettled: async () => ({ found: new Map([['S', 363742]]) }),
   });
-  assert.deepEqual(asked.sort(), ['S', 'W']);
-  assert.deepEqual([r.final, r.estimate, r.waiting], [1, 1, 1]);
+  assert.deepEqual([r.final, r.estimate], [1, 1]);
   const { orders: stored } = await readDoc(receivedDoc('2026-11'));
   assert.deepEqual(stored.U, { a: 378675, e: 1 });
   assert.deepEqual(stored.S, { a: 363742 });
-  assert.equal(stored.W.a, undefined);
+  assert.equal(stored.W, undefined);
 });
 
-test('an order with no answer waits before it is asked again, and keeps its estimate', async (t) => {
+test('statements skip adjustment-only days, page through, and add up an order', async () => {
+  const asked = [];
+  const ask = async (_, path, query) => {
+    asked.push(path);
+    if (path.endsWith('/statements')) {
+      return query.page_token
+        ? { statements: [{ id: 'b', revenue_amount: '10' }] }
+        : { statements: [{ id: 'a', revenue_amount: '10' }, { id: 'adj', revenue_amount: '0' }], next_page_token: 'p2' };
+    }
+    if (path.includes('/a/')) {
+      return query.page_token
+        ? { transactions: [{ type: 'ORDER', order_id: 'X', settlement_amount: '5' }] }
+        : { transactions: [{ type: 'ORDER', order_id: 'X', settlement_amount: '100' }, { type: 'SHIPPING_FEE', order_id: 'X', settlement_amount: '9' }], next_page_token: 'r2' };
+    }
+    return { transactions: [{ type: 'ORDER', order_id: 'Y', settlement_amount: '7' }] };
+  };
+  const { found, error } = await readTikTokStatements({ since: 1, now: 2, ask, config: {} });
+  assert.equal(error, undefined);
+  assert.deepEqual([...found], [['X', 105], ['Y', 7]]);
+  assert.equal(asked.some((path) => path.includes('/adj/')), false);
+});
+
+test('a limit hit midway keeps the statements already read, and the run still stores them', async (t) => {
   t.after(clean);
   await clean();
-  const orders = [order('tokopedia', 'E', 'delivered')];
-  const asked = [];
-  const pass = (now, unsettled) => syncReceived({
-    ...quick, now, readOrders: async () => orders, readUnsettled: async () => unsettled,
-    readSettled: async (id) => { asked.push(id); return null; },
+  const ask = async (_, path) => {
+    if (path.endsWith('/statements')) return { statements: [{ id: 'a', revenue_amount: '1' }, { id: 'b', revenue_amount: '1' }] };
+    if (path.includes('/b/')) throw new Error('Too many requests');
+    return { transactions: [{ type: 'ORDER', order_id: 'A', settlement_amount: '7' }] };
+  };
+  const r = await syncReceived({
+    now: NOV + 60, readOrders: async () => [order('tokopedia', 'A', 'delivered')], readUnsettled: none,
+    readSettled: (args) => readTikTokStatements({ ...args, ask, config: {} }),
   });
-  await pass(NOV + 60, new Map([['E', 500]]));
-  await pass(NOV + 120, new Map());
-  await pass(NOV + 180, new Map());
-  assert.equal(asked.length, 1);
-  const { orders: stored } = await readDoc(receivedDoc('2026-11'));
-  assert.equal(stored.E.a, 500);
-  assert.equal(stored.E.e, 1);
+  assert.equal(r.errors.tiktok, 'Too many requests');
+  assert.deepEqual((await readDoc(receivedDoc('2026-11'))).orders.A, { a: 7 });
 });
 
 test('one platform failing does not cost the other its run', async (t) => {
@@ -69,35 +84,20 @@ test('one platform failing does not cost the other its run', async (t) => {
   await clean();
   const orders = [order('shopee', 'A', 'completed'), order('tokopedia', 'U', 'shipping')];
   const r = await syncReceived({
-    ...quick, now: NOV + 60, readOrders: async () => orders,
+    now: NOV + 60, readOrders: async () => orders,
     readShopee: async () => { throw new Error('shopee down'); },
-    readUnsettled: async () => new Map([['U', 1]]),
+    readUnsettled: async () => new Map([['U', 1]]), readSettled: noStatements,
   });
   assert.equal(r.errors.shopee, 'shopee down');
   assert.equal(r.estimate, 1);
-});
-
-test('a TikTok refusal stops the lookups and keeps what was already read', async (t) => {
-  t.after(clean);
-  await clean();
-  const orders = [order('tokopedia', 'A', 'delivered'), order('tokopedia', 'B', 'delivered'), order('tokopedia', 'C', 'delivered')];
-  const asked = [];
-  const r = await syncReceived({
-    ...quick, now: NOV + 60, readOrders: async () => orders, readUnsettled: none,
-    readSettled: async (id) => { asked.push(id); if (id === 'B') throw new Error('Too many requests'); return 7; },
-  });
-  assert.deepEqual(asked, ['A', 'B']);
-  assert.equal(r.errors.tiktok, 'Too many requests');
-  const { orders: stored } = await readDoc(receivedDoc('2026-11'));
-  assert.deepEqual(stored.A, { a: 7 });
 });
 
 test('a dry run stores nothing', async (t) => {
   t.after(clean);
   await clean();
   await syncReceived({
-    ...quick, now: NOV + 60, dryRun: true, readOrders: async () => [order('tokopedia', 'U', 'shipping')],
-    readUnsettled: async () => new Map([['U', 1]]),
+    now: NOV + 60, dryRun: true, readOrders: async () => [order('tokopedia', 'U', 'shipping')],
+    readUnsettled: async () => new Map([['U', 1]]), readSettled: noStatements,
   });
   assert.equal(await readDoc(receivedDoc('2026-11')).catch(() => null), null);
 });

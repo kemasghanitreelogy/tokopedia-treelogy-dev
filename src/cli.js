@@ -1527,8 +1527,8 @@ async function cmdMekariReconcile(config, args = []) {
 async function cmdFinanceSync(config, args = []) {
   const dryRun = args.includes('--dry');
   const since = args.includes('--all') ? Date.parse(`${DB_HISTORY_START}T00:00:00Z`) / 1000 : undefined;
-  const r = await syncReceived({ since, dryRun, maxLookups: args.includes('--all') ? 5000 : undefined });
-  console.log(`  ${r.open} belum final  ·  ${r.final} final  ·  ${r.estimate} estimasi  ·  ${r.waiting} menunggu  ·  ${r.skipped} ditunda${dryRun ? '  ·  tidak disimpan' : ''}`);
+  const r = await syncReceived({ since, statementsSince: since, dryRun });
+  console.log(`  ${r.open} belum final  ·  ${r.final} final  ·  ${r.estimate} estimasi${dryRun ? '  ·  tidak disimpan' : ''}`);
   for (const [channel, message] of Object.entries(r.errors)) console.log(`  ${fail(`${channel}: ${message}`)}`);
   return Object.keys(r.errors).length > 0 ? 1 : 0;
 }

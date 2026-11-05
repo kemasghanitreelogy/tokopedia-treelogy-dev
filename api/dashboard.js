@@ -113,8 +113,8 @@ import { loadLedger, setSku, emptyLedger, LEDGER_PATHNAME } from '../src/ledger.
 import { updateDoc } from '../src/store/index.js';
 import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../src/stock-sync.js';
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
-import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, recordReceipt, saveRecipe, holdRefundFor, decideRefund } from '../src/warehouse-run.js';
-import { batchOf } from '../src/warehouse.js';
+import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, recordReceipt, recordSwap, saveRecipe, holdRefundFor, decideRefund } from '../src/warehouse-run.js';
+import { batchOf, resendSwap } from '../src/warehouse.js';
 import { loadReceived, applyReceived } from '../src/received.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
 import { renderPickHistory } from '../src/pages/pick-history.js';
@@ -380,7 +380,7 @@ const ACTION_MENU = {
   ledger: 'products', apply: 'products', price: 'products', ledger_batch: 'stock',
   listing_edit: 'products', listing_active: 'products', product_create: 'products',
   product_save: 'products', product_publish: 'products',
-  wh_move: 'stock', wh_receive: 'stock', wh_recipe: 'stock', wh_refund: 'stock',
+  wh_move: 'stock', wh_receive: 'stock', wh_recipe: 'stock', wh_refund: 'stock', wh_swap: 'orders',
   bulk_price: 'products', bulk_stock: 'products', bulk_active: 'products', bulk_publish: 'products', bulk_remove: 'products',
   product_master: 'products', product_remove: 'products',
   mass_arrange: 'process', fulfil: 'process', mekari_sync: 'jurnal', manual_invoice: 'jurnal',
@@ -411,6 +411,21 @@ export function afterWrite(outcome, form) {
   params.set(outcome.kind === 'error' ? 'error' : 'done', outcome.message);
   if (outcome.celebrate) params.set('yay', outcome.celebrate);
   return `${PATH}?${params.toString()}`;
+}
+
+/** The stock swap to offer after a resend, or null. Never the reason the page fails. */
+async function swapOffer(resendId, user) {
+  if (!resendId || !can(user, 'write')) return null;
+  try {
+    const [resend] = await ordersByIds([{ channel: 'manual', id: resendId }]);
+    if (!resend?.resendFor?.id) return null;
+    const plan = resendSwap(await loadWarehouse(), resend.resendFor, resend);
+    if (plan.done || !(plan.back.length || plan.out.length || plan.take.length)) return null;
+    return { ...plan, resendId, orderId: resend.resendFor.id };
+  } catch (error) {
+    console.warn(`dashboard: penyesuaian stok ${resendId} tidak terbaca - ${error.message}`);
+    return null;
+  }
 }
 
 /** The activation link that goes in the email. */
@@ -1173,6 +1188,31 @@ export async function handleWrite(form, ip, user, csrf) {
     };
   }
 
+  if (action === 'wh_swap') {
+    const resendId = String(form.get('resend') ?? '').trim();
+    const [resend] = await ordersByIds([{ channel: 'manual', id: resendId }]);
+    // Which order this corrects is read from the resend, never taken from the form.
+    if (!resend?.resendFor?.id) throw new Error(`${resendId} bukan kirim ulang`);
+    const lines = (code, qty) => form.getAll(code).map((c, i) => ({ code: String(c), qty: Number(form.getAll(qty)[i]) }));
+    const { records, duplicate } = await recordSwap({
+      key: `${resend.resendFor.channel}|${resend.resendFor.id}`,
+      resendId,
+      back: lines('bcode', 'bqty'),
+      out: lines('ocode', 'oqty'),
+      take: lines('tcode', 'tqty'),
+      order: resend,
+      by: user.name || user.email,
+    });
+    if (duplicate) return { view: 'orders', back: '?view=orders', message: `Stok ${resendId} sudah disesuaikan, tidak dicatat dua kali` };
+    const list = records.map((r) => `${r.code} ${r.delta > 0 ? '+' : ''}${r.delta} → ${r.after}`).join(', ');
+    return {
+      view: 'orders',
+      back: '?view=orders',
+      message: `Stok disesuaikan: ${list}`,
+      audit: { menu: 'stock', verb: 'edit', target: resendId, summary: `Gudang kirim ulang ${resendId}: ${list}` },
+    };
+  }
+
   if (action === 'wh_receive') {
     const codes = form.getAll('code').map((c) => String(c).trim());
     const qtys = form.getAll('qty').map((q) => Number(q));
@@ -1713,7 +1753,9 @@ export async function handleWrite(form, ip, user, csrf) {
     return {
       view: 'orders',
       message: `${order.id} dibuat untuk ${wrongOrder.id} - siap dipak dan dicetak labelnya`,
-      celebrate: 'Kirim ulang tercatat',
+      // Lands on the stock swap rather than the confetti: the job is not done until the
+      // shelf says what really left.
+      back: `?view=orders&swap=${encodeURIComponent(order.id)}`,
       audit: {
         menu: 'orders', verb: 'add', target: `manual ${order.id}`,
         summary: `Kirim ulang ${order.id} untuk ${wrongOrder.channel} ${wrongOrder.id} - barang hilang senilai Rp${value.toLocaleString('id-ID')}`,
@@ -2113,6 +2155,9 @@ export default async function handler(req, res) {
   }
   // Page and page size come from the URL, and every page link is the current URL with
   // only those two changed - so filters, range and page survive reload and history.
+  // Taken off before the links are built: the swap is one offer, not a filter to carry along.
+  const swapFor = url.searchParams.get('swap');
+  url.searchParams.delete('swap');
   const paging = parsePaging(url.searchParams);
   const baseQuery = withoutPaging(url.searchParams);
 
@@ -2561,7 +2606,7 @@ export default async function handler(req, res) {
     };
     const orders = filterOrders(data.orders, filter);
     console.log(`dashboard: ${data.orders.length} orders for ${range.label}, ${orders.length} match, page ${paging.page}, errors=${Object.keys(data.errors).join(',') || 'none'} (${took()})`);
-    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery, flash, csrf }));
+    send(200, renderDashboard({ user, ...data, orders, summary, filter, paging, baseQuery, flash, csrf, swap: await swapOffer(swapFor, user) }));
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);
     send(502, dashboardError('Could not load orders', error.message));

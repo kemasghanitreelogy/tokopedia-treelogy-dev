@@ -2641,7 +2641,7 @@ ${script}
  */
 export function renderDashboard({
   orders, summary, errors, range, truncated = [], maxPerPlatform, shopeeShop, generatedAt,
-  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null, flash = null, csrf = null }) {
+  filter = {}, paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null, flash = null, csrf = null, swap = null }) {
   const { all, byChannel } = summary;
   const inTransit = all.stages.shipping;
   const channel = CHANNELS[filter.channel] || filter.channel === MANUAL_CHANNEL.id ? filter.channel : 'all';
@@ -2732,6 +2732,7 @@ ${orders.fuzzy ? `<div class="alert alert--soft fz" role="status">${svg('search'
       <button class="od__x" type="button" id="od-close" aria-label="Tutup">${svg('x')}</button>
       <div id="od-body"></div>
     </dialog>
+    ${swapDialog(swap, csrf)}
     ${pager(paged, { baseQuery, noun })}
     <div class="foot">
       <span>${idNumber(all.count)} pesanan pada rentang ini</span>
@@ -2743,6 +2744,43 @@ ${orders.fuzzy ? `<div class="alert alert--soft fz" role="status">${svg('search'
     style: ORDER_DETAIL_STYLE + EXPORT_STYLE,
     script: ORDER_DETAIL_SCRIPT + EXPORT_SCRIPT,
   });
+}
+
+/**
+ * The stock swap offered once a resend is saved. Every number is a proposal: a person who
+ * knows what is really on the shelf changes it, and a zero leaves that line out.
+ */
+function swapDialog(swap, csrf) {
+  if (!swap) return '';
+  const rows = (lines, code, qty) => lines.map((line) => `<label class="sw__row">
+      <span class="sw__n">${escape(line.name)}<small class="mono">${escape(line.code)}</small></span>
+      <input type="hidden" name="${code}" value="${escape(line.code)}">
+      <input class="sw__q mono" name="${qty}" type="number" min="0" max="100000" step="1" inputmode="numeric" required value="${escape(String(line.qty))}" aria-label="Jumlah ${escape(line.name)}">
+      <small class="sw__u">${escape(line.uom ?? '')}</small>
+    </label>`).join('');
+  const part = (title, lines, code, qty, empty) => `<h3 class="sw__h">${title}</h3>
+    ${lines.length ? rows(lines, code, qty) : `<p class="sw__e">${empty}</p>`}`;
+  return `<dialog class="od sw" id="swapdlg" aria-labelledby="sw-title">
+    <div>
+      <h2 class="sw__t" id="sw-title">Sesuaikan stok gudang</h2>
+      <p class="sw__p">Pesanan <b class="mono">${escape(swap.orderId)}</b> salah kirim. Periksa jumlahnya, lalu oke untuk langsung memperbarui stok.</p>
+      <form method="post">
+        <input type="hidden" name="csrf" value="${escape(csrf ?? '')}">
+        <input type="hidden" name="view" value="orders">
+        <input type="hidden" name="action" value="wh_swap">
+        <input type="hidden" name="resend" value="${escape(swap.resendId)}">
+        ${part('Stok masuk, kembali ke rak', swap.back, 'bcode', 'bqty', 'Pesanan ini tidak tercatat keluar dari gudang.')}
+        ${part('Stok keluar, barang salah kirim', swap.out, 'ocode', 'oqty', 'Tidak ada barang gudang yang cocok dengan barang salah kirim.')}
+        ${part('Stok keluar, barang yang dikirim ulang', swap.take, 'tcode', 'tqty', 'Tidak ada yang perlu dipotong: sudah tercatat keluar, atau belum punya isi produk.')}
+        ${swap.unknown.length ? `<p class="sw__e">Belum punya isi produk, jadi tidak dihitung: ${escape(swap.unknown.join(', '))}</p>` : ''}
+        <p class="sw__p">Setelah oke, picklist tidak memotong barang kirim ulang ini lagi. Kalau dilewati, barangnya baru terpotong saat masuk picklist.</p>
+        <div class="sw__go">
+          <button class="sw__b" type="button" data-swap-skip>Lewati</button>
+          <button class="sw__b sw__b--go" type="submit">Oke, perbarui stok</button>
+        </div>
+      </form>
+    </div>
+  </dialog>`;
 }
 
 /* --- the export sheet: what to take away, over which days, from which channels --- */
@@ -3056,6 +3094,19 @@ tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2p
 .od::backdrop{background:color-mix(in srgb,#0A0F0D 62%,transparent); backdrop-filter:blur(6px)}
 .od[open]{animation:pop 280ms var(--ease-out) both}
 .od[open]::backdrop{animation:veil 240ms var(--ease-out) both}
+.sw__t{margin:0 0 .4rem; font-size:1.1rem}
+.sw__p{margin:.4rem 0; font-size:.84rem; color:var(--muted)}
+.sw__h{margin:1.1rem 0 .4rem; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--dim)}
+.sw__row{display:grid; grid-template-columns:minmax(0,1fr) 5.5rem 2.5rem; align-items:center; gap:.6rem; padding:.3rem 0}
+.sw__n{min-width:0; font-size:.9rem} .sw__n small{display:block; font-size:.72rem; color:var(--dim)}
+.sw__q{width:100%; min-height:44px; padding:.4rem .6rem; text-align:right; font:inherit; color:var(--fg); background:transparent; border:1px solid var(--line); border-radius:10px}
+.sw__u{font-size:.72rem; color:var(--dim)}
+.sw__e{margin:.2rem 0; font-size:.82rem; color:var(--dim)}
+.sw__b{font:inherit; font-size:.88rem; font-weight:600; min-height:44px; padding:.55rem 1.2rem; border-radius:999px; cursor:pointer; color:var(--fg); background:transparent; border:1px solid var(--line)}
+.sw__b--go{color:#fff; background:var(--brand); border-color:transparent}
+.sw__b:hover{filter:brightness(1.08)}
+.sw__b:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.sw__go{display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; flex-wrap:wrap}
 .od>div{padding:1.5rem; overflow:auto; max-height:min(85vh,48rem); border-radius:inherit}
 .od__x{position:absolute; top:.75rem; right:.75rem; width:36px; height:36px; border-radius:50%; cursor:pointer;
   border:1px solid var(--glass-line); background:var(--glass); color:var(--muted); display:grid; place-items:center}
@@ -3168,6 +3219,11 @@ const ORDER_DETAIL_SCRIPT = `
   });
 
   document.getElementById('od-close').addEventListener('click', function () { dialog.close(); });
+  var swapBox = document.getElementById('swapdlg');
+  if (swapBox && swapBox.showModal) {
+    swapBox.showModal();
+    swapBox.querySelector('[data-swap-skip]').addEventListener('click', function () { swapBox.close(); });
+  }
   // Clicking the backdrop lands on the dialog itself, never on its contents.
   dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });
 })();
@@ -4522,8 +4578,8 @@ export function renderManual({
     <div class="fset" id="rsfields" hidden>
       <h3 class="fset__h">Barang salah kirim</h3>
       <p class="fld__hint rs__note">Barang di bawah ini yang terlanjur dikirim ke pelanggan. Sesuai SOP tidak ditarik kembali -
-        jadi nilainya dibukukan ke Jurnal sebagai beban barang rusak, bukan sebagai penjualan. Yang di bagian Produk di atas
-        adalah penggantinya, dan itu gratis.</p>
+        jadi nilainya dibukukan ke Jurnal sebagai beban barang rusak, bukan sebagai penjualan. Barang yang ingin dikirim ulang
+        di atas adalah penggantinya, dan itu gratis.</p>
       <div class="lnh lnh--wrong"><span>Produk</span><span>Qty</span><span>Nilai</span><span>Subtotal</span><span></span></div>
       <div id="wlines">${wrongRow(0)}</div>
       <button class="addln" type="button" id="addwln">+ Tambah baris</button>
@@ -4625,7 +4681,7 @@ export function renderManual({
             </div>
 
             <div class="fset">
-              <h3 class="fset__h">Produk</h3>
+              <h3 data-lines-h class="fset__h">Produk</h3>
               <div class="lnh">
                 <span>Produk</span><span>Qty</span><span>Harga</span><span>Diskon</span><span>Subtotal</span><span></span>
               </div>
@@ -4807,6 +4863,7 @@ export function renderManual({
     if (rsRef) rsRef.hidden = !on;
     form.querySelector('[data-wrong-row]').hidden = !on;
     form.querySelector('[data-total-label]').textContent = on ? 'Ditagih' : 'Total';
+    form.querySelector('[data-lines-h]').textContent = on ? 'Barang yang ingin dikirim ulang' : 'Produk';
     // "kirim ulang" never sends an invoice, and a button that says it does is the kind of
     // small lie somebody eventually repeats to an accountant.
     go.textContent = on ? 'Simpan kirim ulang' : go.dataset.sell;

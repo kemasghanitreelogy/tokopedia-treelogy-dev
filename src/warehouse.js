@@ -450,6 +450,97 @@ export function manualMove(doc, { code, kind, qty, note = '', by, token = '' }, 
   return { doc: next, record };
 }
 
+/**
+ * What a resend should do to the shelf, as a proposal for a person to confirm.
+ *
+ * A wrong parcel left the shelf as the order said, so the log holds goods that never went
+ * and misses the ones that did. Those are what is proposed: back in, what the original
+ * order was counted as taking; out, the goods the resend names as sent by mistake; and
+ * take, the replacement the resend itself ships. A resend the log already counted has
+ * left through its picklist, so it proposes no take.
+ *
+ * @param {{channel: string, id: string}} original the order that went out wrong
+ * @param {object} resend the saved resend
+ * @returns {{key: string, back: Array, out: Array, take: Array, unknown: string[], done: boolean}}
+ */
+export function resendSwap(doc, original, resend) {
+  const key = `${original.channel}|${original.id}`;
+  const seen = doc.orders?.[key];
+  const row = ([code, qty]) => ({ code, qty, name: doc.items[code].name, uom: doc.items[code].uom });
+  const shelved = ([code, qty]) => Boolean(doc.items?.[code]) && qty > 0;
+  const { items, unknown } = itemsForOrder({ lines: resend?.finance?.wrongGoods?.lines }, doc.recipes);
+  const counted = Boolean(doc.orders?.[`${resend?.channel}|${resend?.id}`]);
+  const replacement = counted ? { items: {}, unknown: [] } : itemsForOrder(resend, doc.recipes);
+  return {
+    key,
+    // Only what the log says left: an order that never reached the picklist has nothing to
+    // give back, and one already put back must not come back twice.
+    back: Object.entries(seen && !seen.undone ? seen.items ?? {} : {}).filter(shelved).map(row),
+    out: Object.entries(items).filter(shelved).map(row),
+    take: Object.entries(replacement.items).filter(shelved).map(row),
+    unknown: [...new Set([...unknown, ...replacement.unknown])],
+    done: Boolean(doc.swaps?.[resend?.id]),
+  };
+}
+
+/**
+ * The confirmed swap, all of it or none. Pure. One per resend: its id is the key, so a
+ * second tab or a resubmitted page records nothing. The order's own record follows the
+ * goods, because that record is what a later cancel or refund offers to put back.
+ *
+ * `take` is the replacement. Confirming it counts the resend as picked, with the numbers
+ * a person confirmed, so its picklist finds it already counted and moves nothing. A
+ * picklist that got there first wins: the goods left once, and `take` is dropped.
+ *
+ * @param {{key: string, resendId: string, back: Array<{code, qty}>, out: Array<{code, qty}>, take?: Array<{code, qty}>, order?: object, by: string}} input
+ * @returns {{doc, records: Array, duplicate?: boolean}}
+ */
+export function swapGoods(doc, { key, resendId, back, out, take = [], order, by }, { now = Date.now() } = {}) {
+  if (doc.swaps?.[resendId]) return { doc, records: [], duplicate: true };
+  const total = (lines) => {
+    const sum = {};
+    for (const line of lines ?? []) {
+      const qty = Number(line?.qty);
+      if (!doc.items?.[line?.code]) throw new Error(`barang ${line?.code || '(kosong)'} tidak ada di gudang`);
+      if (!Number.isInteger(qty) || qty < 0 || qty > RECEIPT_LIMITS.qty) throw new Error(`jumlah ${line.code} harus bilangan bulat 0-${RECEIPT_LIMITS.qty}`);
+      if (qty > 0) sum[line.code] = (sum[line.code] ?? 0) + qty;
+    }
+    return sum;
+  };
+  const coming = total(back);
+  const going = total(out);
+  const shipping = total(take);
+  const takeKey = order ? `${order.channel}|${order.id}` : '';
+  const takes = Boolean(takeKey) && take.length > 0 && !doc.orders?.[takeKey];
+  if (![coming, going, shipping].some((sum) => Object.keys(sum).length)) throw new Error('isi minimal satu jumlah');
+
+  const at = Math.floor(now / 1000);
+  const next = {
+    ...doc, items: { ...doc.items }, moves: [...doc.moves], folded: { ...(doc.folded ?? {}) },
+    orders: { ...(doc.orders ?? {}) }, swaps: { ...(doc.swaps ?? {}), [resendId]: at },
+  };
+  const note = `Kirim ulang ${resendId}`;
+  const post = (kind, code, delta) => move(next, { id: `swap-${resendId}-${kind}-${code}`, at, code, kind, delta, ref: key, note, by });
+  const records = [
+    ...Object.entries(coming).map(([code, qty]) => post('in', code, qty)),
+    ...Object.entries(going).map(([code, qty]) => post('out', code, -qty)),
+    ...Object.entries(takes ? shipping : {}).map(([code, qty]) => move(next, { id: `${takeKey}|1|${code}`, at, code, kind: 'order', delta: -qty, ref: takeKey, note, by })),
+  ];
+  const seen = next.orders[key];
+  if (seen) {
+    const took = { ...(seen.items ?? {}) };
+    for (const [code, qty] of Object.entries(coming)) took[code] = (took[code] ?? 0) - qty;
+    for (const [code, qty] of Object.entries(going)) took[code] = (took[code] ?? 0) + qty;
+    next.orders[key] = { ...seen, items: Object.fromEntries(Object.entries(took).filter(([, qty]) => qty > 0)) };
+  }
+  if (takes) {
+    const { unknown } = itemsForOrder(order, next.recipes);
+    next.orders[takeKey] = { at, rev: 1, lines: linesOf(order), items: shipping, unknown, picked: at, by, ...about(order) };
+  }
+  trim(next);
+  return { doc: takes ? recordPick(next, { at, by, taken: [takeKey] }) : next, records };
+}
+
 /** Most lines one delivery may carry, and most units of one line. */
 export const RECEIPT_LIMITS = { lines: 20, qty: 100000 };
 

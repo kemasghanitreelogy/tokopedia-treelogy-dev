@@ -1,5 +1,5 @@
 import { updateDoc, readDoc } from './store/index.js';
-import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, receiveGoods, setRecipe, verifyWarehouse, recordPick, holdRefund, resolveRefund } from './warehouse.js';
+import { WAREHOUSE_DOC, emptyWarehouse, openWarehouse, applyOrders, manualMove, receiveGoods, swapGoods, setRecipe, verifyWarehouse, recordPick, holdRefund, resolveRefund } from './warehouse.js';
 export { verifyWarehouse };
 import { invalidate } from './cache.js';
 import { printedLabels } from './shopify/label.js';
@@ -157,6 +157,18 @@ export async function decideRefund(input, { now = Date.now(), update = updateDoc
 }
 
 let running = null;
+/** A resend's confirmed stock swap, every line in one transaction. */
+export async function recordSwap(input, { now = Date.now(), update = updateDoc } = {}) {
+  let out = { records: [], duplicate: false };
+  await update(WAREHOUSE_DOC, (current) => {
+    const opened = openWarehouse(current ?? emptyWarehouse(), { now });
+    out = swapGoods(opened, input, { now });
+    return out.doc;
+  }, emptyWarehouse());
+  invalidate('warehouse');
+  return out;
+}
+
 let queued = [];
 
 /** An order arrived. Never throws, never awaited by the webhook that called it. */

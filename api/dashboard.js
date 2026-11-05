@@ -115,6 +115,7 @@ import { planSync, applySync, applyPrice, writeAudit, CHANNEL_LABEL } from '../s
 import { followAfterOrder, followStock } from '../src/stock-watch.js';
 import { warehouseAfterOrder, warehouseSweep, syncWarehouse, loadWarehouse, recordMove, recordReceipt, saveRecipe, holdRefundFor, decideRefund } from '../src/warehouse-run.js';
 import { batchOf } from '../src/warehouse.js';
+import { loadReceived, applyReceived } from '../src/received.js';
 import { renderWarehouse } from '../src/pages/warehouse.js';
 import { renderPickHistory } from '../src/pages/pick-history.js';
 import { resolveRange } from '../src/range.js';
@@ -2285,6 +2286,8 @@ export default async function handler(req, res) {
         const found = (await ordersMatchingId(fragment, { limit: 8 }))
           // A resend cannot be put right by another resend, so they are not offered.
           .filter((o) => !(o.channel === 'manual' && String(o.id).startsWith('RS-')));
+        // Read straight from the table, so the money received is attached here.
+        applyReceived(found, await loadReceived(found).catch(() => null));
         console.log(`dashboard/jurnal lookup: ${found.length} match(es)`);
         json(200, { rows: renderOrderPicks({ orders: found }), count: found.length });
       } catch (error) {

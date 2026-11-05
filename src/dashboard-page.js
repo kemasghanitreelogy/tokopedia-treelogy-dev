@@ -1,5 +1,5 @@
 import { businessToday, zoneLabel, zoneName, zoneForChannel, channelDate, BENCH_CHANNEL, ZONES } from './clock.js';
-import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta } from './omni.js';
+import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta, isMarketplace } from './omni.js';
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
@@ -229,7 +229,7 @@ function channelCard(id, bucket) {
       <h3>${escape(meta.label)}</h3>
       <span class="ch__count">${bucket.count}</span>
     </header>
-    <p class="ch__rev">${escape(rupiah(bucket.revenue))}</p>
+    <p class="ch__rev">${escape(rupiah(bucket.received))}</p>
     ${stageBar(bucket.stages, bucket.count)}
     <div class="ch__pills">${pills || '<span class="mini mini--muted">Tidak ada pesanan</span>'}</div>
   </article>`;
@@ -328,6 +328,14 @@ function channelTag(order) {
   return `<span class="tag" style="--accent:${meta.accent}">${escape(source ?? meta.label)}</span>`;
 }
 
+/** Escaped: a marketplace order at what it pays out, anything else at its own total. */
+function orderWorth(order) {
+  if (!isMarketplace(order)) return escape(rupiah(order.total));
+  if (!order.received) return '<span class="dim" title="Belum terbaca dari platform">&mdash;</span>';
+  const text = escape(rupiah(order.received.amount));
+  return order.received.estimate ? `<span title="Estimasi, belum cair">&asymp; ${text}</span>` : text;
+}
+
 function row(order, index) {
   const stage = STAGE_META[order.stage];
   const track = order.tracking
@@ -341,7 +349,7 @@ function row(order, index) {
     <td class="mono nowrap">${escape(order.id)}</td>
     <td class="nowrap dim">${escape(dateTime(order.createdAt, order.channel))}</td>
     <td>${escape(order.buyer) || '<span class="dim">&mdash;</span>'}</td>
-    <td class="num mono">${escape(rupiah(order.total))}</td>
+    <td class="num mono">${orderWorth(order)}</td>
     <td><span class="pill pill--${stage.tone}">${escape(stage.label)}</span></td>
     <td class="nowrap dim">${escape(order.carrier) || '&mdash;'}</td>
     <td class="nowrap">${track}</td>
@@ -549,7 +557,8 @@ export function orderDetail(order, index, { csrf = null, back = '' } = {}) {
       ${discounted > 0 ? `<div><dt>Harga barang</dt><dd class="mono">${escape(rupiah(gross))}</dd></div>
       <div class="od__sum--disc"><dt>Diskon</dt><dd class="mono">-${escape(rupiah(discounted))}</dd></div>` : ''}
       ${order.finance?.shipping ? `<div><dt>Ongkir</dt><dd class="mono">${escape(rupiah(order.finance.shipping))}</dd></div>` : ''}
-      <div class="od__total"><dt>Total</dt><dd class="mono">${escape(rupiah(order.total))}</dd></div>
+      ${isMarketplace(order) ? `<div><dt>Dibayar pembeli</dt><dd class="mono">${escape(rupiah(order.total))}</dd></div>` : ''}
+      <div class="od__total"><dt>${isMarketplace(order) ? (order.received?.estimate ? 'Diterima (estimasi)' : 'Diterima') : 'Total'}</dt><dd class="mono">${orderWorth(order)}</dd></div>
     </dl>
 
     ${refreshButton(order, { csrf, back })}
@@ -2684,7 +2693,7 @@ export function renderDashboard({
     range, errors, truncated, maxPerPlatform, shopeeShop, generatedAt,
     view: 'orders',
     kpis: `<section class="kpis" aria-label="Ringkasan">
-    ${kpiCard({ iconName: 'wallet', label: 'Omzet', value: rupiah(all.revenue) })}
+    ${kpiCard({ iconName: 'wallet', label: 'Omzet', value: rupiah(all.received) })}
     ${kpiCard({ iconName: 'cube', label: 'Pesanan', value: String(all.count) })}
     ${kpiCard({ iconName: 'bell', label: 'Perlu tindakan', value: String(all.actionable), tone: all.actionable > 0 ? 'is-act' : '' })}
     ${kpiCard({ iconName: 'truck', label: 'Dalam pengiriman', value: String(inTransit) })}
@@ -3317,7 +3326,7 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
       <td class="mono nowrap">${escape(o.id)}</td>
       <td class="wtab__who">${escape(o.buyer) || '<span class="dim">tanpa nama</span>'}</td>
       <td class="dim nowrap">${escape(dateTime(o.createdAt, o.channel))}</td>
-      <td class="num mono nowrap">${escape(rupiah(o.total))}</td>
+      <td class="num mono nowrap">${orderWorth(o)}</td>
       <td class="nowrap">${o.carrier
         ? `<span class="wtab__car">${svg('truck')}${escape(o.carrier)}</span>`
         // Shopify books its courier outside Shopify, so an empty one there is the normal
@@ -3583,7 +3592,7 @@ export function renderExpressLog({ orders, range, errors, shopeeShop, generatedA
       <td><span class="mono nowrap">${escape(o.id)}</span></td>
       <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
       <td class="nowrap"><span class="xp__c">${escape(service.courier)}</span></td>
-      <td class="num nowrap">${escape(rupiah(o.total))}</td>
+      <td class="num nowrap">${orderWorth(o)}</td>
       <td class="nowrap"><span class="${stage.tone}">${escape(stage.label)}</span></td>
     </tr>`;
   }).join('');
@@ -5848,7 +5857,7 @@ function orderPreview(order) {
       ${channelTag(order)}
       <b class="mono prev__id">${escape(order.id)}</b>
       <span class="dim">${escape(dateTime(order.createdAt, order.channel))}</span>
-      <span class="prev__t mono">${escape(rupiah(order.total))}</span>
+      <span class="prev__t mono">${orderWorth(order)}</span>
     </span>
     <dl class="prev__g">
       ${field('Pembeli', order.buyer)}

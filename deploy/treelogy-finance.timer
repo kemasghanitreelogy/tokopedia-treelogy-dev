@@ -1,0 +1,12 @@
+# /etc/systemd/system/treelogy-finance.timer
+[Unit]
+Description=Treelogy received money every 10 minutes
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=10min
+RandomizedDelaySec=45
+Persistent=true
+
+[Install]
+WantedBy=timers.target

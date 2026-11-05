@@ -633,9 +633,12 @@ export async function fetchOrdersByIds(selection) {
   return { orders, errors };
 }
 
+/** The channels whose orders are shown at what they pay out, not at what the buyer paid. */
+export const isMarketplace = (order) => order.channel in CHANNELS && order.channel !== 'shopify';
+
 /** Totals the dashboard needs, computed once so the view stays dumb. */
 export function summarize(orders) {
-  const blank = () => ({ count: 0, revenue: 0, paid: 0, actionable: 0, stages: Object.fromEntries(STAGES.map((s) => [s, 0])) });
+  const blank = () => ({ count: 0, revenue: 0, received: 0, paid: 0, actionable: 0, stages: Object.fromEntries(STAGES.map((s) => [s, 0])) });
   const all = blank();
   const byChannel = Object.fromEntries([...Object.keys(CHANNELS), MANUAL_CHANNEL.id].map((id) => [id, blank()]));
 
@@ -650,7 +653,11 @@ export function summarize(orders) {
         // The same arithmetic the invoice uses, so this screen and the books cannot drift.
         // `paid` is what the buyer handed over; `revenue` is what the goods were sold for,
         // and the gap between them is what the marketplace funded and will reimburse.
-        bucket.revenue += saleValue(order) ?? order.total;
+        const sold = saleValue(order) ?? order.total;
+        bucket.revenue += sold;
+        // A marketplace sale counts for what it leaves us after the platform's cut, and for
+        // nothing until that figure has been read: its gross would overstate the channel.
+        bucket.received += isMarketplace(order) ? order.received?.amount ?? 0 : sold;
         bucket.paid += Math.round(Number(order.total) || 0);
       }
     }

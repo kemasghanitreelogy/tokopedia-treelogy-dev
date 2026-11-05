@@ -6,6 +6,7 @@ import { resolveRange } from './range.js';
 import { withinDays, ZONE_SPREAD_SECONDS } from './clock.js';
 import { cached, invalidate } from './cache.js';
 import { loadShopeeRecipients, applyShopeeRecipients } from './shopee/recipient.js';
+import { loadReceived, applyReceived } from './received.js';
 
 /**
  * Where a reader gets its orders: the database when it can answer, the platforms when it
@@ -108,12 +109,16 @@ export async function loadOrders({
   readStored = ordersInRange,
   readLive = collectOrders,
   readRecipients = loadShopeeRecipients,
+  readReceived = loadReceived,
   ...rest
 } = {}) {
   const asked = range ?? resolveRange(rest);
   // Shopee's masked buyers, named from what was captured while their parcels were
   // printable. One read of a small document, applied on every path out of here.
-  const named = async (orders) => applyShopeeRecipients(orders, await readRecipients().catch(() => null));
+  const named = async (orders) => applyReceived(
+    applyShopeeRecipients(orders, await readRecipients().catch(() => null)),
+    await readReceived(orders).catch(() => null),
+  );
 
   // Fetched an hour wide on both ends, then filtered by each platform's own calendar day.
   //
@@ -212,10 +217,14 @@ export async function loadOutstanding({
   readOutstanding = ordersOutstanding,
   readLive = collectOrders,
   readRecipients = loadShopeeRecipients,
+  readReceived = loadReceived,
   hasDatabase = isSupabaseConfigured,
   now = Date.now(),
 } = {}) {
-  const named = async (orders) => applyShopeeRecipients(orders, await readRecipients().catch(() => null));
+  const named = async (orders) => applyReceived(
+    applyShopeeRecipients(orders, await readRecipients().catch(() => null)),
+    await readReceived(orders).catch(() => null),
+  );
 
   if (hasDatabase()) {
     try {

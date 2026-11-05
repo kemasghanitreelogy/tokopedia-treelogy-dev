@@ -1,0 +1,14 @@
+# /etc/systemd/system/treelogy-finance.service  (run by treelogy-finance.timer)
+[Unit]
+Description=Treelogy: uang yang diterima dari Shopee, Tokopedia, TikTok Shop
+After=treelogy.service
+
+[Service]
+Type=oneshot
+User=treelogy
+Group=treelogy
+WorkingDirectory=/opt/treelogy/app
+EnvironmentFile=/etc/treelogy/env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node bin/tts.mjs finance:sync
+TimeoutStartSec=15min

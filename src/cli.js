@@ -38,6 +38,7 @@ import { setUpChartOfAccounts, describePolicy } from './mekari/coa.js';
 import { restate } from './mekari/restate.js';
 import { removeDuplicates } from './mekari/dedupe.js';
 import { reconcileLedger } from './mekari/reconcile.js';
+import { syncReceived } from './received.js';
 import { settleOpenInvoices } from './mekari/settle.js';
 import { dailyRecap } from './mekari/recap.js';
 import { syncShopifyPrices } from './shopify/prices.js';
@@ -91,6 +92,7 @@ Usage:
   npm run alert:test          Bunyikan alarm uji ke semua dashboard yang terbuka
   npm run mekari:retry        Pesanan yang gagal masuk Jurnal & jadwal percobaannya (--now untuk paksa)
   npm run mekari:reconcile    Samakan ledger dengan isi Jurnal sebenarnya (butuh --yes)
+  npm run finance:sync        Baca uang yang diterima dari marketplace (--all, --dry)
   npm run mekari:settle       Lunasi faktur kanal online yang masih terbuka (butuh --yes)
   npm run mekari:recap        Bandingkan pesanan vs faktur per hari, seluruh korpus (mahal kuota)
   npm run mekari:redate       Perbaiki tanggal faktur agar ikut jam platformnya (butuh --yes)
@@ -1521,6 +1523,16 @@ async function cmdMekariReconcile(config, args = []) {
   return 0;
 }
 
+/** What each marketplace order pays out. --all reaches back to the start of the record. */
+async function cmdFinanceSync(config, args = []) {
+  const dryRun = args.includes('--dry');
+  const since = args.includes('--all') ? Date.parse(`${DB_HISTORY_START}T00:00:00Z`) / 1000 : undefined;
+  const r = await syncReceived({ since, dryRun, maxLookups: args.includes('--all') ? 5000 : undefined });
+  console.log(`  ${r.open} belum final  ·  ${r.final} final  ·  ${r.estimate} estimasi  ·  ${r.waiting} menunggu  ·  ${r.skipped} ditunda${dryRun ? '  ·  tidak disimpan' : ''}`);
+  for (const [channel, message] of Object.entries(r.errors)) console.log(`  ${fail(`${channel}: ${message}`)}`);
+  return Object.keys(r.errors).length > 0 ? 1 : 0;
+}
+
 /**
  * Pay off the invoices that were raised before there was an account to pay them into.
  *
@@ -1941,6 +1953,7 @@ const COMMANDS = {
   'alert:test': cmdAlertTest,
   'mekari:reconcile': cmdMekariReconcile,
   'mekari:settle': cmdMekariSettle,
+  'finance:sync': cmdFinanceSync,
   'mekari:recap': cmdMekariRecap,
   'mekari:redate': cmdMekariRedate,
   'mekari:repool': cmdMekariRepool,

@@ -24,6 +24,7 @@
     "track": "node bin/tts.mjs track",
     "omni": "node bin/tts.mjs omni",
     "pick": "node bin/tts.mjs pick",
+    "finance:sync": "node bin/tts.mjs finance:sync",
     "stock": "node bin/tts.mjs stock",
     "stock:seed": "node bin/tts.mjs stock:seed",
     "stock:plan": "node bin/tts.mjs stock:plan",

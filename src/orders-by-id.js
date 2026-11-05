@@ -2,6 +2,7 @@ import { ordersByIds } from './db/orders.js';
 import { isSupabaseConfigured } from './db/client.js';
 import { fetchOrdersByIds } from './omni.js';
 import { loadShopeeRecipients, applyShopeeRecipients } from './shopee/recipient.js';
+import { loadReceived, applyReceived } from './received.js';
 
 /**
  * The orders behind a selection, as fast as they can honestly be had.
@@ -29,8 +30,12 @@ export async function ordersForPrinting(selection, {
   readLive = fetchOrdersByIds,
   hasDatabase = isSupabaseConfigured,
   readRecipients = loadShopeeRecipients,
+  readReceived = loadReceived,
 } = {}) {
-  const named = async (orders) => applyShopeeRecipients(orders, await readRecipients().catch(() => null));
+  const named = async (orders) => applyReceived(
+    applyShopeeRecipients(orders, await readRecipients().catch(() => null)),
+    await readReceived(orders).catch(() => null),
+  );
   const wanted = selection
     .map(({ channel, id }) => ({ channel: String(channel ?? ''), id: String(id ?? '') }))
     .filter((row) => row.channel && row.id);

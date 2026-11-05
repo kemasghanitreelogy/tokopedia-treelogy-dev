@@ -34,13 +34,11 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   // the server would refuse anyway.
   const writer = allowed(user, 'write');
 
-  const kpis = `<section class="strip" aria-label="Ringkasan gudang">
+  const kpis = `<section class="strip wh__strip" aria-label="Ringkasan gudang">
     <span class="stat"><span class="stat__n">${fmt(Object.keys(items).length)}</span><span class="stat__l">barang</span></span>
     <span class="stat"><span class="stat__n">${fmt(units)}</span><span class="stat__l">unit di rak</span></span>
     <span class="stat"><span class="stat__n">${fmt(moves.filter((m) => isToday(m.at) && m.kind !== 'opening').length)}</span><span class="stat__l">gerakan hari ini</span></span>
     <span class="stat"><span class="stat__n">${fmt(new Set(moves.filter((m) => isToday(m.at) && m.kind === 'order').map((m) => m.ref)).size)}</span><span class="stat__l">pesanan keluar hari ini</span></span>
-    <span class="strip__grow"></span>
-    <input class="search" id="wq" type="search" aria-label="Cari barang" placeholder="Cari kode atau nama barang…" autocomplete="off">
   </section>${refundRows(warehouse, { csrf, user, writer })}`;
 
   const hidden = `<input type="hidden" name="csrf" value="${escape(csrf)}"><input type="hidden" name="view" value="stock"><input type="hidden" name="back" value="?view=stock">`;
@@ -48,7 +46,7 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     // Bar length is relative to the fullest item in the same group, on a square-root scale
     // so a 7.473 mailerbox does not flatten every other bar to nothing.
     const level = top > 0 ? Math.round(Math.sqrt(Math.max(0, it.qty) / top) * 100) : 0;
-    return `<li class="wh__row ${TONE[it.group ?? 'pack'] ?? ''}"${writer ? ' tabindex="0" aria-expanded="false" title="Klik untuk mencatat barang masuk, keluar, atau opname"' : ''} data-code="${escape(code)}" data-text="${escape(`${code} ${it.name}`.toLowerCase())}">
+    return `<li class="wh__row ${TONE[it.group ?? 'pack'] ?? ''}"${writer ? ' tabindex="0" aria-expanded="false" title="Klik untuk mencatat barang masuk, keluar, atau opname"' : ''} data-code="${escape(code)}">
       <span class="wh__code mono">${escape(code)}</span>
       <span class="wh__name"><span class="wh__nm">${escape(it.name)}</span><span class="wh__bar" aria-hidden="true"><i style="width:${level}%"></i></span></span>
       <span class="wh__qty"><b class="mono${it.qty <= 0 ? ' is-zero' : ''}">${fmt(it.qty)}</b><small>${escape(it.uom)}</small></span>
@@ -369,10 +367,8 @@ const STYLE = `
 .wh__empty{margin:0; font-size:.84rem; color:var(--dim)}
 @media (max-width:1100px){.wh__cols{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:700px){
-  .strip:has(#wq){display:grid; grid-template-columns:1fr 1fr; gap:.75rem}
-  .strip:has(#wq) .stat{border:0; padding:0}
-  .strip:has(#wq) .strip__grow{display:none}
-  .strip:has(#wq) .search{grid-column:1/-1; width:100%}
+  .strip.wh__strip{display:grid; grid-template-columns:1fr 1fr; gap:.75rem}
+  .strip.wh__strip .stat{border:0; padding:0}
   .wh__row{grid-template-columns:minmax(0,1fr) auto; row-gap:.2rem}
   .wh__code{grid-column:1} .wh__name{grid-column:1} .wh__nm{white-space:normal} .wh__qty{grid-column:2; grid-row:1}
   .wh__acts{grid-column:2; grid-row:2}
@@ -480,11 +476,5 @@ const SCRIPT = `
       }
     });
   }
-
-  var q = document.getElementById('wq');
-  if (q) q.addEventListener('input', function () {
-    var v = q.value.trim().toLowerCase();
-    document.querySelectorAll('.wh__row').forEach(function (r) { r.hidden = v !== '' && r.dataset.text.indexOf(v) === -1; });
-  });
 })();
 `;

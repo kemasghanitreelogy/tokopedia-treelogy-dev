@@ -111,6 +111,8 @@ test('saving a resend lands on the offer, and the page opens it with the numbers
   assert.match(page, /name="bqty"[^>]*value="1"/);
   assert.match(page, /name="oqty"[^>]*value="2"/);
   assert.match(page, /name="tqty"[^>]*value="1"/);
+  assert.match(page, /data-sw-res="M-037" data-now="20"/);
+  assert.match(page, /data-sw-res="M-033"[^]*?<b data-sw-after>3<\/b>/, 'the outcome shows the shelf after the swap');
   assert.match(page, /name="action" value="wh_swap"/);
   assert.doesNotMatch(render(null), /<dialog class="od sw"/);
 });

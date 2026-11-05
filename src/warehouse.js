@@ -466,7 +466,7 @@ export function manualMove(doc, { code, kind, qty, note = '', by, token = '' }, 
 export function resendSwap(doc, original, resend) {
   const key = `${original.channel}|${original.id}`;
   const seen = doc.orders?.[key];
-  const row = ([code, qty]) => ({ code, qty, name: doc.items[code].name, uom: doc.items[code].uom });
+  const row = ([code, qty]) => ({ code, qty, now: doc.items[code].qty, name: doc.items[code].name, uom: doc.items[code].uom });
   const shelved = ([code, qty]) => Boolean(doc.items?.[code]) && qty > 0;
   const { items, unknown } = itemsForOrder({ lines: resend?.finance?.wrongGoods?.lines }, doc.recipes);
   const counted = Boolean(doc.orders?.[`${resend?.channel}|${resend?.id}`]);

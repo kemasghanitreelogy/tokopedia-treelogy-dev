@@ -2752,31 +2752,65 @@ ${orders.fuzzy ? `<div class="alert alert--soft fz" role="status">${svg('search'
  */
 function swapDialog(swap, csrf) {
   if (!swap) return '';
-  const rows = (lines, code, qty) => lines.map((line) => `<label class="sw__row">
-      <span class="sw__n">${escape(line.name)}<small class="mono">${escape(line.code)}</small></span>
-      <input type="hidden" name="${code}" value="${escape(line.code)}">
-      <input class="sw__q mono" name="${qty}" type="number" min="0" max="100000" step="1" inputmode="numeric" required value="${escape(String(line.qty))}" aria-label="Jumlah ${escape(line.name)}">
+  const count = (n) => Number(n).toLocaleString('id-ID');
+  const signed = (n) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${count(Math.abs(n))}`;
+  const sum = (lines) => lines.reduce((n, line) => n + line.qty, 0);
+  const minus = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>';
+  const arrow = '<svg class="ico sw__to" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+  const rows = (lines, code, qty, sign) => lines.map((line, index) => `<div class="sw__row">
+      <label class="sw__n" for="sw-${qty}-${index}">${escape(line.name)}<small class="mono">${escape(line.code)}</small></label>
+      <div class="sw__step">
+        <button class="sw__s" type="button" data-sw-step="-1" aria-label="Kurangi ${escape(line.name)}">${minus}</button>
+        <input type="hidden" name="${code}" value="${escape(line.code)}">
+        <input class="sw__q mono" id="sw-${qty}-${index}" name="${qty}" type="number" min="0" max="100000" step="1" inputmode="numeric" required value="${escape(String(line.qty))}" data-sw-qty data-code="${escape(line.code)}" data-sign="${sign}">
+        <button class="sw__s" type="button" data-sw-step="1" aria-label="Tambah ${escape(line.name)}">${svg('plus')}</button>
+      </div>
       <small class="sw__u">${escape(line.uom ?? '')}</small>
-    </label>`).join('');
-  const part = (title, lines, code, qty, empty) => `<h3 class="sw__h">${title}</h3>
-    ${lines.length ? rows(lines, code, qty) : `<p class="sw__e">${empty}</p>`}`;
+    </div>`).join('');
+  const part = (tone, title, lines, code, qty, sign, empty) => `<section class="sw__sec sw__sec--${tone}" data-sw-sec data-sign="${sign}">
+      <header class="sw__h"><h3>${title}</h3><b class="mono" data-sw-sum>${lines.length ? signed(sign * sum(lines)) : ''}</b></header>
+      ${lines.length ? rows(lines, code, qty, sign) : `<p class="sw__e">${empty}</p>`}
+    </section>`;
+
+  // What the shelf ends up holding: one line per item, however many parts it appears in.
+  const result = new Map();
+  const tally = (lines, sign) => {
+    for (const line of lines) {
+      const row = result.get(line.code) ?? { ...line, net: 0 };
+      row.net += sign * line.qty;
+      result.set(line.code, row);
+    }
+  };
+  tally(swap.back, 1);
+  tally(swap.out, -1);
+  tally(swap.take, -1);
+  const outcome = [...result.values()].map((row) => {
+    const after = (row.now ?? 0) + row.net;
+    return `<li class="sw__r${after < 0 ? ' is-short' : ''}" data-sw-res="${escape(row.code)}" data-now="${escape(String(row.now ?? 0))}">
+      <span class="sw__rn">${escape(row.name)}</span>
+      <span class="sw__rv mono">${count(row.now ?? 0)} ${arrow} <b data-sw-after>${count(after)}</b></span>
+      <span class="sw__rd mono" data-sw-delta>${signed(row.net)}</span>
+    </li>`;
+  }).join('');
+
   return `<dialog class="od sw" id="swapdlg" aria-labelledby="sw-title">
     <div>
       <h2 class="sw__t" id="sw-title">Sesuaikan stok gudang</h2>
-      <p class="sw__p">Pesanan <b class="mono">${escape(swap.orderId)}</b> salah kirim. Periksa jumlahnya, lalu oke untuk langsung memperbarui stok.</p>
-      <form method="post">
+      <p class="sw__p">Kirim ulang untuk pesanan <b class="mono">${escape(swap.orderId)}</b>. Periksa jumlahnya, ubah kalau perlu.</p>
+      <form method="post" data-sw-form>
         <input type="hidden" name="csrf" value="${escape(csrf ?? '')}">
         <input type="hidden" name="view" value="orders">
         <input type="hidden" name="action" value="wh_swap">
         <input type="hidden" name="resend" value="${escape(swap.resendId)}">
-        ${part('Stok masuk, kembali ke rak', swap.back, 'bcode', 'bqty', 'Pesanan ini tidak tercatat keluar dari gudang.')}
-        ${part('Stok keluar, barang salah kirim', swap.out, 'ocode', 'oqty', 'Tidak ada barang gudang yang cocok dengan barang salah kirim.')}
-        ${part('Stok keluar, barang yang dikirim ulang', swap.take, 'tcode', 'tqty', 'Tidak ada yang perlu dipotong: sudah tercatat keluar, atau belum punya isi produk.')}
-        ${swap.unknown.length ? `<p class="sw__e">Belum punya isi produk, jadi tidak dihitung: ${escape(swap.unknown.join(', '))}</p>` : ''}
-        <p class="sw__p">Setelah oke, picklist tidak memotong barang kirim ulang ini lagi. Kalau dilewati, barangnya baru terpotong saat masuk picklist.</p>
+        ${part('in', 'Stok masuk: kembali ke rak', swap.back, 'bcode', 'bqty', 1, 'Pesanan ini tidak tercatat keluar dari gudang.')}
+        ${part('out', 'Stok keluar: barang salah kirim', swap.out, 'ocode', 'oqty', -1, 'Tidak ada barang gudang yang cocok dengan barang salah kirim.')}
+        ${part('out', 'Stok keluar: barang dikirim ulang', swap.take, 'tcode', 'tqty', -1, 'Tidak ada yang perlu dipotong: sudah tercatat keluar, atau belum punya isi produk.')}
+        ${swap.unknown.length ? `<p class="sw__w">${svg('warn')}<span>Belum punya isi produk, jadi tidak dihitung: ${escape(swap.unknown.join(', '))}</span></p>` : ''}
+        ${outcome ? `<section class="sw__res" aria-live="polite"><h3 class="sw__rh">Stok setelah disesuaikan</h3><ul>${outcome}</ul></section>` : ''}
+        <p class="sw__p sw__note">Setelah oke, picklist tidak memotong barang kirim ulang ini lagi. Kalau dilewati, barangnya baru terpotong saat masuk picklist.</p>
         <div class="sw__go">
           <button class="sw__b" type="button" data-swap-skip>Lewati</button>
-          <button class="sw__b sw__b--go" type="submit">Oke, perbarui stok</button>
+          <button class="sw__b sw__b--go" type="submit">${svg('check')}<span>Oke, perbarui stok</span></button>
         </div>
       </form>
     </div>
@@ -3094,20 +3128,55 @@ tbody#rows .row:focus-visible{outline:2px solid var(--brand); outline-offset:-2p
 .od::backdrop{background:color-mix(in srgb,#0A0F0D 62%,transparent); backdrop-filter:blur(6px)}
 .od[open]{animation:pop 280ms var(--ease-out) both}
 .od[open]::backdrop{animation:veil 240ms var(--ease-out) both}
-.sw__t{margin:0 0 .4rem; font-size:1.1rem}
-.sw__p{margin:.4rem 0; font-size:.84rem; color:var(--muted)}
-.sw__h{margin:1.1rem 0 .4rem; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; color:var(--dim)}
-.sw__row{display:grid; grid-template-columns:minmax(0,1fr) 5.5rem 2.5rem; align-items:center; gap:.6rem; padding:.3rem 0}
-.sw__n{min-width:0; font-size:.9rem} .sw__n small{display:block; font-size:.72rem; color:var(--dim)}
-.sw__q{width:100%; min-height:44px; padding:.4rem .6rem; text-align:right; font:inherit; color:var(--fg); background:transparent; border:1px solid var(--line); border-radius:10px}
+.sw{width:min(36rem,calc(100vw - 2rem))} .sw:focus{outline:none}
+.sw__t{margin:0 0 .3rem; font-size:1.2rem; letter-spacing:-.01em}
+.sw__p{margin:0; font-size:.86rem; line-height:1.5; color:var(--muted)} .sw__p b{color:var(--fg); font-weight:600}
+.sw__sec{--tone:var(--act); margin-top:.85rem; padding:.3rem .9rem .5rem; border:1px solid var(--line); border-left:3px solid var(--tone); border-radius:14px; background:var(--panel-2)}
+.sw__sec--in{--tone:var(--good)}
+.sw__h{display:flex; align-items:center; justify-content:space-between; gap:.75rem; min-height:2.3rem}
+.sw__h h3{margin:0; font-size:.84rem; font-weight:600; color:var(--fg)}
+.sw__h b{font-size:.95rem; font-weight:600; color:var(--tone); font-variant-numeric:tabular-nums}
+.sw__row{display:grid; grid-template-columns:minmax(0,1fr) auto 2.4rem; align-items:center; gap:.65rem; padding:.45rem 0; border-top:1px solid var(--line)}
+.sw__n{min-width:0; font-size:.92rem; line-height:1.3; cursor:pointer} .sw__n small{display:block; margin-top:.1rem; font-size:.72rem; color:var(--dim)}
+.sw__step{display:flex; align-items:center; border:1px solid var(--line); border-radius:12px; background:var(--panel); overflow:hidden; transition:border-color 160ms}
+.sw__step:focus-within{border-color:var(--brand)}
+.sw__s{display:grid; place-items:center; width:44px; height:44px; padding:0; border:0; background:transparent; color:var(--muted); cursor:pointer; transition:color 160ms,background 160ms}
+.sw__s .ico{width:16px; height:16px}
+.sw__s:hover{color:var(--fg); background:var(--panel-2)}
+.sw__s:focus-visible{outline:2px solid var(--brand); outline-offset:-2px; border-radius:10px}
+.sw__q{width:3.6rem; height:44px; padding:0; border:0; outline:0; text-align:center; font:inherit; font-size:1rem; font-weight:600; font-variant-numeric:tabular-nums; color:var(--fg); background:transparent; -moz-appearance:textfield; appearance:textfield}
+.sw__q::-webkit-outer-spin-button,.sw__q::-webkit-inner-spin-button{-webkit-appearance:none; margin:0}
 .sw__u{font-size:.72rem; color:var(--dim)}
-.sw__e{margin:.2rem 0; font-size:.82rem; color:var(--dim)}
-.sw__b{font:inherit; font-size:.88rem; font-weight:600; min-height:44px; padding:.55rem 1.2rem; border-radius:999px; cursor:pointer; color:var(--fg); background:transparent; border:1px solid var(--line)}
-.sw__b--go{color:#fff; background:var(--brand); border-color:transparent}
-.sw__b:hover{filter:brightness(1.08)}
+.sw__e{margin:0; padding:.45rem 0 .3rem; border-top:1px solid var(--line); font-size:.82rem; line-height:1.45; color:var(--muted)}
+.sw__w{display:flex; gap:.5rem; margin:.85rem 0 0; font-size:.82rem; line-height:1.45; color:var(--fg)} .sw__w .ico{flex:none; width:16px; height:16px; margin-top:.12rem; color:var(--warn)}
+.sw__res{margin-top:1.1rem}
+.sw__rh{margin:0 0 .35rem; font-size:.84rem; font-weight:600}
+.sw__res ul{margin:0; padding:0; list-style:none}
+.sw__r{display:grid; grid-template-columns:minmax(0,1fr) auto 3.4rem; align-items:center; gap:.75rem; padding:.42rem 0; font-size:.88rem; border-top:1px solid var(--line)}
+.sw__rn{min-width:0; overflow-wrap:anywhere}
+.sw__rv{display:inline-flex; align-items:center; gap:.35rem; color:var(--muted); font-variant-numeric:tabular-nums} .sw__rv b{color:var(--fg); font-weight:600}
+.sw__to{width:13px; height:13px; color:var(--dim)}
+.sw__rd{text-align:right; color:var(--muted); font-variant-numeric:tabular-nums}
+.sw__r.is-short .sw__rv b,.sw__r.is-short .sw__rd{color:var(--bad)}
+.sw__note{margin-top:.8rem; font-size:.8rem}
+.sw__b{display:inline-flex; align-items:center; justify-content:center; gap:.4rem; font:inherit; font-size:.9rem; font-weight:600; min-height:46px; padding:.55rem 1.25rem; border-radius:999px; cursor:pointer; color:var(--fg); background:transparent; border:1px solid var(--line); transition:filter 160ms,background 160ms}
+.sw__b .ico{width:16px; height:16px}
+.sw__b:hover{background:var(--panel-2)}
+.sw__b--go{color:var(--bg); background:var(--brand); border-color:transparent}
+.sw__b--go:hover{background:var(--brand); filter:brightness(1.08)}
+.sw__b:disabled{opacity:.6; cursor:progress}
 .sw__b:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
-.sw__go{display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; flex-wrap:wrap}
+.sw__go{position:sticky; bottom:0; z-index:1; display:flex; justify-content:flex-end; gap:.5rem; margin:.9rem -1.5rem 0; padding:.85rem 1.5rem 1.1rem; border-top:1px solid var(--line); background:var(--panel)}
+@media (max-width:30rem){
+  .sw__row{grid-template-columns:auto minmax(0,1fr)}
+  .sw__n{grid-column:1/-1}
+  .sw__q{font-size:16px}
+  .sw__b{white-space:nowrap}
+  .sw__b--go{flex:1}
+}
+@media (prefers-reduced-motion:reduce){.sw__step,.sw__s,.sw__b{transition:none}}
 .od>div{padding:1.5rem; overflow:auto; max-height:min(85vh,48rem); border-radius:inherit}
+.od.sw>div{padding-bottom:0} .od.sw>div:focus{outline:none}
 .od__x{position:absolute; top:.75rem; right:.75rem; width:36px; height:36px; border-radius:50%; cursor:pointer;
   border:1px solid var(--glass-line); background:var(--glass); color:var(--muted); display:grid; place-items:center}
 .od__x:hover{color:var(--fg); border-color:var(--brand)}
@@ -3223,6 +3292,41 @@ const ORDER_DETAIL_SCRIPT = `
   if (swapBox && swapBox.showModal) {
     swapBox.showModal();
     swapBox.querySelector('[data-swap-skip]').addEventListener('click', function () { swapBox.close(); });
+    var swapCount = function (n) { return Number(n).toLocaleString('id-ID'); };
+    var swapSigned = function (n) { return (n > 0 ? '+' : n < 0 ? '−' : '') + swapCount(Math.abs(n)); };
+    var swapValue = function (input) { var n = parseInt(input.value, 10); return n > 0 ? n : 0; };
+    var swapTally = function () {
+      var net = {};
+      swapBox.querySelectorAll('[data-sw-qty]').forEach(function (input) {
+        net[input.dataset.code] = (net[input.dataset.code] || 0) + Number(input.dataset.sign) * swapValue(input);
+      });
+      swapBox.querySelectorAll('[data-sw-sec]').forEach(function (sec) {
+        var inputs = sec.querySelectorAll('[data-sw-qty]');
+        if (!inputs.length) return;
+        var total = 0;
+        inputs.forEach(function (input) { total += swapValue(input); });
+        sec.querySelector('[data-sw-sum]').textContent = swapSigned(Number(sec.dataset.sign) * total);
+      });
+      swapBox.querySelectorAll('[data-sw-res]').forEach(function (row) {
+        var change = net[row.dataset.swRes] || 0;
+        var after = Number(row.dataset.now) + change;
+        row.querySelector('[data-sw-after]').textContent = swapCount(after);
+        row.querySelector('[data-sw-delta]').textContent = swapSigned(change);
+        row.classList.toggle('is-short', after < 0);
+      });
+    };
+    swapBox.addEventListener('input', swapTally);
+    swapBox.addEventListener('click', function (e) {
+      var step = e.target.closest('[data-sw-step]');
+      if (!step) return;
+      var input = step.parentNode.querySelector('[data-sw-qty]');
+      input.value = Math.min(100000, Math.max(0, swapValue(input) + Number(step.dataset.swStep)));
+      swapTally();
+    });
+    swapBox.querySelector('[data-sw-form]').addEventListener('submit', function () {
+      var go = swapBox.querySelector('.sw__b--go');
+      window.setTimeout(function () { go.disabled = true; go.querySelector('span').textContent = 'Menyimpan…'; }, 0);
+    });
   }
   // Clicking the backdrop lands on the dialog itself, never on its contents.
   dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); });

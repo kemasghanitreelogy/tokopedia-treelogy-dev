@@ -16,7 +16,7 @@ import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
-import { runAction, massArrange, planArrangement, needsSettling, settleable, oldestRead } from '../src/fulfillment.js';
+import { runAction, massArrange, planArrangement, needsSettling, settleable, oldestRead, needsSellerCentre, RETRY_REFUSAL, arrangeSummary } from '../src/fulfillment.js';
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
@@ -655,38 +655,41 @@ export async function handleWrite(form, ip, user, csrf) {
     // What Shopee needs per parcel, read before anything is booked. An instant courier
     // dispatches a driver, and Shopee will not take the order until it is told when -
     // so the operator is asked, once, for the whole batch.
-    const plans = await planArrangement(eligible);
+    const refused = eligible.filter(needsSellerCentre)
+      .map((o) => ({ channel: o.channel, id: o.id, status: 'failed', error: RETRY_REFUSAL }));
+    const bookable = eligible.filter((o) => !needsSellerCentre(o));
+    const plans = bookable.length > 0 ? await planArrangement(bookable) : {};
     const chosen = {};
     for (const [key, value] of form) {
       if (key.startsWith('slot:')) chosen[key.slice('slot:'.length)] = String(value).trim();
     }
-    const waiting = eligible.filter((o) => needsPickupTime(plans[o.id]) && !chosen[o.id]);
+    const waiting = bookable.filter((o) => needsPickupTime(plans[o.id]) && !chosen[o.id]);
     if (waiting.length > 0) {
       console.log(`dashboard: mass_arrange menunggu waktu jemput untuk ${waiting.length} pesanan`);
-      return { view: 'process', html: await pickupStep({ user, csrf, eligible, waiting, plans, chosen }) };
+      return { view: 'process', html: await pickupStep({ user, csrf, eligible: bookable, waiting, plans, chosen }) };
     }
 
     // massArrange reconciles our copy itself and invalidates the cache on the way out;
     // the router does not have to remember, which is the point of it living there.
     // massArrange reconciles our copy itself and invalidates the cache on the way out;
     // the router does not have to remember, which is the point of it living there.
-    const result = await massArrange(eligible, { pickupTimes: chosen, methods: plans });
-    const results = [...result.results, ...unreadable];
+    const result = bookable.length > 0 ? await massArrange(bookable, { pickupTimes: chosen, methods: plans }) : { results: [] };
+    const results = [...result.results, ...refused, ...unreadable];
     const succeeded = results.filter((r) => r.status === 'ok').length;
-    const failed = results.filter((r) => r.status === 'failed');
-    console.log(`dashboard: mass_arrange ${succeeded} ok, ${failed.length} failed of ${wanted.length} selected`);
+    const failed = results.filter((r) => r.status !== 'ok');
+    const summary = arrangeSummary(results);
+    console.log(`dashboard: mass_arrange ${succeeded} ok, ${failed.length} tidak terkonfirmasi of ${wanted.length} selected${failed.length ? ` - ${failed[0].id}: ${failed[0].error}` : ''}`);
     // Arranged is on the picklist, and on the picklist is off the shelf - counted now.
     if (succeeded) void warehouseSweep();
 
     return {
       view: 'process',
-      message: failed.length === 0
-        ? `${succeeded} pesanan berhasil diatur pengirimannya`
-        : `${succeeded} berhasil, ${failed.length} gagal - ${failed[0].id}: ${failed[0].error}`,
+      ...(summary.ok ? {} : { kind: 'error' }),
+      message: summary.message,
       audit: {
         menu: 'process', verb: 'send', target: `${wanted.length} pesanan`,
-        summary: `Mengatur pengiriman ${wanted.length} pesanan: ${succeeded} berhasil${failed.length ? `, ${failed.length} gagal` : ''}`,
-        changes: results.map((r) => ({ field: `${r.channel} ${r.id}`, to: r.status === 'ok' ? 'diatur pengirimannya' : 'gagal', note: r.error ?? '' })),
+        summary: `Mengatur pengiriman ${wanted.length} pesanan: ${summary.message}`,
+        changes: results.map((r) => ({ field: `${r.channel} ${r.id}`, to: { ok: 'diatur pengirimannya', unconfirmed: 'belum terkonfirmasi' }[r.status] ?? 'gagal', note: r.error ?? '' })),
       },
     };
   }
@@ -710,7 +713,7 @@ export async function handleWrite(form, ip, user, csrf) {
       company: String(form.get('company') ?? '').trim(),
     });
 
-    if (result.status === 'failed') throw new Error(`${id}: ${result.error}`);
+    if (result.status !== 'ok') throw new Error(`${id}: ${result.error ?? result.status}`);
     console.log(`dashboard: ${op} ${channel}/${id} ok`);
     void warehouseSweep();
     const tracking = String(form.get('tracking') ?? '').trim();

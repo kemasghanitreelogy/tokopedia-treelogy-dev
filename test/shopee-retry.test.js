@@ -41,7 +41,7 @@ test('the Proses page stops offering a re-arranged order, and only that one', as
   const data = await markRearranged({ orders: [retry, fresh, ready] }, { read: async (sn) => { asked.push(sn); return sn === retry.id ? history : history.slice(2); } });
   assert.deepEqual(asked, [retry.id, 'X'], 'READY_TO_SHIP is never looked up');
   assert.equal(nextAction(data.orders[0]), null);
-  assert.equal(nextAction(data.orders[1]).action, 'shopee_ship');
+  assert.equal(nextAction(data.orders[1]).action, 'seller_centre');
   assert.equal(nextAction(data.orders[2]).action, 'shopee_ship');
 });
 
@@ -57,7 +57,7 @@ test('a history read is reused for a while, and a failed read leaves the row off
 
   resetRetryMemo();
   const data = await markRearranged({ orders: [retry] }, { read: async () => { throw new Error('down'); } });
-  assert.equal(nextAction(data.orders[0]).action, 'shopee_ship');
+  assert.equal(nextAction(data.orders[0]).action, 'seller_centre');
 });
 
 test('a Shopee that does not answer never holds the page, and is not asked on every load', async () => {
@@ -68,7 +68,7 @@ test('a Shopee that does not answer never holds the page, and is not asked on ev
   const started = Date.now();
   const first = await markRearranged({ orders: [retry] }, { read, now: 1000, wait: 20 });
   assert.ok(Date.now() - started < 500, 'the page went out without the history');
-  assert.equal(nextAction(first.orders[0]).action, 'shopee_ship');
+  assert.equal(nextAction(first.orders[0]).action, 'seller_centre');
   await markRearranged({ orders: [retry] }, { read, now: 1001, wait: 20 });
   assert.equal(reads, 1, 'a read still in flight is not started twice');
   release();

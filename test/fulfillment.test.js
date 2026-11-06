@@ -34,7 +34,7 @@ test('a batch takes a Shopify order by writing it down, never by calling Shopify
 
 test('Shopee needs shipment arranged only while it is READY_TO_SHIP', () => {
   assert.equal(nextAction(order('shopee', 'READY_TO_SHIP', 'to_ship')).action, 'shopee_ship');
-  assert.equal(nextAction(order('shopee', 'RETRY_SHIP', 'to_ship')).action, 'shopee_ship');
+  assert.equal(nextAction(order('shopee', 'RETRY_SHIP', 'to_ship')).action, 'seller_centre');
   // PROCESSED means the waybill exists and the courier simply has not collected yet.
   assert.equal(nextAction(order('shopee', 'PROCESSED', 'to_ship')), null);
   assert.equal(nextAction(order('shopee', 'SHIPPED', 'shipping')), null);
@@ -283,7 +283,7 @@ test('a batch brings our copy of everything that moved back into line', async ()
     {
       methods: dropoffPlans(['A', 'B']),
       shopee: { session, call: shopee.call, shipOne: async () => {} },
-      refresh: async (selection) => { asked.push(...selection.map((o) => o.id)); },
+      refresh: async (selection) => { asked.push(...selection.map((o) => o.id)); return { orders: selection.map((o) => ({ ...o, status: 'PROCESSED', stage: 'to_ship' })) }; },
     },
   );
   // The screen is drawn from our table, so a shipment nobody told the table about is a
@@ -301,7 +301,7 @@ test('only what actually moved is re-read, never what was refused', async () => 
     {
       methods: dropoffPlans(['A']),
       shopee: { session, call: shopee.call, shipOne: async () => {} },
-      refresh: async (selection) => { asked.push(...selection.map((o) => o.id)); },
+      refresh: async (selection) => { asked.push(...selection.map((o) => o.id)); return { orders: selection.map((o) => ({ ...o, status: 'PROCESSED', stage: 'to_ship' })) }; },
     },
   );
   assert.equal(result.failed, 1);
@@ -327,6 +327,7 @@ test('the batch that reported 21 of 35 now reports all 35', async () => {
   // of them a parcel that had in fact been arranged.
   const ids = Array.from({ length: 35 }, (_, i) => `S${i}`);
   let reads = 0;
+  let refreshes = 0;
   const call = async (config, path, auth, query, body) => {
     if (path === '/api/v2/logistics/mass_ship_order') {
       return { response: { result_list: body.package_list.map(({ order_sn }) => ({ order_sn })) } };
@@ -346,10 +347,16 @@ test('the batch that reported 21 of 35 now reports all 35', async () => {
   const result = await massArrange(ids.map((id) => shopeeOrder(id)), {
     methods: dropoffPlans(ids),
     shopee: { session, call, shipOne: async () => {} },
-    refresh: async () => {},
+    waits: [1],
+    // The same lag, now met by reading again: the fourteen catch up on the second read.
+    refresh: async (selection) => {
+      refreshes += 1;
+      return { orders: selection.map((o) => ({ ...o, status: refreshes === 1 && Number(o.id.slice(1)) >= 21 ? 'READY_TO_SHIP' : 'PROCESSED', stage: 'to_ship' })) };
+    },
   });
 
-  assert.equal(result.succeeded, 35, 'semua yang diterima Shopee dihitung berhasil');
+  assert.equal(refreshes, 2);
+  assert.equal(result.succeeded, 35, 'semua yang dikonfirmasi Shopee dihitung berhasil');
   assert.equal(result.failed, 0);
   assert.equal(reads, 0, 'tidak ada pembacaan ulang ketika tidak ada yang diragukan');
 });

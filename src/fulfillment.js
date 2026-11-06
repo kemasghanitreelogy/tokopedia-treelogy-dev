@@ -38,6 +38,18 @@ import { isReadOnly, ReadOnlyError, writeAudit } from './stock-sync.js';
  * @param {Record<string, unknown>} arranged  Shopify orders already worked through this
  *   queue. Arranging one calls nothing, so nothing on Shopify's side can say it happened.
  */
+/**
+ * A Shopee order whose pickup failed, and which only Seller Centre can book again.
+ *
+ * ship_order answers without an error on these and changes nothing: 261105GEVT7Q6C was
+ * sent ten times on 6 Nov, every call came back clean, and Shopee's status, tracking
+ * history and update time never moved. So nothing here offers or sends it.
+ */
+export const needsSellerCentre = (order) =>
+  order?.channel === 'shopee' && order.status === 'RETRY_SHIP' && !order.rearranged;
+export const SELLER_CENTRE_ORDERS = 'https://seller.shopee.co.id/portal/sale/order';
+export const RETRY_REFUSAL = 'status Shopee RETRY_SHIP (gagal jemput), pengiriman ulang harus diatur di Seller Centre';
+
 export function nextAction(order, arranged = {}) {
   /*
    * Shopify is arranged the same way from the operator's side, but nothing is called:
@@ -58,7 +70,8 @@ export function nextAction(order, arranged = {}) {
   if (order.channel === 'shopee') {
     // A failed pickup the team already arranged again in Seller Centre (src/shopee/retry.js).
     if (order.status === 'RETRY_SHIP' && order.rearranged) return null;
-    if (order.status === 'READY_TO_SHIP' || order.status === 'RETRY_SHIP') {
+    if (needsSellerCentre(order)) return { action: 'seller_centre', label: 'Atur ulang di Seller Centre', needs: [] };
+    if (order.status === 'READY_TO_SHIP') {
       return { action: 'shopee_ship', label: 'Atur pengiriman', needs: [] };
     }
     return null;
@@ -295,10 +308,11 @@ export async function shopifyFulfill(orderGid, { trackingNumber, company, notify
  * Run one action. Kept deliberately singular: shipping is irreversible, so a mistake
  * should cost one order, not a batch. The audit record is written either way.
  */
-export async function runAction({ action, order, trackingNumber, company, refresh = refreshOrders }) {
+export async function runAction({ action, order, trackingNumber, company, refresh = refreshOrders, waits = CONFIRM_WAITS_MS }) {
   const started = Date.now();
   let outcome;
   try {
+    if (action === 'shopee_ship' && needsSellerCentre(order)) throw new Error(RETRY_REFUSAL);
     if (action === 'shopee_ship') outcome = await shopeeShip(order.id);
     else if (action === 'tiktok_rts') outcome = await tiktokReadyToShip(order);
     else if (action === 'shopify_fulfill') {
@@ -311,10 +325,14 @@ export async function runAction({ action, order, trackingNumber, company, refres
     outcome = { channel: order.channel, id: order.id, action, status: 'failed', error: error.message };
   }
 
-  await writeAudit({ results: [outcome] }, { guards: { action } }).catch(() => {});
   // The platform moved, so our copy has to move with it or the order stays in the queue
-  // it was just taken out of. See src/orders-refresh.js.
-  if (outcome.status === 'ok') await refresh([{ channel: order.channel, id: order.id }]);
+  // it was just taken out of. See src/orders-refresh.js. For a shipment the same read is
+  // what decides whether this was a success at all.
+  if (outcome.status === 'ok') {
+    if (action === 'shopee_ship' || action === 'tiktok_rts') [outcome] = await confirmArranged([outcome], { refresh, waits });
+    else await refresh([{ channel: order.channel, id: order.id }]);
+  }
+  await writeAudit({ results: [outcome] }, { guards: { action } }).catch(() => {});
   return outcome;
 }
 
@@ -431,12 +449,13 @@ export async function verifyShopee(config, auth, orderSns, { call = callShopApi 
 }
 
 export async function arrangeShopee(orders, { pickupTimes = {}, methods = null, session = null, call = callShopApi, shipOne = shopeeShipUnguarded } = {}) {
-  if (orders.length === 0) return [];
+  const results = orders.filter(needsSellerCentre).map((order) => failed(order, RETRY_REFUSAL));
+  const bookable = orders.filter((o) => !needsSellerCentre(o));
+  if (bookable.length === 0) return results;
   const { config, auth } = session ?? await resolveShopeeSession();
 
-  const results = [];
-  const usable = orders.filter((o) => o.packageNumber);
-  for (const order of orders.filter((o) => !o.packageNumber)) {
+  const usable = bookable.filter((o) => o.packageNumber);
+  for (const order of bookable.filter((o) => !o.packageNumber)) {
     results.push(failed(order, 'nomor paket tidak diketahui'));
   }
   if (usable.length === 0) return results;
@@ -494,6 +513,72 @@ export async function arrangeShopee(orders, { pickupTimes = {}, methods = null, 
   return results;
 }
 
+/** How long to wait between reads of a parcel the platform has not moved yet. */
+export const CONFIRM_WAITS_MS = [1500, 3000, 5000];
+const STOPPED = new Set(['cancelled', 'returned']);
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * Only the platform's own status says a shipment was arranged.
+ *
+ * A ship call that answers without an error proves nothing: see needsSellerCentre. Each
+ * parcel the call accepted is read back from its platform, a few times because the status
+ * moves a moment after the call. One that has moved stays `ok`. One still waiting, or that
+ * cannot be read, is `unconfirmed` and never counted as done, with what was actually seen
+ * as its reason. Shopify and typed-in parcels have no platform, so the ledger write that
+ * already happened is their answer.
+ *
+ * @returns {Promise<Array>} the same rows, in order, with their verdicts
+ */
+export async function confirmArranged(results, { refresh = refreshOrders, waits = CONFIRM_WAITS_MS, wait = sleep } = {}) {
+  const keyOf = (r) => `${r.channel}:${r.id}`;
+  const accepted = results.filter((r) => r.status === 'ok');
+  const local = accepted.filter((r) => r.channel === 'shopify' || r.channel === 'manual');
+  if (local.length > 0) await refresh(local.map(({ channel, id }) => ({ channel, id })));
+
+  let open = accepted.filter((r) => !local.includes(r));
+  const seen = new Map();
+  const stopped = new Map();
+  let readError = '';
+  for (let round = 0; round <= waits.length && open.length > 0; round++) {
+    if (round > 0) await wait(waits[round - 1]);
+    const answer = await refresh(open.map(({ channel, id }) => ({ channel, id })));
+    readError = answer?.error ?? '';
+    const fresh = new Map((answer?.orders ?? []).map((o) => [keyOf(o), o]));
+    open = open.filter((row) => {
+      const order = fresh.get(keyOf(row));
+      if (!order) return true;
+      seen.set(keyOf(row), order.status);
+      if (STOPPED.has(order.stage)) { stopped.set(keyOf(row), order.status); return false; }
+      return Boolean(nextAction(order));
+    });
+  }
+
+  const waiting = new Set(open.map(keyOf));
+  return results.map((row) => {
+    const key = keyOf(row);
+    if (stopped.has(key)) return { ...row, status: 'failed', error: `status platform ${stopped.get(key)}` };
+    if (!waiting.has(key)) return row;
+    const state = seen.has(key)
+      ? `statusnya masih ${seen.get(key)}`
+      : `statusnya tidak terbaca${readError ? ` (${readError})` : ''}`;
+    return { ...row, status: 'unconfirmed', error: `platform tidak menolak, tapi ${state}` };
+  });
+}
+
+/** The operator's summary of a batch: what the platforms confirmed, and the real reason for the rest. */
+export function arrangeSummary(results) {
+  const count = (status) => results.filter((r) => r.status === status).length;
+  const issues = results.filter((r) => r.status !== 'ok');
+  const done = count('ok');
+  if (issues.length === 0) return { ok: true, message: `${done} pesanan berhasil diatur pengirimannya` };
+  const parts = [`${done} berhasil`];
+  if (count('failed')) parts.push(`${count('failed')} gagal`);
+  if (count('unconfirmed')) parts.push(`${count('unconfirmed')} belum terkonfirmasi`);
+  const more = issues.length > 1 ? ` (dan ${issues.length - 1} lainnya, detail di Aktivitas)` : '';
+  return { ok: false, message: `${parts.join(', ')} - ${issues[0].id}: ${issues[0].error}${more}` };
+}
+
 /**
  * Arrange shipment for many orders in one go.
  *
@@ -519,7 +604,7 @@ export async function arrangeShopee(orders, { pickupTimes = {}, methods = null, 
  * queue still holds orders the dashboard just called done.
  */
 export async function massArrange(orders, {
-  pickupTimes = {}, methods = null, refresh = refreshOrders,
+  pickupTimes = {}, methods = null, refresh = refreshOrders, waits = CONFIRM_WAITS_MS,
   // Injected only by tests, the same way the single-channel helpers take them: a batch
   // that cannot be exercised without a live shop is a batch nobody exercises.
   shopee: shopeeDeps = {}, tiktok: tiktokDeps = {},
@@ -543,9 +628,8 @@ export async function massArrange(orders, {
         .catch((error) => local.map((o) => failed(o, error.message))),
   ]);
 
-  const results = [...tiktokResults, ...shopeeResults, ...localResults];
+  const results = await confirmArranged([...tiktokResults, ...shopeeResults, ...localResults], { refresh, waits });
   await writeAudit({ results }, { guards: { action: 'mass_arrange' } }).catch(() => {});
-  await refresh(results.filter((r) => r.status === 'ok').map((r) => ({ channel: r.channel, id: r.id })));
   return {
     results,
     succeeded: results.filter((r) => r.status === 'ok').length,

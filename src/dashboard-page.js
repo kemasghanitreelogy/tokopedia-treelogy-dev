@@ -7,7 +7,7 @@ import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatch
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
 import { PRODUCTS, CATEGORIES, groupProducts, findProduct, familyOf, isBundle, buildableFrom, unmapped, allProducts, isRemoved } from './master.js';
-import { pending, nextAction } from './fulfillment.js';
+import { pending, nextAction, SELLER_CENTRE_ORDERS } from './fulfillment.js';
 import { orderCode, PREFIXES, SELLING_SOURCES } from './mekari/prefix.js';
 import { defaultSlot } from './shopee/pickup.js';
 import { SOURCE_OPTIONS, SELLABLE, MANUAL_CARRIERS, sellableInShopify } from './mekari/manual.js';
@@ -981,6 +981,8 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
 .wtab__pick{width:1%; padding-right:0}
 .wtab__who{max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .wtab__car{display:inline-flex; align-items:center; gap:.35rem; color:var(--muted)}
+.wtab__retry{display:flex; align-items:center; gap:.35rem; margin-top:.3rem; font-size:.8rem; font-weight:600; color:var(--warn); text-decoration:underline; text-underline-offset:2px}
+.wtab__retry .ico{width:14px; height:14px; flex:none}
 .wtab__sla{width:1%}
 .wo{cursor:pointer; transition:background var(--t-fast)}
 .wo:hover td{background:var(--glass-2)}
@@ -3476,11 +3478,11 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
    * filters and the cut-off filter all find their row with closest('.wo'), and a row is
    * as good a thing to find as a card.
    */
-  const row = ({ order: o }) => `<tr class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
+  const row = ({ order: o, next }) => `<tr class="wo" data-carrier="${escape(o.carrier || 'Belum ditentukan')}"
       data-early="${o.createdAt < cutoff ? '1' : '0'}">
       <td class="wtab__pick">
-        <input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
-          aria-label="Pilih ${escape(o.id)}">
+        ${next.action === 'seller_centre' ? '' : `<input class="wo__pick" type="checkbox" name="order" value="${escape(o.channel)}:${escape(o.id)}" checked
+          aria-label="Pilih ${escape(o.id)}">`}
       </td>
       <td>${channelTag(o)}</td>
       <td class="mono nowrap">${escape(o.id)}</td>
@@ -3491,7 +3493,8 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
         ? `<span class="wtab__car">${svg('truck')}${escape(o.carrier)}</span>`
         // Shopify books its courier outside Shopify, so an empty one there is the normal
         // case rather than something missing.
-        : (o.channel === 'shopify' ? '<span class="dim">&mdash;</span>' : '<span class="dim">belum ditentukan</span>')}</td>
+        : (o.channel === 'shopify' ? '<span class="dim">&mdash;</span>' : '<span class="dim">belum ditentukan</span>')}
+        ${next.action === 'seller_centre' ? `<a class="wtab__retry" href="${SELLER_CENTRE_ORDERS}" target="_blank" rel="noopener">${svg('warn')}Gagal jemput: atur ulang di Seller Centre</a>` : ''}</td>
       <td class="wtab__sla">${deadline(o) || '<span class="dim">&mdash;</span>'}</td>
     </tr>`;
 

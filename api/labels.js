@@ -113,9 +113,11 @@ export default async function handler(req, res) {
 
     // Shopify has no idea a label exists, so the fact that one came out is recorded here
     // or the order would ask to be printed again tomorrow.
+    let unrecorded = '';
     if (sheet.printed?.length) {
       await markPrinted(sheet.printed, { by: user.email }).catch((error) => {
         console.warn(`labels: gagal mencatat cetakan Shopify - ${error.message}`);
+        unrecorded = error.message;
       });
       // Printed is on the picklist, and on the picklist is off the shelf - counted now.
       void warehouseSweep();
@@ -155,6 +157,7 @@ export default async function handler(req, res) {
       // seventeen checkboxes.
       csrf: csrfToken(session),
       retried: form.get('retried') === '1',
+      unrecorded,
       groups: sheet.groups.map((group) => ({
         key: group.key,
         label: group.label,

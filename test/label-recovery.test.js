@@ -119,3 +119,8 @@ test('without a token the page offers no retry it cannot actually post', () => {
   assert.ok(!/id="retryform"/.test(html));
   for (const body of scripts(html)) assert.doesNotThrow(() => new Function(body));
 });
+
+test('a print the ledger could not record says so on the report', () => {
+  assert.doesNotMatch(report(), /catatan cetaknya gagal/);
+  assert.match(report({ unrecorded: 'store down' }), /catatan cetaknya gagal disimpan \(store down\)/);
+});

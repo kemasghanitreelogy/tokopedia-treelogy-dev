@@ -8217,7 +8217,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
  * browser stopped it rather than leaving somebody waiting for tabs that are not coming.
  */
 export function renderLabelReport({
-  pageCount, requested, failures, size, groups = [], csrf = null, retried = false,
+  pageCount, requested, failures, size, groups = [], csrf = null, retried = false, unrecorded = '',
 }) {
   /*
    * A failure is sorted by what the bench should do about it, not by what went wrong.
@@ -8373,6 +8373,7 @@ iframe{width:100%;height:38vh;min-height:19rem;border:0;background:#fff;display:
     <span class="count ${pageCount > 0 ? 'ok' : 'warn'}">${pageCount}</span> dari <span class="count">${requested}</span> label berhasil dibuat
     &middot; ukuran ${escape(size)}
   </p>
+  ${unrecorded ? `<p class="lead" role="alert" style="color:var(--warn)">Label sudah keluar, tapi catatan cetaknya gagal disimpan (${escape(unrecorded)}). Pesanan ini bisa masih terlihat belum dicetak.</p>` : ''}
 
   <div class="bar">
     ${groups.length > 0 ? `<button class="btn" id="openall" type="button">Buka ${groups.length} tab cetak</button>` : ''}

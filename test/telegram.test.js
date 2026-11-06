@@ -127,3 +127,13 @@ test('nothing critical means no message at all', async () => {
   assert.equal(r.sent, false);
   assert.equal(calls.length, 0);
 });
+
+test('an alert that was not delivered is not treated as said', async () => {
+  resetDedupe();
+  const config = { token: 't', chatId: 'c' };
+  const down = async () => ({ ok: false, status: 400, json: async () => ({ ok: false, description: 'chat not found' }) });
+  const up = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+  assert.deepEqual(await sendTelegram('x', { key: 'k', fetchImpl: down, config }), { sent: false, reason: 'chat not found' });
+  assert.deepEqual(await sendTelegram('x', { key: 'k', fetchImpl: up, config }), { sent: true });
+  assert.equal((await sendTelegram('x', { key: 'k', fetchImpl: up, config })).sent, false, 'delivered once, the hour is quiet');
+});

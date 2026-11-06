@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmCatalog, confirmListing } from '../src/confirm-writes.js';
+import { confirmCatalog, confirmListing, confirmPublished, editAndConfirm } from '../src/confirm-writes.js';
 import { invoiceGone } from '../src/mekari/discard.js';
 import { refundOrder } from '../src/mekari/refund.js';
 import { customIdFor } from '../src/mekari/invoice.js';
@@ -41,7 +41,7 @@ test('a listing edit is compared field by field, whitespace aside', async () => 
   assert.equal((await confirmListing('shopee', {}, { patch: same }, { read, ...noWait })).status, 'ok');
   const out = await confirmListing('shopee', {}, { patch: { ...same, title: 'Lain', weightGram: 300 } }, { read, ...noWait });
   assert.equal(out.status, 'unconfirmed');
-  assert.match(out.error, /judul, berat belum berubah/);
+  assert.match(out.error, /judul, berat belum sesuai/);
 });
 
 test('on and off are read from the listing status of each channel', async () => {
@@ -49,7 +49,7 @@ test('on and off are read from the listing status of each channel', async () => 
   assert.equal((await confirmListing('shopee', {}, { active: true }, { read: says('NORMAL'), ...noWait })).status, 'ok');
   assert.equal((await confirmListing('tiktok', {}, { active: false }, { read: says('SELLER_DEACTIVATED'), ...noWait })).status, 'ok');
   const pending = await confirmListing('tiktok', {}, { active: true }, { read: says('PENDING'), ...noWait });
-  assert.match(pending.error, /status \(PENDING\) belum berubah/);
+  assert.match(pending.error, /status PENDING belum sesuai/);
   const down = await confirmListing('shopee', {}, { active: true }, { read: async () => { throw new Error('putus'); }, ...noWait });
   assert.match(down.error, /tidak terbaca \(putus\)/);
 });
@@ -76,4 +76,25 @@ test('a refund says whether the invoice really went', async () => {
   const out = await refundOrder({ channel: 'shopify', id: '#1' }, deps);
   assert.equal(out.deleted, true);
   assert.equal(out.gone, true);
+});
+
+test('new pictures must show on the listing, and differ from what it showed before', async () => {
+  const shop = (after) => {
+    let edited = false;
+    return { shopee: { read: async () => ({ images: edited ? after : ['old'] }), edit: async () => { edited = true; return { changed: ['image'] }; } } };
+  };
+  const file = [{ name: 'a.jpg' }];
+  assert.equal((await editAndConfirm('shopee', {}, {}, file, { channels: shop(['new']), ...noWait })).status, 'ok');
+  const same = await editAndConfirm('shopee', {}, {}, file, { channels: shop(['old']), ...noWait });
+  assert.equal(same.status, 'unconfirmed');
+  assert.match(same.error, /foto belum sesuai/);
+});
+
+test('a new listing has to read back in the state it was asked for', async () => {
+  const says = (status) => ({ read: async () => ({ status }), ...noWait });
+  assert.equal((await confirmPublished('shopee', '1', {}, says('NORMAL'))).status, 'ok');
+  assert.equal((await confirmPublished('shopee', '1', { draft: true }, says('UNLIST'))).status, 'ok');
+  const review = await confirmPublished('tiktok', '1', {}, says('PENDING'));
+  assert.equal(review.status, 'unconfirmed');
+  assert.match(review.error, /status PENDING/);
 });

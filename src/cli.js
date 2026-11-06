@@ -24,6 +24,7 @@ import { loadRetryBook, overdue, escalations, markAlerted, retryNow } from './me
 import { auditRecent } from './mekari/audit.js';
 import { seedMissing, applyOrders, topUpMaster, planFollow } from './stock-follow.js';
 import { followStock } from './stock-watch.js';
+import { confirmCatalog } from './confirm-writes.js';
 import { syncWarehouse, loadWarehouse, verifyWarehouse } from './warehouse-run.js';
 import { recordSample, loadHistory, drops } from './stock-history.js';
 import { raiseAlert } from './alerts.js';
@@ -441,6 +442,19 @@ async function cmdStockTopup(config, args = []) {
     console.log(r.status === 'ok' ? ok(line) : fail(`${line}  ${r.error ?? ''}`));
   }
   console.log(`\n  ${result.written} ditulis, ${result.failed} gagal\n`);
+
+  // Written is what the channels did not object to. What they now show is read back, and
+  // this run also catches a write from a webhook that never landed: it reads as drift here.
+  const seenBack = result.written > 0 ? await confirmCatalog((result.results ?? []).map((r) => ({ ...r, field: 'qty' }))) : [];
+  const doubts = seenBack.filter((r) => r.status === 'unconfirmed');
+  if (doubts.length) {
+    for (const r of doubts) console.log(fail(`${r.sku.padEnd(24)} ${r.channel.padEnd(7)} ${r.error}`));
+    await sendTelegram(
+      `<b>⚠️ Stok belum terkonfirmasi di kanal</b>\n${doubts.length} listing tidak menolak, tapi hasilnya tidak terbaca sesuai.\n` +
+      doubts.slice(0, 6).map((r) => `• <code>${r.sku}</code> ${r.channel}: ${String(r.error ?? '').slice(0, 120)}`).join('\n'),
+      { key: `stock-unconfirmed|${new Date().toISOString().slice(0, 13)}` },
+    ).catch(() => {});
+  }
 
   // And again from what we believe we just wrote. Without a reading either side, our own
   // write looks exactly like the thing being hunted.

@@ -47,13 +47,18 @@ const LIVE = { tiktok: 'ACTIVATE', shopee: 'NORMAL', shopify: 'ACTIVE' };
 const flat = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 const sameDims = (a, b) => ['l', 'w', 'h'].every((k) => Number(a?.[k]) === Number(b?.[k]));
 
-function differences(listing, { patch = {}, active } = {}, channel) {
+function differences(listing, { patch = {}, active, images } = {}, channel) {
   const out = [];
   if (patch.title !== undefined && flat(listing.title) !== flat(patch.title)) out.push('judul');
   if (patch.description !== undefined && flat(listing.description) !== flat(patch.description)) out.push('deskripsi');
   if (patch.weightGram !== undefined && Number(listing.weightGram) !== Number(patch.weightGram)) out.push('berat');
   if (patch.dims !== undefined && !sameDims(listing.dims, patch.dims)) out.push('dimensi');
-  if (active !== undefined && (listing.status === LIVE[channel]) !== active) out.push(`status (${listing.status || 'kosong'})`);
+  if (active !== undefined && (listing.status === LIVE[channel]) !== active) out.push(`status ${listing.status || 'kosong'}`);
+  if (images) {
+    const now = listing.images ?? [];
+    const unchanged = images.before && JSON.stringify(now) === JSON.stringify(images.before);
+    if (now.length !== images.count || unchanged) out.push('foto');
+  }
   return out;
 }
 
@@ -62,7 +67,7 @@ function differences(listing, { patch = {}, active } = {}, channel) {
  *
  * @param {string} channel
  * @param {object} ref
- * @param {{patch?: object, active?: boolean}} expected
+ * @param {{patch?: object, active?: boolean, images?: {count: number, before?: string[]}}} expected
  * @returns {Promise<{status: 'ok'|'unconfirmed', error?: string}>}
  */
 export async function confirmListing(channel, ref, expected, { read = LISTING_CHANNELS[channel]?.read, waits = CONFIRM_WAITS_MS, wait = sleep } = {}) {
@@ -72,10 +77,31 @@ export async function confirmListing(channel, ref, expected, { read = LISTING_CH
     try {
       const wrong = differences(await read(ref), expected, channel);
       if (wrong.length === 0) return { status: 'ok' };
-      trouble = `${wrong.join(', ')} belum berubah`;
+      trouble = `${wrong.join(', ')} belum sesuai`;
     } catch (error) {
       trouble = `listing tidak terbaca (${error.message})`;
     }
   }
   return { status: 'unconfirmed', error: `channel tidak menolak, tapi ${trouble}` };
+}
+
+/**
+ * Change a listing and read it back. Pictures are compared against what the listing showed
+ * before the write, so that is read first; a read that fails then only leaves the count.
+ *
+ * @returns {Promise<{status: 'ok'|'unconfirmed', error?: string, changed: string[]}>}
+ */
+export async function editAndConfirm(channel, ref, patch, images, { channels = LISTING_CHANNELS, ...timing } = {}) {
+  const { edit, read } = channels[channel];
+  const before = images.length ? (await read(ref).catch(() => null))?.images : undefined;
+  const out = await edit(ref, patch, images);
+  const expected = { patch, ...(images.length ? { images: { count: images.length, before } } : {}) };
+  const seen = await confirmListing(channel, ref, expected, { read, ...timing });
+  return { ...seen, changed: out.changed };
+}
+
+/** A listing just created: there, and in the state it was asked to be in. */
+export function confirmPublished(channel, id, { draft = false } = {}, options = {}) {
+  const ref = channel === 'shopee' ? { itemId: id } : { productId: id };
+  return confirmListing(channel, ref, { active: !draft }, options);
 }

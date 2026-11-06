@@ -84,11 +84,14 @@ export async function sendTelegram(html, { key = html, fetchImpl = fetchWithTime
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) {
       console.warn(`telegram: gagal kirim - ${payload.description ?? response.status}`);
+      // Never delivered, so it has not been said: the next run must be free to say it.
+      recentlySent.delete(key);
       return { sent: false, reason: payload.description ?? `HTTP ${response.status}` };
     }
     return { sent: true };
   } catch (error) {
     console.warn(`telegram: tidak terjangkau - ${error.message}`);
+    recentlySent.delete(key);
     return { sent: false, reason: error.message };
   }
 }

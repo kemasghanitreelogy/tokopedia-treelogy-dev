@@ -1,7 +1,7 @@
 import { mekari } from './client.js';
 import { customIdFor } from './invoice.js';
 import { loadSyncLedger, saveSyncLedger, isMissingInvoice } from './sync.js';
-import { refusalFor } from './discard.js';
+import { refusalFor, invoiceGone } from './discard.js';
 import { orderById } from '../db/orders.js';
 import { readDoc, updateDoc } from '../store/index.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
@@ -52,6 +52,7 @@ export async function refundOrder({ channel, id, by = '' }, {
 
   let transactionNo = null;
   let deleted = false;
+  let gone = false;
   if (invoiceId) {
     let invoice = null;
     try {
@@ -66,6 +67,7 @@ export async function refundOrder({ channel, id, by = '' }, {
       transactionNo = invoice.transaction_no ?? null;
       await call({ method: 'DELETE', path: `${INVOICES_PATH}/${invoiceId}` });
       deleted = true;
+      gone = await invoiceGone(call, invoiceId);
     }
   }
   const at = new Date().toISOString();
@@ -78,5 +80,5 @@ export async function refundOrder({ channel, id, by = '' }, {
 
   invalidate('orders');
   invalidate('jurnal');
-  return { id: order.id, channel, total: Number(order.total) || 0, invoiceId, transactionNo, deleted };
+  return { id: order.id, channel, total: Number(order.total) || 0, invoiceId, transactionNo, deleted, gone };
 }

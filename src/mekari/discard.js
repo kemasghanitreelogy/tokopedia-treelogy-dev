@@ -1,6 +1,6 @@
 import { mekari } from './client.js';
 import { customIdFor } from './invoice.js';
-import { loadSyncLedger, saveSyncLedger } from './sync.js';
+import { loadSyncLedger, saveSyncLedger, isMissingInvoice } from './sync.js';
 import { orderById, deleteOrder } from '../db/orders.js';
 import { isManualSource } from './prefix.js';
 import { invalidate } from '../cache.js';
@@ -50,6 +50,16 @@ export function refusalFor(invoice) {
   return null;
 }
 
+/** Whether Jurnal itself now says the invoice is not there. A failed read proves nothing. */
+export async function invoiceGone(call, invoiceId) {
+  try {
+    await call({ path: `${INVOICES_PATH}/${invoiceId}` });
+    return false;
+  } catch (error) {
+    return isMissingInvoice(error);
+  }
+}
+
 /**
  * @param {string} id  the transaction code, as it is shown - "CS-260929-00002GP"
  * @returns {Promise<{id: string, total: number, invoiceId: number|null, transactionNo: string|null,
@@ -77,6 +87,7 @@ export async function discardManual(id, {
   const invoiceId = entry?.voided ? null : (entry?.invoice_id ?? null);
 
   let transactionNo = null;
+  let gone = false;
   if (invoiceId) {
     const found = await call({ path: `${INVOICES_PATH}/${invoiceId}` });
     const invoice = found?.sales_invoice ?? found;
@@ -85,6 +96,7 @@ export async function discardManual(id, {
     transactionNo = invoice?.transaction_no ?? null;
 
     await call({ method: 'DELETE', path: `${INVOICES_PATH}/${invoiceId}` });
+    gone = await invoiceGone(call, invoiceId);
 
     // Written the moment it is true. A crash between the delete and this line would leave
     // the ledger claiming an invoice that no longer exists, and the next reconcile would
@@ -104,6 +116,7 @@ export async function discardManual(id, {
     invoiceId,
     transactionNo,
     wasInvoiced: Boolean(invoiceId),
+    gone,
     removedFromList: removed > 0,
   };
 }

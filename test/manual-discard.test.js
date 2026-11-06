@@ -55,12 +55,13 @@ test('the invoice goes first, then the row, and the ledger is told in between', 
   assert.deepEqual(calls, [
     'GET /public/jurnal/api/v1/sales_invoices/4321',
     'DELETE /public/jurnal/api/v1/sales_invoices/4321',
+    'GET /public/jurnal/api/v1/sales_invoices/4321',
   ]);
   assert.deepEqual(dropped, ['manual', 'CS-260929-00002GP']);
   assert.equal(saved[0].orders['TRL-manual-CS-260929-00002GP'].voided, true);
   assert.deepEqual(
     { ...out, transactionNo: out.transactionNo },
-    { id: 'CS-260929-00002GP', total: 1265000, invoiceId: 4321, transactionNo: 'INV-9', wasInvoiced: true, removedFromList: true },
+    { id: 'CS-260929-00002GP', total: 1265000, gone: false, invoiceId: 4321, transactionNo: 'INV-9', wasInvoiced: true, removedFromList: true },
   );
 });
 

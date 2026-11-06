@@ -30,7 +30,8 @@ function rig({ entry = { invoice_id: 77, total: 1145000 }, invoice = { transacti
 test('an invoiced order: the invoice is deleted, the ledger voided, the order hidden', async () => {
   const { calls, state, deps } = rig();
   const out = await refundOrder({ channel: 'shopify', id: '#11452', by: 'Kemas' }, deps);
-  assert.deepEqual(calls, ['GET /public/jurnal/api/v1/sales_invoices/77', 'DELETE /public/jurnal/api/v1/sales_invoices/77']);
+  assert.deepEqual(calls, ['GET /public/jurnal/api/v1/sales_invoices/77', 'DELETE /public/jurnal/api/v1/sales_invoices/77', 'GET /public/jurnal/api/v1/sales_invoices/77']);
+  assert.equal(out.gone, false, 'Jurnal still answers for it, so it is not confirmed gone');
   assert.equal(out.deleted, true);
   assert.equal(out.transactionNo, 'INV-9');
   assert.equal(state.ledger.orders[CID].voided, true);

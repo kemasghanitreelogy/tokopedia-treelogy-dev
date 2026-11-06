@@ -16,6 +16,7 @@ import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
+import { confirmCatalog, confirmListing } from '../src/confirm-writes.js';
 import { runAction, massArrange, planArrangement, needsSettling, settleable, oldestRead, needsSellerCentre, RETRY_REFUSAL, arrangeSummary } from '../src/fulfillment.js';
 import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
@@ -413,6 +414,32 @@ export function afterWrite(outcome, form) {
   return `${PATH}?${params.toString()}`;
 }
 
+/** Longest a save waits for the channels to follow the master stock before saying so. */
+const FOLLOW_WAIT_MS = 25_000;
+
+/**
+ * Write the master stock to the channels and read it back, for a person waiting on the
+ * answer. Takes the master already saved; what comes back says what the channels did.
+ *
+ * @returns {Promise<{ok: boolean, text: string}>}
+ */
+async function followAndConfirm() {
+  const run = followStock({ only: 'all' })
+    .then(async (out) => ({ ...out, results: await confirmCatalog((out.results ?? []).map((r) => ({ ...r, field: 'qty' }))) }))
+    .catch((error) => ({ error: error.message }));
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve({ pending: true }), FOLLOW_WAIT_MS); });
+  const out = await Promise.race([run, late]);
+  clearTimeout(timer);
+  if (out.pending) return { ok: false, text: 'penulisan ke kanal masih berjalan, belum terkonfirmasi' };
+  if (out.error) return { ok: false, text: `penulisan ke kanal gagal: ${out.error}` };
+  if (out.reason) return { ok: false, text: `kanal belum diperbarui: ${out.reason}` };
+  const bad = out.results.filter((r) => r.status !== 'ok');
+  const fine = out.results.length - bad.length;
+  if (bad.length) return { ok: false, text: `${fine} listing terkonfirmasi, ${bad.length} tidak - ${bad[0].sku}: ${bad[0].error}` };
+  return { ok: true, text: fine ? `${fine} listing terkonfirmasi di kanal` : 'kanal sudah sama, tidak ada yang perlu ditulis' };
+}
+
 /** The stock swap to offer after a resend, or null. Never the reason the page fails. */
 async function swapOffer(resendId, user) {
   if (!resendId || !can(user, 'write')) return null;
@@ -534,16 +561,20 @@ export async function handleWrite(form, ip, user, csrf) {
     const plan = planSync({ ledger, catalog });
     if (plan.changes.length === 0) return { view: 'products', message: 'Tidak ada yang perlu ditulis' };
 
-    const result = await applySync(plan, { dryRun: false });
+    const written = await applySync(plan, { dryRun: false });
     invalidate('catalog');
+    const results = await confirmCatalog(written.results.map((r) => ({ ...r, field: 'qty' })));
+    const bad = results.filter((r) => r.status !== 'ok');
+    const result = { ...written, results, succeeded: results.length - bad.length, failed: bad.length };
     console.log(`dashboard: applied ${result.succeeded}/${result.attempted} stock writes`);
     return {
       view: 'products',
-      message: `${result.succeeded} berhasil, ${result.failed} gagal dari ${result.attempted} penulisan stok`,
+      ...(bad.length ? { kind: 'error' } : {}),
+      message: `${result.succeeded} terkonfirmasi, ${result.failed} tidak dari ${result.attempted} penulisan stok${bad.length ? ` - ${bad[0].sku}: ${bad[0].error}` : ''}`,
       audit: {
         menu: 'products', verb: 'sync', target: `${result.attempted} listing`,
         summary: `Menulis stok ledger ke marketplace: ${result.succeeded} berhasil, ${result.failed} gagal`,
-        changes: result.results.map((r) => ({ field: `${r.sku} @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status === 'failed' ? r.error : '' })),
+        changes: result.results.map((r) => ({ field: `${r.sku} @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status !== 'ok' ? r.error : '' })),
       },
     };
   }
@@ -594,10 +625,10 @@ export async function handleWrite(form, ip, user, csrf) {
 
     invalidate('ledger');
     invalidate('catalog');
-    void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
-    console.log(`dashboard: ledger_batch ${written} skus`);
+    const channels = await followAndConfirm();
+    console.log(`dashboard: ledger_batch ${written} skus - ${channels.text}`);
     return {
-      view: 'stock', message: `${written} stok induk disimpan, semua kanal mengikuti`,
+      view: 'stock', ...(channels.ok ? {} : { kind: 'error' }), message: `${written} stok induk disimpan, ${channels.text}`,
       audit: { menu: 'stock', verb: 'edit', target: `${written} SKU`, summary: `Mengubah stok ledger ${written} SKU: ${changes.slice(0, 3).map((c) => `${c.field} ${c.from ?? '—'}→${c.to}`).join(', ')}${changes.length > 3 ? ', …' : ''}`, changes },
     };
   }
@@ -880,10 +911,11 @@ export async function handleWrite(form, ip, user, csrf) {
     const out = await refundOrder({ channel, id, by: user.name || user.email });
     // If its goods had left the shelf, the Stok page now asks whether they came back.
     const { held } = await holdRefundFor({ channel, id, reason: 'refund' });
-    const where = `${out.deleted ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum ada faktur di Jurnal'}${held ? ', menunggu konfirmasi barang di Stok' : ''}`;
+    const unsure = out.deleted && !out.gone;
+    const where = `${unsure ? `Jurnal tidak menolak hapus faktur ${out.transactionNo ?? out.invoiceId}, tapi belum terkonfirmasi hilang` : out.deleted ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum ada faktur di Jurnal'}${held ? ', menunggu konfirmasi barang di Stok' : ''}`;
     console.log(`dashboard: refund_order ${channel} ${id} - ${where}`);
     return {
-      view: 'orders', message: `${id} direfund: hilang dari daftar, ${where}`,
+      view: 'orders', ...(unsure ? { kind: 'error' } : {}), message: `${id} direfund: hilang dari daftar, ${where}`,
       audit: {
         menu: 'orders', verb: 'delete', target: `${channel} ${id}`,
         summary: `Refund ${channel} ${id} senilai Rp${out.total.toLocaleString('id-ID')} - ${where}`,
@@ -903,14 +935,16 @@ export async function handleWrite(form, ip, user, csrf) {
     const { held } = await holdRefundFor({ channel: 'manual', id, reason: 'deleted' });
 
     const where = [
-      out.wasInvoiced ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : 'belum pernah masuk Jurnal',
+      out.wasInvoiced
+        ? (out.gone ? `faktur ${out.transactionNo ?? out.invoiceId} dihapus di Jurnal` : `Jurnal tidak menolak hapus faktur ${out.transactionNo ?? out.invoiceId}, tapi belum terkonfirmasi hilang`)
+        : 'belum pernah masuk Jurnal',
       out.removedFromList ? 'baris pesanan dihapus' : 'tidak ada baris pesanan untuk dihapus',
       ...(held ? ['menunggu konfirmasi barang di Stok'] : []),
     ].join(', ');
 
     console.log(`dashboard: discard_manual ${id} - ${where}`);
     return {
-      view: 'orders', message: `${id} dihapus (${where})`,
+      view: 'orders', ...(out.wasInvoiced && !out.gone ? { kind: 'error' } : {}), message: `${id} dihapus (${where})`,
       audit: {
         menu: 'jurnal', verb: 'delete', target: `manual ${id}`,
         summary: `Menghapus transaksi manual ${id} senilai Rp${out.total.toLocaleString('id-ID')} - ${where}`,
@@ -959,21 +993,23 @@ export async function handleWrite(form, ip, user, csrf) {
       throw new Error(form.getAll('channel').some((c) => String(c) === 'shopify') ? UNMANAGED_MESSAGE : 'pilih minimal satu kanal');
     }
     const catalog = await readCatalog();
-    const results = await applyPrice({ catalog, sku, price, channels: picked });
+    const written = await applyPrice({ catalog, sku, price, channels: picked });
     invalidate('catalog');
+    const results = await confirmCatalog(written.map((r) => ({ ...r, field: 'price' })));
     const ok = results.filter((r) => r.status === 'ok').length;
-    const failed = results.filter((r) => r.status === 'failed');
+    const failed = results.filter((r) => r.status !== 'ok');
     await writeAudit({ results }, { guards: { action: 'price' } }).catch(() => {});
     console.log(`dashboard: price ${sku} -> ${price} (${ok} ok, ${failed.length} failed)`);
     return {
       view: 'products',
+      ...(failed.length ? { kind: 'error' } : {}),
       message: failed.length
-        ? `Harga ${sku}: ${ok} berhasil, ${failed.length} gagal - ${failed[0].error}`
+        ? `Harga ${sku}: ${ok} terkonfirmasi, ${failed.length} tidak - ${failed[0].error}`
         : `Harga ${sku} disetel ke ${price} di ${ok} listing`,
       audit: {
         menu: 'products', verb: 'edit', target: sku,
         summary: `Mengubah harga ${sku} menjadi Rp${price.toLocaleString('id-ID')} di ${ok} listing${failed.length ? `, ${failed.length} gagal` : ''}`,
-        changes: results.map((r) => ({ field: `harga @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status === 'failed' ? r.error : '' })),
+        changes: results.map((r) => ({ field: `harga @ ${CHANNEL_LABEL[r.channel] ?? r.channel}`, from: r.from, to: r.to, note: r.status !== 'ok' ? r.error : '' })),
       },
     };
   }
@@ -1030,7 +1066,8 @@ export async function handleWrite(form, ip, user, csrf) {
         seen.add(key);
         try {
           const out = await LISTING_CHANNELS[channel].edit(ref, patch, images);
-          results.push({ channel, status: 'ok', changed: out.changed, title: row.title });
+          const seenBack = Object.keys(patch).length ? await confirmListing(channel, ref, { patch }) : { status: 'ok' };
+          results.push({ channel, ...seenBack, changed: out.changed, title: row.title });
         } catch (error) {
           results.push({ channel, status: 'failed', error: error.message, title: row.title });
         }
@@ -1039,18 +1076,18 @@ export async function handleWrite(form, ip, user, csrf) {
     invalidate('catalog');
     invalidate('listing:');
     const ok = results.filter((r) => r.status === 'ok').length;
-    const failed = results.filter((r) => r.status === 'failed');
+    const failed = results.filter((r) => r.status === 'failed' || r.status === 'unconfirmed');
     const fields = [...Object.keys(patch), ...(images.length ? [`${images.length} foto`] : [])];
     console.log(`dashboard: listing_edit ${sku} [${picked.join(',')}] ${fields.join(',')} - ${ok} ok, ${failed.length} gagal`);
     return {
       view: 'products',
-      kind: failed.length && !ok ? 'error' : 'ok',
+      kind: failed.length ? 'error' : 'ok',
       message: failed.length
-        ? `${sku}: ${ok} listing diperbarui, ${failed.length} gagal - ${LISTING_CHANNELS[failed[0].channel].label}: ${failed[0].error}`
+        ? `${sku}: ${ok} listing terkonfirmasi, ${failed.length} tidak - ${LISTING_CHANNELS[failed[0].channel].label}: ${failed[0].error}`
         : `${sku}: ${fields.join(', ')} diperbarui di ${ok} listing`,
       audit: {
         menu: 'products', verb: 'edit', target: sku,
-        status: failed.length && !ok ? 'failed' : 'ok',
+        status: failed.length ? 'failed' : 'ok',
         summary: `Mengubah listing ${sku} (${fields.join(', ')}) di ${picked.map((c) => LISTING_CHANNELS[c].label).join(', ')}`,
         changes: [
           ...Object.entries(patch).map(([field, to]) => ({ field, from: field === 'dims' ? JSON.stringify(before.dims ?? null) : before[field] ?? null, to: typeof to === 'object' ? JSON.stringify(to) : to })),
@@ -1087,20 +1124,26 @@ export async function handleWrite(form, ip, user, csrf) {
     if (rows.length === 0) throw new Error(`${sku} tidak punya listing ${active ? 'nonaktif' : 'aktif'} di ${LISTING_CHANNELS[channel].label}`);
     const seen = new Set();
     let done = 0;
+    const doubts = [];
     for (const row of rows) {
       const ref = refOf(channel, row);
       const key = channel === 'shopee' ? ref?.itemId : ref?.productId;
       if (!ref || seen.has(key)) continue;
       seen.add(key);
       await LISTING_CHANNELS[channel].setActive(ref, active);
-      done += 1;
+      const back = await confirmListing(channel, ref, { active });
+      if (back.status === 'ok') done += 1;
+      else doubts.push(back.error);
     }
     settleCatalog();
     console.log(`dashboard: listing_active ${sku} ${channel} -> ${active ? 'aktif' : 'nonaktif'} (${done})`);
     return {
       view: 'products',
-      message: `${sku} ${active ? 'ditayangkan' : 'dinonaktifkan'} di ${LISTING_CHANNELS[channel].label} (${done} listing)`,
-      celebrate: active ? 'Ditayangkan' : null,
+      ...(doubts.length ? { kind: 'error' } : {}),
+      message: doubts.length
+        ? `${sku} di ${LISTING_CHANNELS[channel].label}: ${done} listing terkonfirmasi, ${doubts.length} tidak - ${doubts[0]}`
+        : `${sku} ${active ? 'ditayangkan' : 'dinonaktifkan'} di ${LISTING_CHANNELS[channel].label} (${done} listing)`,
+      celebrate: active && !doubts.length ? 'Ditayangkan' : null,
       audit: {
         menu: 'products', verb: 'edit', target: sku,
         summary: `${active ? 'Mengaktifkan' : 'Menonaktifkan'} ${sku} di ${LISTING_CHANNELS[channel].label}`,
@@ -1272,8 +1315,9 @@ export async function handleWrite(form, ip, user, csrf) {
           return setSku(ledger, sku, { qty, needs_review: false, source: `manual:${user.email}` });
         }, emptyLedger());
         invalidate('ledger');
-        void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
-        done.push('stok induk');
+        const channels = await followAndConfirm();
+        done.push(channels.ok ? `stok induk (${channels.text})` : 'stok induk');
+        if (!channels.ok) problems.push(channels.text);
         changes.push({ field: 'stok induk', from: was, to: qty });
       }
     }
@@ -1286,8 +1330,8 @@ export async function handleWrite(form, ip, user, csrf) {
     if (priceRaw !== '' && picked.length && Number(priceRaw) !== Number(before.price)) {
       const price = Number(priceRaw);
       if (!Number.isInteger(price) || price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
-      const results = await applyPrice({ catalog, sku, price, channels: picked });
-      const failed = results.filter((r) => r.status === 'failed');
+      const results = await confirmCatalog((await applyPrice({ catalog, sku, price, channels: picked })).map((r) => ({ ...r, field: 'price' })));
+      const failed = results.filter((r) => r.status !== 'ok');
       if (results.length - failed.length) done.push(`harga di ${results.length - failed.length} listing`);
       for (const f of failed) problems.push(`harga ${LISTING_CHANNELS[f.channel]?.label ?? f.channel}: ${f.error}`);
       changes.push({ field: 'harga', from: before.price ?? null, to: price });
@@ -1311,8 +1355,12 @@ export async function handleWrite(form, ip, user, csrf) {
           const key = channel === 'shopee' ? ref?.itemId : channel === 'shopify' ? `${ref?.productId}|${ref?.variantId}` : ref?.productId;
           if (!ref || seen.has(key)) continue;
           seen.add(key);
-          try { await LISTING_CHANNELS[channel].edit(ref, patch, images); ok += 1; }
-          catch (error) { problems.push(`${LISTING_CHANNELS[channel].label}: ${error.message}`); }
+          try {
+            await LISTING_CHANNELS[channel].edit(ref, patch, images);
+            const back = Object.keys(patch).length ? await confirmListing(channel, ref, { patch }) : { status: 'ok' };
+            if (back.status === 'ok') ok += 1;
+            else problems.push(`${LISTING_CHANNELS[channel].label}: ${back.error}`);
+          } catch (error) { problems.push(`${LISTING_CHANNELS[channel].label}: ${error.message}`); }
         }
       }
       if (ok) done.push(`${[...Object.keys(patch).map((k) => ({ title: 'judul', description: 'deskripsi', weightGram: 'berat', dims: 'dimensi' }[k])), ...(images.length ? ['foto'] : [])].join(', ')} di ${ok} listing`);
@@ -1328,11 +1376,11 @@ export async function handleWrite(form, ip, user, csrf) {
     console.log(`dashboard: product_save ${sku} - ${done.join('; ')}${problems.length ? ` | gagal: ${problems.join('; ')}` : ''}`);
     return {
       view: 'products', back: `?view=products&sku=${encodeURIComponent(sku)}`,
-      kind: problems.length && !done.length ? 'error' : 'ok',
+      kind: problems.length ? 'error' : 'ok',
       message: `${sku}: ${done.length ? `disimpan - ${done.join(', ')}` : 'tidak ada yang tersimpan'}${problems.length ? `. Gagal: ${problems.join('; ')}` : ''}`,
       celebrate: done.length && !problems.length ? 'Tersimpan & tersinkron' : null,
       audit: {
-        menu: 'products', verb: 'edit', target: sku, status: problems.length && !done.length ? 'failed' : 'ok',
+        menu: 'products', verb: 'edit', target: sku, status: problems.length ? 'failed' : 'ok',
         summary: `Menyimpan ${sku}: ${done.join(', ') || '-'}${problems.length ? ` (gagal: ${problems.length})` : ''}`,
         changes: [...changes, ...problems.map((p) => ({ field: 'gagal', to: p }))],
       },
@@ -1411,8 +1459,8 @@ export async function handleWrite(form, ip, user, csrf) {
         return ledger;
       }, emptyLedger());
       invalidate('ledger');
-      void followStock({ only: 'all' }).catch((error) => console.warn(`stok: ikut stok induk gagal - ${error.message}`));
-      for (const sku of skus) results.push({ sku, ok: true });
+      const channels = await followAndConfirm();
+      for (const sku of skus) results.push({ sku, ok: channels.ok, error: channels.ok ? '' : channels.text });
       summary = `stok induk ${qty}`;
     } else if (action === 'bulk_remove') {
       for (const sku of skus) {
@@ -1427,9 +1475,16 @@ export async function handleWrite(form, ip, user, csrf) {
         if (!Number.isInteger(price) || price < 100) throw new Error('harga minimal Rp100, bilangan bulat');
         const picked = form.getAll('channel').map(String).filter((c) => Object.hasOwn(LISTING_CHANNELS, c) && isManaged(c));
         if (picked.length === 0) throw new Error(form.getAll('channel').some((c) => String(c) === 'shopify') ? UNMANAGED_MESSAGE : 'pilih minimal satu kanal');
+        const sent = [];
         for (const sku of skus) {
-          const r = await applyPrice({ catalog, sku, price, channels: picked }).catch((error) => [{ status: 'failed', error: error.message }]);
-          const failed = r.filter((x) => x.status === 'failed');
+          const rows = await applyPrice({ catalog, sku, price, channels: picked }).catch((error) => [{ sku, status: 'failed', error: error.message }]);
+          sent.push(...rows.map((x) => ({ ...x, field: 'price' })));
+        }
+        // One catalogue read answers for every product in the batch.
+        const seenBack = await confirmCatalog(sent);
+        for (const sku of skus) {
+          const r = seenBack.filter((x) => x.sku === sku);
+          const failed = r.filter((x) => x.status !== 'ok');
           results.push({ sku, ok: failed.length === 0 && r.length > 0, error: failed[0]?.error ?? (r.length ? '' : 'tidak tayang di kanal terpilih') });
         }
         summary = `harga Rp${price.toLocaleString('id-ID')}`;
@@ -1452,6 +1507,8 @@ export async function handleWrite(form, ip, user, csrf) {
               if (!ref || seen.has(key)) continue;
               seen.add(key);
               await LISTING_CHANNELS[channel].setActive(ref, active);
+              const back = await confirmListing(channel, ref, { active });
+              if (back.status !== 'ok') throw new Error(back.error);
             }
             results.push({ sku, ok: true });
           } catch (error) { results.push({ sku, ok: false, error: error.message }); }
@@ -1477,10 +1534,10 @@ export async function handleWrite(form, ip, user, csrf) {
     console.log(`dashboard: ${action} ${skus.length} sku - ${ok.length} ok, ${failed.length} gagal`);
     return {
       view: 'products',
-      kind: failed.length && !ok.length ? 'error' : 'ok',
+      kind: failed.length ? 'error' : 'ok',
       message: `${ok.length} produk ${summary}${failed.length ? `; ${failed.length} gagal: ${failed.slice(0, 3).map((f) => `${f.sku} (${f.error})`).join(', ')}${failed.length > 3 ? ', …' : ''}` : ''}`,
       audit: {
-        menu: 'products', verb: 'edit', target: `${skus.length} produk`, status: failed.length && !ok.length ? 'failed' : 'ok',
+        menu: 'products', verb: 'edit', target: `${skus.length} produk`, status: failed.length ? 'failed' : 'ok',
         summary: `Aksi massal: ${skus.length} produk ${summary}`,
         changes: results.map((r) => ({ field: r.sku, to: r.ok ? 'ok' : 'gagal', note: r.error ?? '' })),
       },
@@ -1678,6 +1735,7 @@ export async function handleWrite(form, ip, user, csrf) {
     const later = result.remaining;
     return {
       view: 'jurnal',
+      ...(failed.length ? { kind: 'error' } : {}),
       message: failed.length === 0
         ? `${result.created} faktur dibuat di Jurnal${result.exists ? `, ${result.exists} sudah ada` : ''}` +
           (result.voided ? `, ${result.voided} dibatalkan dihapus` : '') +

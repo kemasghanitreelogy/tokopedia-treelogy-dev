@@ -7625,6 +7625,7 @@ const PF_STYLE = `
 .ct__kv{display:flex; gap:1.25rem; margin:0}
 .ct__kv dt{font-size:.66rem; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
 .ct__kv dd{margin:.1rem 0 0; font-size:.92rem; font-weight:600}
+.ct__held{display:block; font-size:.68rem; font-weight:500; color:var(--dim); font-family:inherit}
 .ct__title{margin:0; font-size:.76rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .ct__acts{margin-top:.2rem; display:flex; flex-wrap:wrap; gap:.4rem}
 .ct__acts form{margin:0}
@@ -8080,7 +8081,7 @@ function productDetail({ product, live, ledger, stockOf, csrf, plan, picture = n
       ${(() => {
         // A listing not yet live shows what it holds, so a draft is recognisable as one.
         const shown = row ?? (st === 'off' ? switchedOff(key)[0] : null);
-        return shown ? `<dl class="ct__kv"><div><dt>Stok</dt><dd class="mono">${shown.qty}</dd></div><div><dt>Harga</dt><dd class="mono">${escape(rupiah(shown.price ?? 0))}</dd></div></dl>
+        return shown ? `<dl class="ct__kv"><div><dt>Stok</dt><dd class="mono">${shown.qty}${shown.reserved > 0 ? `<small class="ct__held" title="Disisihkan promo Shopee (mis. live / flash sale): tetap stok kita, tapi hanya terjual lewat promo itu">${shown.reserved} dikunci promo</small>` : ''}</dd></div><div><dt>Harga</dt><dd class="mono">${escape(rupiah(shown.price ?? 0))}</dd></div></dl>
         <p class="ct__title" title="${escape(shown.title ?? '')}">${escape(shown.title ?? '')}</p>` : '';
       })()}
       <div class="ct__acts">${key === 'shopify'

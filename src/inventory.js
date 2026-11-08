@@ -99,6 +99,26 @@ export async function readTikTokCatalog(config = loadConfig()) {
   return rows;
 }
 
+/**
+ * A Shopee listing's stock, as the number we wrote.
+ *
+ * `total_available_stock` is seller stock minus what a promotion has set aside. On
+ * 8 Nov 2026 a Shopee Live (Seller Streaming) took all 120 units of OMC-180-001 for the
+ * stream: seller_stock stayed 120, available read 0, the dashboard showed 0 and the
+ * follower kept "correcting" 0 to 120 every round. Reserved units are still ours and
+ * still sell (inside the promotion), so the listing's figure is seller_stock; what the
+ * promotion holds is reported beside it, not subtracted from it.
+ */
+export function shopeeStock(info) {
+  const summary = info?.summary_info ?? {};
+  const available = Number(summary.total_available_stock ?? 0);
+  const reserved = Number(summary.total_reserved_stock ?? 0);
+  const seller = Array.isArray(info?.seller_stock) && info.seller_stock.length > 0
+    ? info.seller_stock.reduce((sum, s) => sum + Number(s.stock ?? 0), 0)
+    : available + reserved;
+  return { qty: seller, available, reserved };
+}
+
 export async function readShopeeCatalog() {
   const { config, auth } = await resolveShopeeSession();
 
@@ -138,8 +158,7 @@ export async function readShopeeCatalog() {
       if (!model.model_sku) continue;
       rows.push({
         sku: model.model_sku,
-        qty: Number(model.stock_info_v2?.summary_info?.total_available_stock ?? 0),
-        reserved: Number(model.stock_info_v2?.summary_info?.total_reserved_stock ?? 0),
+        ...shopeeStock(model.stock_info_v2),
         // Shopee reports price in the shop currency already; original_price is the
         // list price, current_price reflects any running promotion we must not clobber.
         price: Number(model.price_info?.[0]?.original_price ?? 0),
@@ -159,8 +178,7 @@ export async function readShopeeCatalog() {
     if (!item.item_sku) continue;
     rows.push({
       sku: item.item_sku,
-      qty: Number(item.stock_info_v2?.summary_info?.total_available_stock ?? 0),
-      reserved: Number(item.stock_info_v2?.summary_info?.total_reserved_stock ?? 0),
+      ...shopeeStock(item.stock_info_v2),
       price: Number(item.price_info?.[0]?.original_price ?? 0),
       promoPrice: Number(item.price_info?.[0]?.current_price ?? 0),
       hasPromotion: Boolean(item.has_promotion),

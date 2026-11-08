@@ -201,6 +201,9 @@ export function planFollow(catalog, ledger, { only = null } = {}) {
         changes.push({
           sku: entry.sku, title: entry.title, channel, from, to: target, delta: target - from,
           target: true, ref: refFor(channel, row), reason: 'ikut stok induk',
+          // Shopee will not set a listing below what a running promotion holds; the
+          // writer needs this to say so instead of passing on a bare refusal.
+          ...(row.reserved > 0 ? { reserved: row.reserved } : {}),
         });
       }
     }

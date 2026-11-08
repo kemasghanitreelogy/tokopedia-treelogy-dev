@@ -207,13 +207,30 @@ async function writeShopify(row) {
 
 async function writeShopee(config, auth, row) {
   assertWritable(`stok ${row.sku} di Shopee`);
-  await callShopApi(config, '/api/v2/product/update_stock', auth, {}, {
-    item_id: Number(row.ref.itemId),
-    stock_list: [{
-      model_id: Number(row.ref.modelId) || 0,
-      seller_stock: [{ stock: row.to }],
-    }],
-  });
+  try {
+    await callShopApi(config, '/api/v2/product/update_stock', auth, {}, {
+      item_id: Number(row.ref.itemId),
+      stock_list: [{
+        model_id: Number(row.ref.modelId) || 0,
+        seller_stock: [{ stock: row.to }],
+      }],
+    });
+  } catch (error) {
+    throw shopeeStockRefusal(row, error);
+  }
+}
+
+/**
+ * Shopee refuses a stock below what a running promotion (a live stream, a flash sale)
+ * has set aside, with nothing more than "update stock failed". Name the cause, so the
+ * fix - lowering the promotion's stock in Seller Centre - is obvious.
+ */
+export function shopeeStockRefusal(row, error) {
+  if (!(row.reserved > row.to)) return error;
+  const why = new Error(`Shopee menolak stok ${row.to}: ${row.reserved} unit dikunci promo yang sedang berjalan `
+    + `(live / flash sale). Kurangi stok promo itu di Seller Centre, atau tunggu promonya selesai. (${error.message})`);
+  why.cause = error;
+  return why;
 }
 
 /* ------------------------------------------------------------------- price writes */

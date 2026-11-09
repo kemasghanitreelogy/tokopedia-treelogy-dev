@@ -324,11 +324,27 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
 
   // Shopee's error says what went wrong when nothing else does; kept for the bench.
   let statusError = null;
+  const askGroup = (group) => call(config, '/api/v2/logistics/get_shipping_document_result', auth, {}, {
+    order_list: group.map((order_sn) => ({ order_sn })),
+  });
   const askStatus = async (sns) => {
-    const outcomes = await settleLimit(chunks(sns, SHOPEE_BATCH_MAX), SHOPEE_BATCH_CONCURRENCY, (group) =>
-      call(config, '/api/v2/logistics/get_shipping_document_result', auth, {}, {
-        order_list: group.map((order_sn) => ({ order_sn })),
-      }));
+    const outcomes = await settleLimit(chunks(sns, SHOPEE_BATCH_MAX), SHOPEE_BATCH_CONCURRENCY, async (group) => {
+      try {
+        return await askGroup(group);
+      } catch (error) {
+        // One order without a document makes Shopee refuse the whole question, naming
+        // the culprits. Those have no document - which is an answer - and the rest of
+        // the group is asked again without them, so a READY order is still seen as one.
+        const missing = shopeeNotCreated(error, group);
+        if (missing.length === 0) throw error;
+        const rest = group.filter((sn) => !missing.includes(sn));
+        const answered = rest.length > 0 ? await askGroup(rest) : { response: { result_list: [] } };
+        return { response: { result_list: [
+          ...(answered.response?.result_list ?? []),
+          ...missing.map((order_sn) => ({ order_sn, status: NOT_CREATED })),
+        ] } };
+      }
+    });
     const rows = [];
     for (const outcome of outcomes) {
       if (outcome.ok) { rows.push(...(outcome.value.response?.result_list ?? [])); continue; }
@@ -381,11 +397,19 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
     }
   }
 
+  // Only what the waiting itself was refused counts against an order. The first question
+  // is asked before any document exists and is expected to be turned down; on 9 Nov that
+  // refusal outlived it and three labels Shopee was still generating were filed under
+  // "check the order" with an error about other orders, when a reprint was all they needed.
+  statusError = null;
+  const unmade = new Set();
   for (let attempt = 0; attempt < READY_POLL_ATTEMPTS && pending.size > 0; attempt++) {
     const statuses = await askStatus([...pending]);
     if (statuses.length === 0) break;
 
     for (const row of statuses) {
+      if (row.status === NOT_CREATED) unmade.add(row.order_sn);
+      else unmade.delete(row.order_sn);
       if (row.status === 'READY') {
         ready.add(row.order_sn);
         pending.delete(row.order_sn);
@@ -401,7 +425,8 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
 
   // Not ready is only said when Shopee said it; a refused question is reported as itself.
   for (const sn of pending) {
-    if (statusError) note(sn, `status dokumen tidak terbaca - ${statusError.message}`, isTransientShopeeError(statusError) ? 'retry' : 'check');
+    if (unmade.has(sn)) note(sn, 'Shopee belum membuat dokumennya - cetak ulang', 'retry');
+    else if (statusError) note(sn, `status dokumen tidak terbaca - ${statusError.message}`, isTransientShopeeError(statusError) ? 'retry' : 'check');
     else note(sn, 'dokumen belum siap di kurir setelah menunggu', 'wait');
   }
   if (ready.size === 0) return { pages: [], failures };
@@ -420,6 +445,19 @@ export async function fetchShopeeLabels(orders, documentType = 'THERMAL_AIR_WAYB
     }
   });
   return { pages, failures };
+}
+
+/** A status row of our own: Shopee said this order has no document yet. */
+const NOT_CREATED = 'NOT_CREATED';
+
+/**
+ * The orders Shopee names in `shipping_document_should_print_first`, limited to the group
+ * asked about. Its message lists them: "Detail: these orders: A,B,C should print".
+ */
+export function shopeeNotCreated(error, group) {
+  if (!String(error?.code ?? error?.message ?? '').includes('should_print_first')) return [];
+  const named = new Set(String(error.message ?? '').match(/\b[0-9]{6}[0-9A-Z]{8}\b/g) ?? []);
+  return group.filter((sn) => named.has(sn));
 }
 
 /** Shopee refuses to combine some packages in one document, and only says so on download. */

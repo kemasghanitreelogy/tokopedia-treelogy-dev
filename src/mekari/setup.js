@@ -1,6 +1,6 @@
-import { mekari } from './client.js';
+import { mekari, MekariError } from './client.js';
 import { CUSTOMER_NAMES, productNameFor, fitAddress } from './invoice.js';
-import { PRODUCTS } from '../master.js';
+import { PRODUCTS, findProduct } from '../master.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 
 /**
@@ -123,11 +123,11 @@ const PRODUCTS_PATH = '/public/jurnal/api/v1/products';
 export const SELL_ACCOUNT_NUMBER = '4-40000';
 
 /** Existing products keyed by product_code, which is our SKU. */
-export async function listProducts() {
+export async function listProducts({ call = mekari } = {}) {
   const byCode = new Map();
   let page = 1;
   for (;;) {
-    const result = await mekari({ path: `${PRODUCTS_PATH}?page=${page}&page_size=100` });
+    const result = await call({ path: `${PRODUCTS_PATH}?page=${page}&page_size=100` });
     const rows = result?.products ?? [];
     for (const row of rows) {
       const code = row.product_code ?? row.code;
@@ -152,41 +152,102 @@ export async function listProducts() {
  * one that disagrees, and would demand an inventory asset account and COGS postings that
  * nobody asked for.
  */
-export async function ensureProducts({ dryRun = true } = {}) {
-  const existing = await listProducts();
-  const wanted = PRODUCTS.map((p) => ({ sku: p.sku, name: productNameFor({ sku: p.sku }) }));
-  const missing = wanted.filter((p) => !existing.has(p.sku));
+export async function ensureProducts({ dryRun = true, call = mekari } = {}) {
+  const existing = await listProducts({ call });
+  const wanted = PRODUCTS.map((p) => p.sku);
+  const missing = wanted.filter((sku) => !existing.has(sku));
 
-  if (dryRun) return { created: [], existing: wanted.length - missing.length, missing: missing.map((p) => p.sku) };
-  if (missing.length > 0 && isReadOnly()) throw new ReadOnlyError(`${missing.length} produk`);
+  if (dryRun) return { created: [], existing: wanted.length - missing.length, missing };
+  const result = await createProducts(missing, { call });
+  lastIncomplete = result.failed.length > 0;
+  lastFailed = result.failed;
+  return { ...result, existing: wanted.length - missing.length, missing: result.failed.map((f) => f.sku) };
+}
 
+/**
+ * Make these SKUs exist as Jurnal products, now - whatever the catalogue check believes.
+ *
+ * Called the moment a product is added from the dashboard, and again by an invoice that
+ * Jurnal refused for a product it does not hold. A SKU is resolved through the master
+ * catalogue, so an alias lands on its product and a product removed from the screens (old
+ * orders still name it) can still be created.
+ */
+export async function ensureProductsFor(skus, { call = mekari, deadlineAt = null } = {}) {
+  const codes = [...new Set(skus.map((sku) => findProduct(sku)?.sku).filter(Boolean))];
+  if (codes.length === 0) return { created: [], alreadyThere: [], failed: [] };
+  const existing = await listProducts({ call });
+  const missing = codes.filter((code) => !existing.has(code));
+  if (missing.length === 0) return { created: [], alreadyThere: codes, failed: [] };
+  if (isReadOnly()) throw new ReadOnlyError(`${missing.length} produk`);
+  return createProducts(missing, { call, deadlineAt });
+}
+
+async function createProducts(skus, { call = mekari, deadlineAt = null } = {}) {
+  if (skus.length > 0 && isReadOnly()) throw new ReadOnlyError(`${skus.length} produk`);
   const created = [];
   const alreadyThere = [];
-  for (const product of missing) {
+  const failed = [];
+  const create = (name, sku) => call({
+    method: 'POST',
+    path: PRODUCTS_PATH,
+    deadlineAt,
+    body: {
+      product: {
+        name,
+        product_code: sku,
+        is_sold: true,
+        is_bought: false,
+        sell_account_number: SELL_ACCOUNT_NUMBER,
+        track_inventory: false,
+        description: 'Dibuat otomatis dari data master Treelogy',
+      },
+    },
+  });
+  for (const sku of skus) {
+    const name = productNameFor({ sku });
     try {
-      await mekari({
-        method: 'POST',
-        path: PRODUCTS_PATH,
-        body: {
-          product: {
-            name: product.name,
-            product_code: product.sku,
-            is_sold: true,
-            is_bought: false,
-            sell_account_number: SELL_ACCOUNT_NUMBER,
-            track_inventory: false,
-            description: 'Dibuat otomatis dari data master Treelogy',
-          },
-        },
-      });
-      created.push(product.sku);
+      try {
+        await create(name, sku);
+      } catch (error) {
+        if (!NAME_TAKEN.test(errorText(error))) throw error;
+        // Jurnal wants names unique, and a product removed from master keeps its Jurnal
+        // product and name: The-Inside-&-Out180+30 held "Inside Out Protocol 60 Days -
+        // Oil 60ml + Caps 180" when The-Inside-&-Out180+60 was added under the same words.
+        // Invoices match on code, so the name only has to be told apart, by its SKU.
+        await create(uniqueProductName({ name, sku }), sku);
+      }
+      created.push(sku);
     } catch (error) {
-      if (existingIdFrom(error) === undefined) throw error;
-      alreadyThere.push(product.sku);
+      if (existingIdFrom(error) !== undefined) { alreadyThere.push(sku); continue; }
+      // Out of quota, rate-limited or unsure whether the write landed is true of every
+      // product after this one too - stop. A refusal of this product is only this product:
+      // it must not hold every other order's invoice back, as it did on 10 Nov.
+      if (!(error instanceof MekariError) || !error.status || error.status >= 500 || error.status === 429) throw error;
+      failed.push({ sku, error: errorText(error) });
     }
   }
-  return { created, alreadyThere, existing: wanted.length - missing.length, missing: [] };
+  return { created, alreadyThere, failed };
 }
+
+const NAME_TAKEN = /name has already been taken/i;
+const errorText = (error) => `${error?.message ?? ''} ${JSON.stringify(error?.body ?? '')}`;
+
+/** A product's name with its SKU, for when another product already holds the plain one. */
+export const uniqueProductName = (product) => `${product.name} (${product.sku})`;
+
+/** Whether the last product check left something uncreated - then nothing is proven. */
+let lastIncomplete = false;
+let lastFailed = [];
+
+/**
+ * Jurnal's refusal of an invoice names a row, not a product. Say which products could not
+ * be created and why, so the alert explains itself.
+ */
+export function explainMissingProduct(message) {
+  if (!PRODUCT_MISSING.test(String(message ?? '')) || lastFailed.length === 0) return message;
+  return `${message} - produk belum bisa dibuat di Jurnal: ${lastFailed.map((f) => `${f.sku} (${f.error.trim()})`).join('; ')}`;
+}
+export const productsIncomplete = () => lastIncomplete;
 
 export const READY_FOR_MS = 24 * 60 * 60 * 1000;
 let readyUntil = 0;
@@ -227,7 +288,10 @@ export async function ensureReady({ dryRun = true, readyAt = null, readyFor = nu
 
   const customers = await ensureCustomers({ dryRun });
   const products = await ensureProducts({ dryRun });
-  if (!dryRun) { readyUntil = now + READY_FOR_MS; readyKey = key; }
+  if (!dryRun && !products.failed?.length) { readyUntil = now + READY_FOR_MS; readyKey = key; }
+  if (products.failed?.length) {
+    console.warn(`Jurnal: ${products.failed.length} produk belum bisa dibuat - ${products.failed.map((f) => `${f.sku}: ${f.error.trim()}`).join('; ')}`);
+  }
   return { customers, products };
 }
 
@@ -246,6 +310,7 @@ export function stampReady(ledger, now = Date.now(), { results = [] } = {}) {
     readyUntil = 0;
     return;
   }
+  if (lastIncomplete) { delete ledger.ready_at; delete ledger.ready_for; return; }
   const key = catalogueKey();
   const fresh = ledger.ready_at && now - Date.parse(ledger.ready_at) < READY_FOR_MS;
   if (fresh && ledger.ready_for === key) return;

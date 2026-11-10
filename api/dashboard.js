@@ -135,7 +135,7 @@ const POOLED_LABEL = 'akun penampung per kanal';
 import { buildManualOrder, buildResend, formatManualCode, encodeSequence, manualOutcome } from '../src/mekari/manual.js';
 import { reserveManualSequence } from '../src/mekari/sequence.js';
 import { buildInvoice, verifyInvoice } from '../src/mekari/invoice.js';
-import { listContacts } from '../src/mekari/setup.js';
+import { listContacts, ensureProductsFor } from '../src/mekari/setup.js';
 import { wibDate } from '../src/range.js';
 import { channelToday, channelDate, businessToday } from '../src/clock.js';
 import { loadHeartbeat } from '../src/mekari/heartbeat.js';
@@ -1613,15 +1613,18 @@ export async function handleWrite(form, ip, user, csrf) {
       invalidate('ledger');
     }
     invalidate('catalog');
+    // Into Jurnal at once, so its first invoice finds it. Not fatal: an invoice that meets
+    // a missing product creates it itself (postInvoiceCreatingProducts).
+    const jurnal = await productIntoJurnal(sku);
     const label = (c) => LISTING_CHANNELS[c].label;
-    console.log(`dashboard: product_create ${sku} [${picked.join(',')}] ${ok.length} ok, ${failed.length} gagal`);
+    console.log(`dashboard: product_create ${sku} [${picked.join(',')}] ${ok.length} ok, ${failed.length} gagal; jurnal ${jurnal}`);
     return {
       view: 'products',
       back: `?view=products&sku=${encodeURIComponent(sku)}`,
       kind: failed.length ? 'error' : 'ok',
-      message: picked.length === 0
+      message: `${picked.length === 0
         ? `${sku} ditambahkan ke master`
-        : `${ok.length ? `${sku} dibuat${draft ? ' sebagai draft' : ''} di ${ok.map((r) => label(r.channel)).join(', ')}` : `${sku} belum terkonfirmasi di kanal mana pun`}${failed.length ? `; bermasalah di ${failed.map((r) => `${label(r.channel)} (${r.error})`).join(', ')}` : ''}`,
+        : `${ok.length ? `${sku} dibuat${draft ? ' sebagai draft' : ''} di ${ok.map((r) => label(r.channel)).join(', ')}` : `${sku} belum terkonfirmasi di kanal mana pun`}${failed.length ? `; bermasalah di ${failed.map((r) => `${label(r.channel)} (${r.error})`).join(', ')}` : ''}`}; Jurnal: ${jurnal}`,
       celebrate: failed.length ? null : 'Produk dibuat',
       audit: {
         menu: 'products', verb: 'add', target: sku,
@@ -2674,5 +2677,22 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error(`dashboard: render failed - ${error.message}`);
     send(502, dashboardError('Could not load orders', error.message));
+  }
+}
+
+/**
+ * A product just added to master, made to exist in Jurnal. "Sudah ada" comes from Jurnal's
+ * own product list, "dibuat" from Jurnal accepting the create; a refusal is shown with
+ * Jurnal's own words.
+ */
+async function productIntoJurnal(sku) {
+  if (process.env.MEKARI_SYNC_LIVE !== '1' || !isMekariConfigured()) return 'tidak aktif';
+  try {
+    const out = await ensureProductsFor([sku]);
+    if (out.created.length) return 'produk dibuat';
+    if (out.alreadyThere.length) return 'produk sudah ada';
+    return `gagal (${out.failed.map((f) => f.error.trim()).join('; ')}) - dibuat otomatis saat faktur pertama`;
+  } catch (error) {
+    return `gagal (${error.message}) - dibuat otomatis saat faktur pertama`;
   }
 }

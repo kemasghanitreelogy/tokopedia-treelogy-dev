@@ -4,7 +4,7 @@ import { claimInvoice, releaseInvoice } from './claim.js';
 import { loadRetryBook, isDue, recordOutcomes } from './retry.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomId, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
-import { ensureContact, rememberContacts, knownContactNames, stampReady } from './setup.js';
+import { ensureContact, rememberContacts, knownContactNames, stampReady, explainMissingProduct, ensureProductsFor, PRODUCT_MISSING } from './setup.js';
 import { accountMap } from './accounts.js';
 import { receivableFor } from './sources.js';
 import { isSellingSource } from './prefix.js';
@@ -403,6 +403,32 @@ async function postInvoice(payload, { deadlineAt = null } = {}) {
 }
 
 /**
+ * Post, and if Jurnal does not hold a product the invoice names, create it and post again.
+ *
+ * Four Shopify orders waited fifteen hours on 9-10 Nov for two bundles added from the
+ * dashboard that never reached Jurnal. The invoice knows exactly which products it needs,
+ * so it makes them exist itself rather than waiting on the catalogue check. Posting again
+ * is safe: a 422 is a refusal, so nothing was stored the first time.
+ */
+export async function postInvoiceCreatingProducts(payload, { deadlineAt = null, post = postInvoice, ensure = ensureProductsFor } = {}) {
+  try {
+    return await post(payload, { deadlineAt });
+  } catch (error) {
+    if (error?.status !== 422 || !PRODUCT_MISSING.test(`${error.message} ${JSON.stringify(error.body ?? '')}`)) throw error;
+    const codes = (payload.sales_invoice.transaction_lines_attributes ?? []).map((line) => line.product_code).filter(Boolean);
+    const made = await ensure(codes, { deadlineAt });
+    if (made.created.length === 0) {
+      error.message = made.failed.length
+        ? `${error.message} - produk tidak bisa dibuat di Jurnal: ${made.failed.map((f) => `${f.sku} (${f.error.trim()})`).join('; ')}`
+        : error.message;
+      throw error;
+    }
+    console.warn(`mekari: produk ${made.created.join(', ')} dibuat di Jurnal untuk faktur ${payload.sales_invoice.custom_id ?? ''}`);
+    return post(payload, { deadlineAt });
+  }
+}
+
+/**
  * One post at a time per order, for the whole process.
  *
  * Shopee sent two pushes for order 260924UVXBBSDM a second apart. Both read the ledger
@@ -540,7 +566,7 @@ async function postOrderUncoordinated(order, { accounts = null, dryRun = true, d
     //
     // So a create that gets no answer raises UncertainWriteError, and the branch below
     // resolves the uncertainty by asking Jurnal instead of guessing.
-    const created = await postInvoice(payload, { deadlineAt });
+    const created = await postInvoiceCreatingProducts(payload, { deadlineAt });
     const invoice = created?.sales_invoice ?? created;
     // Jurnal has silently stored a different number than it was sent before - shipping
     // dropped to zero without is_shipped - and the only way to know is to read back what
@@ -771,6 +797,7 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
     // free, so leave room rather than racing the platform timeout.
     if (Date.now() > stopAt) { ranOutOfTime = true; break; }
     const result = await postOrder(order, { accounts, dryRun, deadlineAt });
+    if (result.status === 'failed') result.error = explainMissingProduct(result.error);
     results.push(result);
     if (result.monthly) {
       // Every further order would fail the same way and spend nothing but time.

@@ -114,7 +114,7 @@ export default async function handler(req, res) {
     // additive and idempotent, so the next tick picks up whatever was missed. What must
     // not happen is treating "no data" as "nothing to post" in the report.
     const ledgerBefore = await loadSyncLedger();
-    const prepared = dryRun ? null : await ensureReady({ dryRun: false, readyAt: ledgerBefore.ready_at ?? null });
+    const prepared = dryRun ? null : await ensureReady({ dryRun: false, readyAt: ledgerBefore.ready_at ?? null, readyFor: ledgerBefore.ready_for ?? null });
     timings.prepare_ms = elapsed() - timings.collect_ms;
 
     const postBudget = Math.max(0, remaining() - RECOVERY_NEEDS_MS);

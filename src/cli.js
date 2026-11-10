@@ -987,7 +987,14 @@ async function cmdMekariSync(config, args = []) {
   const preview = await runSync({ orders, accounts, dryRun: true, limit: 1000 });
   printSyncResult(preview);
 
-  if (preview.considered === 0) { console.log(`${ok('semua pesanan sudah ada di Jurnal')}\n`); return 0; }
+  if (preview.considered === 0) {
+    // Orders backing off between retries are not in Jurnal; "all there" said they were
+    // while four Shopify orders had been refused for fifteen hours.
+    console.log(preview.waiting > 0
+      ? `${warn(`${preview.waiting} pesanan belum di Jurnal, menunggu giliran dicoba ulang`)}\n`
+      : `${ok('semua pesanan sudah ada di Jurnal')}\n`);
+    return 0;
+  }
   if (!args.includes('--yes')) { console.log(`${warn('belum dikirim. Ulangi dengan --yes untuk menulis ke Jurnal')}\n`); return 1; }
 
   // From here every step talks to Jurnal, and any of them can be the one that finds the
@@ -1009,7 +1016,7 @@ async function cmdMekariSync(config, args = []) {
 
     // Customers and products both have to exist before an invoice can name them; Jurnal
     // rejects the whole invoice otherwise.
-    await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null });
+    await ensureReady({ dryRun: false, readyAt: ledgerNow.ready_at ?? null, readyFor: ledgerNow.ready_for ?? null });
 
     /*
      * Cancellations that fell outside the posting window, before anything else is sent.

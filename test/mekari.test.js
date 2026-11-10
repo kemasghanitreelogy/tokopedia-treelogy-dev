@@ -755,10 +755,51 @@ test('the Jurnal tab shows a wrong number, a voided sale and a review case for w
 });
 
 test('readiness proven within a day is not proven again', async () => {
-  const { ensureReady } = await import('../src/mekari/setup.js');
+  const { ensureReady, catalogueKey } = await import('../src/mekari/setup.js');
   const fresh = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const result = await ensureReady({ dryRun: false, readyAt: fresh });
+  const result = await ensureReady({ dryRun: false, readyAt: fresh, readyFor: catalogueKey() });
   assert.equal(result.skipped, 'sudah dipastikan dalam 24 jam terakhir');
+});
+
+/*
+ * 9 Nov: two Inside Out Protocol bundles were added to master at 06:45 and 06:49 UTC.
+ * Every sync stamped ready_at with its own time, so the product check never ran again,
+ * and four Shopify orders were refused for 15 hours: "Product in transaction lines
+ * attributes on row 1 not available".
+ */
+test('a proof made for an older catalogue does not hold after a product is added', async () => {
+  const { isRemembered, catalogueKey } = await import('../src/mekari/setup.js');
+  const fresh = new Date(Date.now() - 60 * 1000).toISOString();
+  const before = catalogueKey().split('|').filter((sku) => sku !== 'MRS-004').join('|');
+  assert.equal(isRemembered({ readyAt: fresh, readyFor: catalogueKey() }), true);
+  assert.equal(isRemembered({ readyAt: fresh, readyFor: before }), false);
+  assert.equal(isRemembered({ readyAt: fresh, readyFor: null }), false, 'a ledger from before this fix proves nothing');
+});
+
+test('a sync renews the proof only when one was really made', async () => {
+  const { stampReady, catalogueKey, READY_FOR_MS } = await import('../src/mekari/setup.js');
+  const now = Date.parse('2026-11-10T01:13:15Z');
+  const proven = new Date(now - 60 * 60 * 1000).toISOString();
+
+  const kept = { ready_at: proven, ready_for: catalogueKey() };
+  stampReady(kept, now);
+  assert.equal(kept.ready_at, proven, 'a run within the day must not move the proof forward');
+
+  const stale = { ready_at: new Date(now - READY_FOR_MS - 1).toISOString(), ready_for: catalogueKey() };
+  stampReady(stale, now);
+  assert.equal(stale.ready_at, new Date(now).toISOString());
+
+  const older = { ready_at: proven, ready_for: 'A|B' };
+  stampReady(older, now);
+  assert.equal(older.ready_for, catalogueKey());
+});
+
+test('Jurnal naming a missing product wipes the proof so the next run checks first', async () => {
+  const { stampReady, catalogueKey } = await import('../src/mekari/setup.js');
+  const ledger = { ready_at: new Date().toISOString(), ready_for: catalogueKey() };
+  stampReady(ledger, Date.now(), { results: [{ status: 'failed', error: 'POST /public/jurnal/api/v1/sales_invoices -> HTTP 422: "Product in transaction lines attributes on row 1 not available"' }] });
+  assert.equal(ledger.ready_at, undefined);
+  assert.equal(ledger.ready_for, undefined);
 });
 
 /* ------------------------------------------------- per-source booking policy */

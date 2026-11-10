@@ -4,7 +4,7 @@ import { claimInvoice, releaseInvoice } from './claim.js';
 import { loadRetryBook, isDue, recordOutcomes } from './retry.js';
 import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomId, CUSTOMER_NAMES } from './invoice.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
-import { ensureContact, rememberContacts, knownContactNames } from './setup.js';
+import { ensureContact, rememberContacts, knownContactNames, stampReady } from './setup.js';
 import { accountMap } from './accounts.js';
 import { receivableFor } from './sources.js';
 import { isSellingSource } from './prefix.js';
@@ -812,7 +812,7 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
     }
   }
   if (!dryRun) {
-    ledger.ready_at = new Date().toISOString();
+    stampReady(ledger, Date.now(), { results });
     await saveSyncLedger(ledger);
     // Written after the ledger, never before: an order recorded as failing that actually
     // landed would be chased forever, and one cleared that did not land would be lost.

@@ -20,12 +20,9 @@ import { rememberOrder } from '../orders-source.js';
  * changed. The order is then re-read from the platform over our own signed connection,
  * so a forged or replayed push can at worst make us look up an order we already own.
  *
- * Whether the channel customers exist is remembered for the life of the instance. Fluid
- * Compute reuses instances, so asking Jurnal on every push would double the work for an
- * answer that only changes once.
+ * Whether the channel customers and products exist is remembered by ensureReady for as
+ * long as the catalogue stays the same, so a push does not ask Jurnal every time.
  */
-
-let customersReady = false;
 
 export const liveEnabled = () => process.env.MEKARI_SYNC_LIVE === '1';
 /**
@@ -151,10 +148,9 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
     return { status: 'held', customId, stage: order.stage, reason: 'MEKARI_SYNC_LIVE belum disetel' };
   }
 
-  if (!customersReady) {
-    await ensureReady({ dryRun: false, readyAt: ledger.ready_at ?? null });
-    customersReady = true;
-  }
+  // Remembered inside ensureReady, per catalogue: free when nothing changed, and a
+  // product added from the dashboard is created in Jurnal before its first invoice.
+  await ensureReady({ dryRun: false, readyAt: ledger.ready_at ?? null, readyFor: ledger.ready_for ?? null });
 
   // No lock here. Locking would serialise unrelated pushes for the sake of a race the
   // custom_id probe already closes; the worst a lost race costs is a ledger entry that

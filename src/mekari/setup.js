@@ -188,8 +188,21 @@ export async function ensureProducts({ dryRun = true } = {}) {
   return { created, alreadyThere, existing: wanted.length - missing.length, missing: [] };
 }
 
-const READY_FOR_MS = 24 * 60 * 60 * 1000;
+export const READY_FOR_MS = 24 * 60 * 60 * 1000;
 let readyUntil = 0;
+let readyKey = null;
+
+/**
+ * Which catalogue a proof of readiness was made for.
+ *
+ * A proof says "every product existed", and that stops being true the moment a product
+ * is added from the dashboard. On 9 Nov two Inside Out Protocol bundles were added, the
+ * remembered proof kept the check from running, and every Shopify order for them was
+ * refused by Jurnal ("Product ... on row 1 not available") for fifteen hours.
+ */
+export const PRODUCT_MISSING = /Product in transaction lines.*not available/i;
+
+export const catalogueKey = () => PRODUCTS.map((p) => p.sku).sort().join('|');
 
 /**
  * Everything Jurnal needs to hold before the first invoice can be written.
@@ -200,15 +213,44 @@ let readyUntil = 0;
  * remembered: for the life of the instance, and across instances through the ledger's
  * `ready_at`, for a day. A run that fails for a missing product would still fail loudly.
  */
-export async function ensureReady({ dryRun = true, readyAt = null } = {}) {
+/** Whether a proof still stands: under a day old and made for the catalogue as it is now. */
+export function isRemembered({ readyAt = null, readyFor = null, now = Date.now() } = {}) {
+  const key = catalogueKey();
+  return (readyUntil > now && readyKey === key)
+    || Boolean(readyAt && readyFor === key && now - Date.parse(readyAt) < READY_FOR_MS);
+}
+
+export async function ensureReady({ dryRun = true, readyAt = null, readyFor = null } = {}) {
   const now = Date.now();
-  const remembered = readyUntil > now || (readyAt && now - Date.parse(readyAt) < READY_FOR_MS);
-  if (remembered && !dryRun) return { skipped: 'sudah dipastikan dalam 24 jam terakhir' };
+  const key = catalogueKey();
+  if (isRemembered({ readyAt, readyFor, now }) && !dryRun) return { skipped: 'sudah dipastikan dalam 24 jam terakhir' };
 
   const customers = await ensureCustomers({ dryRun });
   const products = await ensureProducts({ dryRun });
-  if (!dryRun) readyUntil = now + READY_FOR_MS;
+  if (!dryRun) { readyUntil = now + READY_FOR_MS; readyKey = key; }
   return { customers, products };
+}
+
+/**
+ * The ledger's record of a proof, renewed only when a proof was really made.
+ *
+ * Every sync used to stamp ready_at with its own time, so a proof made once was renewed
+ * every fifteen minutes by runs that never checked anything, and never expired.
+ */
+export function stampReady(ledger, now = Date.now(), { results = [] } = {}) {
+  // Jurnal saying a product is missing is the proof being wrong (a product added here,
+  // or one deleted there): forget it, so the next run checks before it posts again.
+  if (results.some((r) => r.status === 'failed' && PRODUCT_MISSING.test(String(r.error ?? '')))) {
+    delete ledger.ready_at;
+    delete ledger.ready_for;
+    readyUntil = 0;
+    return;
+  }
+  const key = catalogueKey();
+  const fresh = ledger.ready_at && now - Date.parse(ledger.ready_at) < READY_FOR_MS;
+  if (fresh && ledger.ready_for === key) return;
+  ledger.ready_at = new Date(now).toISOString();
+  ledger.ready_for = key;
 }
 
 /**

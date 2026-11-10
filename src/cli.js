@@ -987,7 +987,7 @@ async function cmdMekariSync(config, args = []) {
   const preview = await runSync({ orders, accounts, dryRun: true, limit: 1000 });
   printSyncResult(preview);
 
-  if (preview.considered === 0) {
+  if (preview.considered === 0 && !preview.amendsDue) {
     // Orders backing off between retries are not in Jurnal; "all there" said they were
     // while four Shopify orders had been refused for fifteen hours.
     console.log(preview.waiting > 0
@@ -1047,6 +1047,12 @@ async function cmdMekariSync(config, args = []) {
     // seven days. The retry book knows which orders have been tried enough times to be
     // worth reporting, and remembers what it already said across runs.
     await reportStuck();
+    for (const a of result.amended ?? []) {
+      console.log(a.status === 'amended' ? ok(`${a.customId}: faktur diperbarui (${a.total})`) : warn(`${a.customId}: ${a.error}`));
+    }
+    // Once each: a refusal clears the entry's retry marker, so the next sweep is silent.
+    const refused = (result.amended ?? []).filter((a) => a.status === 'failed' && a.permanent);
+    if (refused.length > 0) await notifySyncFailures({ source: 'sapuan otomatis', results: refused });
     return printSyncResult(result);
   } catch (error) {
     if (!(error instanceof QuotaExhaustedError)) throw error;

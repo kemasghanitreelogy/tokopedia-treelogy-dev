@@ -915,6 +915,9 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
     results,
     undone,
     amended,
+    // Counted on a dry run too, so the sweep's preview does not call a pending edit
+    // "nothing to do" and stop before the real run that would write it.
+    amendsDue: pendingAmends(orders, ledger).length,
     voided: undone.filter((u) => u.outcome === 'voided').length,
     needsReview: undone.filter((u) => u.outcome === 'needs_review').length,
     // Cancellations and returns still in progress. Counted, never recorded: the next sweep

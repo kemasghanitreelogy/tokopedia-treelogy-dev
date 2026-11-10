@@ -154,6 +154,9 @@ export default async function handler(req, res) {
         ...(result.undone ?? [])
           .filter((u) => u.outcome === 'needs_review' || u.outcome === 'failed')
           .map((u) => ({ status: 'failed', customId: u.customId, error: u.reason })),
+        // An edit still locked out is retried quietly next sweep; only a refusal that will
+        // not clear on its own (a payment recorded) is put in front of a person.
+        ...(result.amended ?? []).filter((a) => a.status === 'failed' && a.permanent),
       ];
       await notifySyncFailures({ source: 'sapuan otomatis', results: reportable, channelErrors: errors });
       await beatSweep({

@@ -6,6 +6,7 @@ import { buildInvoice, verifyInvoice, customIdFor, customerFor, normaliseCustomI
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames, stampReady, explainMissingProduct, ensureProductsFor, PRODUCT_MISSING } from './setup.js';
 import { accountMap } from './accounts.js';
+import { amendManualInvoice } from './amend.js';
 import { receivableFor } from './sources.js';
 import { isSellingSource } from './prefix.js';
 /**
@@ -66,7 +67,8 @@ const TRANSIENT_CODES = new Set([
 export function isTransient(error) {
   if (error?.monthly) return true; // deferred until the quota returns; the run itself stops
   const status = error?.status;
-  if (status === 429 || (status >= 500 && status < 600)) return true;
+  // 423: the record was locked by another write in flight - nothing landed, try later.
+  if (status === 429 || status === 423 || (status >= 500 && status < 600)) return true;
   // Jurnal answered, and its answer settles it. Reading the message after a status is
   // what made "HTTP 422: alamat ETIMEDOUT tidak valid" - a validation refusal quoting a
   // buyer's address back at us - look like a network blip worth retrying forever.
@@ -651,6 +653,18 @@ export function undoneCandidates(orders, ledger) {
 }
 
 /**
+ * Invoices whose edit could not be written when it arrived - Jurnal had the record locked
+ * (423) or was down - and were marked `amend_pending` by the webhook. Rewritten from the
+ * order as it stands now, so a second edit in between is folded in rather than lost.
+ */
+export function pendingAmends(orders, ledger) {
+  return orders.filter((o) => {
+    const entry = ledger.orders?.[customIdFor(o)];
+    return entry && entry.amend_pending && entry.invoice_id && !entry.voided && POSTABLE_STAGES.has(o.stage);
+  });
+}
+
+/**
  * Outcomes that are written into the ledger entry, and the ones deliberately absent.
  *
  * 'pending' is not here: a cancellation the seller can still refuse must leave no trace,
@@ -838,6 +852,30 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
       await saveSyncLedger(ledger);
     }
   }
+  // Edits that missed their moment. amendManualInvoice reads and writes this same ledger
+  // object, so the save below cannot put a stale entry back over the amended one.
+  const amended = [];
+  if (!dryRun) {
+    for (const order of pendingAmends(orders, ledger)) {
+      if (Date.now() > stopAt || quotaExhausted) break;
+      const customId = customIdFor(order);
+      try {
+        const out = await amendManualInvoice(order, {
+          accounts, loadLedger: async () => ledger, saveLedger: saveSyncLedger,
+        });
+        amended.push({ customId, status: 'amended', total: out.total });
+      } catch (error) {
+        // Permanent refusals stop being retried; the failure is reported either way.
+        const permanent = !isTransient(error);
+        if (permanent) {
+          const { amend_pending: _p, ...rest } = ledger.orders[customId];
+          ledger.orders[customId] = { ...rest, needs_review: `faktur tidak bisa diperbarui: ${error.message}` };
+          await saveSyncLedger(ledger);
+        }
+        amended.push({ customId, status: 'failed', permanent, error: `pesanan diedit tapi faktur Jurnal tidak bisa diperbarui: ${error.message}` });
+      }
+    }
+  }
   if (!dryRun) {
     stampReady(ledger, Date.now(), { results });
     await saveSyncLedger(ledger);
@@ -876,6 +914,7 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
     waitingOrders: held,
     results,
     undone,
+    amended,
     voided: undone.filter((u) => u.outcome === 'voided').length,
     needsReview: undone.filter((u) => u.outcome === 'needs_review').length,
     // Cancellations and returns still in progress. Counted, never recorded: the next sweep

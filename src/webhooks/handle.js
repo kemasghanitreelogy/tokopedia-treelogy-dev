@@ -1,6 +1,6 @@
 import { fetchOrdersByIds } from '../omni.js';
 import { fetchOrderByGid } from '../shopify/shop.js';
-import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES, voidInvoice } from '../mekari/sync.js';
+import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES, voidInvoice, isTransient } from '../mekari/sync.js';
 import { postingAccounts } from '../mekari/accounts.js';
 import { customIdFor } from '../mekari/invoice.js';
 import { amendManualInvoice } from '../mekari/amend.js';
@@ -150,7 +150,21 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
         console.log(`webhook/${channel}: ${order.id} ${reason} -> faktur diperbarui (${amended.total})`);
         return { status: 'amended', customId, invoiceId: known.invoice_id, total: amended.total };
       } catch (error) {
-        return { status: 'failed', customId, invoiceId: known.invoice_id, error: `pesanan diedit tapi faktur Jurnal tidak bisa diperbarui: ${error.message}` };
+        // A lock or an outage is not the end of it: the entry is marked and the
+        // half-hourly sync rewrites the invoice from the order as it stands then. A
+        // refusal (a payment already recorded) is left for a person, as before.
+        const retrying = isTransient(error);
+        if (retrying) {
+          const fresh = await loadSyncLedger().catch(() => null);
+          if (fresh?.orders?.[customId]) {
+            fresh.orders[customId] = { ...fresh.orders[customId], amend_pending: new Date().toISOString() };
+            await saveSyncLedger(fresh).catch(() => {});
+          }
+        }
+        return {
+          status: 'failed', customId, invoiceId: known.invoice_id,
+          error: `pesanan diedit tapi faktur Jurnal tidak bisa diperbarui: ${error.message}${retrying ? ' - dicoba ulang otomatis' : ''}`,
+        };
       }
     }
     return { status: 'exists', customId, invoiceId: known.invoice_id ?? null };

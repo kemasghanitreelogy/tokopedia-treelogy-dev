@@ -30,7 +30,28 @@ const INVOICES_PATH = '/public/jurnal/api/v1/sales_invoices';
  * @returns {Promise<{customId: string, invoiceId: number|null, transactionNo: string|null,
  *   total: number, amended: boolean}>}
  */
-export async function amendManualInvoice(order, {
+/**
+ * One rewrite of an invoice at a time, per invoice.
+ *
+ * Shopify can deliver orders/edited twice in quick succession - two edits, or its own
+ * redelivery when our first answer was slow - and the second PATCH then meets the first
+ * still in progress: Jurnal answers 423 "Resource is currently being updated" (order 13166,
+ * 10 Nov 2026). Queued behind each other, the second simply rewrites the invoice again
+ * with the same payload, which is harmless because a PATCH is a full replace.
+ */
+const inFlight = new Map();
+
+export function amendManualInvoice(order, options = {}) {
+  const key = customIdFor(order);
+  const previous = inFlight.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(() => amendNow(order, options));
+  const settled = run.catch(() => {});
+  inFlight.set(key, settled);
+  settled.then(() => { if (inFlight.get(key) === settled) inFlight.delete(key); });
+  return run;
+}
+
+async function amendNow(order, {
   accounts = null, call = mekari, loadLedger = loadSyncLedger, saveLedger = saveSyncLedger, forget = forgetCatalogue,
 } = {}) {
   const customId = customIdFor(order);
@@ -57,8 +78,10 @@ export async function amendManualInvoice(order, {
 
   await call({ method: 'PATCH', path: `${INVOICES_PATH}/${invoiceId}`, body: { sales_invoice: built.sales_invoice } });
 
+  // Landed: whatever was waiting to be retried is now done.
+  const { amend_pending: _pending, ...rest } = entry ?? {};
   ledger.orders[customId] = {
-    ...entry,
+    ...rest,
     total: built.expectedTotal,
     amended_at: new Date().toISOString(),
   };

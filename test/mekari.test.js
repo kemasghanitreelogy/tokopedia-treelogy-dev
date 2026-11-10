@@ -615,6 +615,8 @@ test('a transient failure is deferred, a real one is failed', async () => {
   // Not now: the next sweep takes these again, nobody needs waking.
   assert.equal(isTransient(new MekariError('x', { status: 429 })), true);
   assert.equal(isTransient(new MekariError('x', { status: 503 })), true);
+  // Locked by another write on the same invoice: nothing landed (order 13166, 10 Nov 2026).
+  assert.equal(isTransient(new MekariError('x', { status: 423 })), true);
   assert.equal(isTransient(new MekariError('tidak terjangkau: fetch failed')), true);
   assert.equal(isTransient(new MekariError('POST -> HTTP 429, tenggat habis sebelum bisa dicoba lagi', { status: 429 })), true);
   // Not like this: Jurnal rejected the content, and retrying cannot change that.
@@ -1538,4 +1540,28 @@ test('a discount can be given as a percentage, and the server is what turns it i
   assert.throws(() => buildManualOrder(manual({ lines: [line({ unitDiscount: -5, discountMode: 'pct' })] })), /0 dan 100 persen/);
   // 100% is a giveaway, not an error: the line is free and the invoice still balances.
   assert.equal(buildManualOrder(manual({ lines: [line({ unitDiscount: 100, discountMode: 'pct' })] })).total, 0);
+});
+
+test('a 423 lock is asked again on a PATCH, never on a create', async () => {
+  const { isTransientStatus } = await import('../src/mekari/client.js');
+  assert.equal(isTransientStatus(423), true);
+  assert.equal(isTransientStatus(423, { creates: true }), false);
+  assert.equal(isTransientStatus(429, { creates: true }), true);
+  assert.equal(isTransientStatus(503), true);
+  assert.equal(isTransientStatus(422), false);
+  assert.equal(isTransientStatus(409), false);
+});
+
+test('only a marked, still-paid, invoiced order waits for its edit to be rewritten', async () => {
+  const { pendingAmends } = await import('../src/mekari/sync.js');
+  const { customIdFor } = await import('../src/mekari/invoice.js');
+  const order = (id, stage) => ({ channel: 'shopify', id, stage });
+  const orders = [order('1', 'to_ship'), order('2', 'to_ship'), order('3', 'cancelled'), order('4', 'delivered')];
+  const ledger = { orders: {
+    [customIdFor(orders[0])]: { invoice_id: 1, amend_pending: 'x' },
+    [customIdFor(orders[1])]: { invoice_id: 2 },
+    [customIdFor(orders[2])]: { invoice_id: 3, amend_pending: 'x' },
+    [customIdFor(orders[3])]: { invoice_id: 4, amend_pending: 'x', voided: true },
+  } };
+  assert.deepEqual(pendingAmends(orders, ledger).map((o) => o.id), ['1']);
 });

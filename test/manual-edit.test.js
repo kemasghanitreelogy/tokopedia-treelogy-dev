@@ -250,3 +250,37 @@ test('a typed-in sale that ships enters as work, one that does not enters as don
   assert.ok(POSTABLE_STAGES.has('to_ship') && POSTABLE_STAGES.has('completed'));
   assert.ok(PRINTABLE_STAGES.has('to_ship'));
 });
+
+test('two edits of one invoice arriving together are written one after the other, never over each other', async () => {
+  let active = 0;
+  let overlapped = false;
+  const options = {
+    accounts: {},
+    call: async ({ method = 'GET' }) => {
+      if (method === 'GET') return { transaction_no: 'INV-77', payment_received_amount: 0, deletable: true };
+      active += 1;
+      if (active > 1) overlapped = true;
+      await new Promise((r) => setTimeout(r, 20));
+      active -= 1;
+      return {};
+    },
+    loadLedger: async () => ledgerWith({ invoice_id: 991, amend_pending: '2026-11-10T00:00:00Z' }),
+    saveLedger: async () => {},
+    forget: async () => {},
+  };
+  const [a, b] = await Promise.all([amendManualInvoice(rebuilt, options), amendManualInvoice(rebuilt, options)]);
+  assert.equal(overlapped, false, 'PATCH kedua menunggu yang pertama - tidak kena 423');
+  assert.equal(a.amended && b.amended, true);
+});
+
+test('a landed amend clears the retry marker', async () => {
+  const saved = [];
+  await amendManualInvoice(rebuilt, {
+    accounts: {},
+    call: async ({ method = 'GET' }) => (method === 'GET' ? { transaction_no: 'INV-77', payment_received_amount: 0, deletable: true } : {}),
+    loadLedger: async () => ledgerWith({ invoice_id: 991, amend_pending: '2026-11-10T00:00:00Z' }),
+    saveLedger: async (l) => saved.push(l),
+    forget: async () => {},
+  });
+  assert.equal(saved[0].orders['TRL-manual-DP-261001-000036F'].amend_pending, undefined);
+});

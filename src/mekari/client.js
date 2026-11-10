@@ -293,6 +293,20 @@ export function describeFailure(payload) {
   return fields.length > 0 ? fields.join('; ') : '';
 }
 
+/**
+ * Which answers are worth asking again.
+ *
+ * 5xx and 429 always were. 423 joined on 10 Nov 2026: Shopify order 13166 was edited and
+ * its invoice PATCH came back "423 Resource is currently being updated" - Jurnal was still
+ * applying another write to the same invoice, and the edit was dropped on the floor with
+ * a Telegram alert. A lock is not a refusal; nothing was written. A PATCH is a full
+ * replace, so sending it again once the lock clears lands exactly the invoice we meant.
+ * Creates are left out only because they never needed it and a second POST is the one
+ * request in this file that can cost a duplicate invoice.
+ */
+export const isTransientStatus = (status, { creates = false } = {}) =>
+  status === 429 || (status >= 500 && status < 600) || (status === 423 && !creates);
+
 export async function mekari({ method = 'GET', path, body, form, config = loadMekariConfig(), deadlineAt = null, retryCreate = false, essential = false }) {
   // A POST creates something. Retrying one after a timeout or a 5xx risks a second copy,
   // because the first may well have succeeded - the response is what went missing, not
@@ -365,7 +379,7 @@ export async function mekari({ method = 'GET', path, body, form, config = loadMe
         { method, path },
       );
     }
-    if ((response.status >= 500 || response.status === 429) && attempt < RETRY_DELAYS_MS.length) {
+    if (isTransientStatus(response.status, { creates }) && attempt < RETRY_DELAYS_MS.length) {
       // Honour the server's own number when it gives one; ours is only a guess.
       const advised = Number(response.headers.get('retry-after')) * 1000;
       const delay = Number.isFinite(advised) && advised > 0 ? advised : RETRY_DELAYS_MS[attempt];

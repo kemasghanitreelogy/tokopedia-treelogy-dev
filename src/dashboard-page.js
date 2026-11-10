@@ -1510,6 +1510,7 @@ a.pager__n:focus-visible,a.pager__btn:focus-visible,a.pager__size:focus-visible{
 .rv__sync{margin:0; display:inline-flex}
 .rv__csv{display:inline-flex; align-items:center; gap:.4rem; text-decoration:none}
 .rv__csv .ico{width:1rem; height:1rem}
+.rv__csv.is-off{opacity:.55; cursor:default}
 
 .rv__list{display:flex; flex-direction:column}
 .rv{position:relative; padding:1rem 1.1rem 1.05rem 1.35rem; border-bottom:1px solid var(--line); transition:background var(--t-fast) var(--ease-out)}
@@ -5731,6 +5732,10 @@ function reviewCard(r, mediaUrl) {
 }
 
 const REVIEW_LIGHTBOX_SCRIPT = `
+// After "Unduh baru" the reviews it carried are no longer new; reload so the count says so.
+document.addEventListener('click', (e) => {
+  if (e.target.closest && e.target.closest('[data-reload-after]')) setTimeout(() => location.reload(), 2500);
+});
 (() => {
   const lb = document.getElementById('rv-lightbox');
   if (!lb || typeof lb.showModal !== 'function') return;
@@ -5776,9 +5781,26 @@ const REVIEW_LIGHTBOX_SCRIPT = `
  * when Tokopedia's signed URLs expire. Low ratings are the reason the page exists: they
  * are marked on the card, counted in the strip, and one filter click away.
  */
+/**
+ * Two downloads: only what no earlier file carried, and everything the filters show.
+ * The count is of the reviews the current filters leave, so it matches the file.
+ */
+export function klaviyoButtons({ baseQuery = '', klaviyo = null } = {}) {
+  const href = (extra) => escape(`?${baseQuery}${baseQuery ? '&' : 'view=reviews&'}export=klaviyo${extra}`);
+  const fresh = klaviyo?.fresh ?? null;
+  const last = klaviyo?.last ?? null;
+  const when = last ? new Date(last.at * 1000).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const newButton = fresh === 0
+    ? `<span class="chip rv__csv is-off" aria-disabled="true" title="Semua ulasan di saringan ini sudah pernah diunduh">${rvSvg('download')}Tidak ada ulasan baru</span>`
+    : `<a class="cta rv__csv" href="${href('&only=new')}" download data-reload-after>${rvSvg('download')}Unduh baru untuk Klaviyo${fresh !== null ? ` · ${fresh}` : ''}</a>`;
+  return `${newButton}
+          <a class="chip rv__csv" href="${href('')}" download title="Semua ulasan di saringan ini, termasuk yang sudah pernah diunduh">${rvSvg('download')}Unduh semua</a>
+          ${last ? `<span class="note">Terakhir diunduh ${escape(when)} WIB · ${last.count} ulasan</span>` : ''}`;
+}
+
 export function renderReviews({
   doc, stats, reviews, filter = {}, range, errors = {}, shopeeShop, generatedAt, csrf, flash, mediaUrl = defaultMediaUrl,
-  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null,
+  paging = { page: 1, perPage: DEFAULT_PER_PAGE }, baseQuery = '', user = null, klaviyo = null,
 }) {
   if (!doc?.syncedAt) {
     return shell({ user,
@@ -5875,7 +5897,7 @@ export function renderReviews({
             <button class="cta" type="submit" name="action" value="reviews_sync"
                     data-confirm-text="Ambil ulasan baru dari Tokopedia dan Shopee sekarang? Butuh sekitar satu menit.">${svg('refresh')}<span>Ambil ulasan baru</span></button>
           </form>` : ''}
-          <a class="chip rv__csv" href="${escape(`?${baseQuery}${baseQuery ? '&' : 'view=reviews&'}export=klaviyo`)}" download>${rvSvg('download')}Unduh CSV Klaviyo</a>
+          ${klaviyoButtons({ baseQuery, klaviyo })}
         </span>
       </div>`,
     body: `

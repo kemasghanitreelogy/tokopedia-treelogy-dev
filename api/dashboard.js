@@ -13,6 +13,7 @@ import { publicBaseUrl } from '../src/config.js';
 import { selectReviews, reviewStats, syncReviews as syncTokopediaReviews } from '../src/tokopedia/reviews.js';
 import { syncShopeeReviews } from '../src/shopee/reviews.js';
 import { toKlaviyoCsv, klaviyoSummary } from '../src/klaviyo/reviews.js';
+import { loadExported, notExported, recordExport } from '../src/klaviyo/exported.js';
 import { loadAllReviews, REVIEW_CHANNELS } from '../src/reviews/combined.js';
 import { parsePaging, withoutPaging } from '../src/paging.js';
 import { filterOrders } from '../src/omni.js';
@@ -2482,25 +2483,34 @@ export default async function handler(req, res) {
       }) : [];
       // The Klaviyo file: whatever the filters left, in the import template. Logged like
       // a print, because a file of two thousand reviews left the building.
+      const exported = await loadExported();
       if (url.searchParams.get('export') === 'klaviyo') {
         const perReviewer = url.searchParams.get('email') !== 'shared';
-        const csv = toKlaviyoCsv(reviews, { perReviewer });
-        const summary = klaviyoSummary(reviews);
+        // "Unduh baru": only what no earlier file carried, so a second import into
+        // Klaviyo never makes a second copy of a review it already has.
+        const onlyNew = url.searchParams.get('only') === 'new';
+        const chosen = onlyNew ? notExported(reviews, exported) : reviews;
+        const csv = toKlaviyoCsv(chosen, { perReviewer });
+        const summary = klaviyoSummary(chosen);
+        // Every file marks what it carried, the full one included: whatever has left in
+        // any file is no longer new.
+        await recordExport(chosen, { actor: user?.email ?? null, only: onlyNew ? 'new' : 'all' });
         await recordActivity({
-          actor: user, ip, menu: 'reviews', action: 'export_klaviyo', verb: 'print', target: `${reviews.length} ulasan`,
-          summary: `Mengunduh CSV Klaviyo: ${reviews.length} ulasan, ${summary.unmapped} tanpa produk`,
+          actor: user, ip, menu: 'reviews', action: 'export_klaviyo', verb: 'print', target: `${chosen.length} ulasan`,
+          summary: `Mengunduh CSV Klaviyo${onlyNew ? ' (baru saja)' : ''}: ${chosen.length} ulasan, ${summary.unmapped} tanpa produk`,
           changes: Object.entries(summary.byProduct).map(([name, n]) => ({ field: name, to: n })),
         });
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Content-Disposition', `attachment; filename="klaviyo-reviews-${new Date().toISOString().slice(0, 10)}.csv"`);
+        res.setHeader('Content-Disposition', `attachment; filename="klaviyo-reviews-${onlyNew ? 'baru-' : ''}${new Date().toISOString().slice(0, 10)}.csv"`);
         res.end(csv);
         return;
       }
       console.log(`dashboard/reviews: ${reviews.length} of ${Object.keys(doc?.reviews ?? {}).length}, page ${paging.page}`);
       send(200, renderReviews({ user,
         doc, stats: doc ? reviewStats(doc) : null, reviews, filter, paging, baseQuery,
+        klaviyo: { fresh: notExported(reviews, exported).length, last: exported.batches.at(-1) ?? null },
         range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
       }));
       return;

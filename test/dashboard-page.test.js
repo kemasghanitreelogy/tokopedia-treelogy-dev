@@ -1029,7 +1029,9 @@ test('the reviews page offers a fresh pull and the Klaviyo file', async () => {
   assert.match(html, /name="action" value="reviews_sync"/, 'no button to pull new reviews');
   assert.match(html, /data-confirm-text="Ambil ulasan baru/, 'a pull that reads two marketplaces asks first');
   assert.match(html, /href="\?view=reviews&amp;channel=shopee&amp;export=klaviyo" download/, 'the file follows the filters');
-  assert.match(html, /Unduh CSV Klaviyo/);
+  assert.match(html, /href="\?view=reviews&amp;channel=shopee&amp;export=klaviyo&amp;only=new" download/, 'and so does the new-only file');
+  assert.match(html, /Unduh baru untuk Klaviyo/);
+  assert.match(html, /Unduh semua/);
   // A viewer gets neither the form nor the file: no csrf, no form.
   const viewer = renderReviews({ doc, stats, reviews: [], ...common, csrf: '' });
   assert.ok(!viewer.includes('reviews_sync'));

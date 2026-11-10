@@ -16,7 +16,9 @@ const line = (id, sku, quantity, currentQuantity, price, discount = 0) => ({
 const order13131 = () => ({
   id: 'gid://shopify/Order/18983230898418', name: '#13131', createdAt: '2026-11-10T01:02:00Z',
   displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'UNFULFILLED',
-  totalPriceSet: money(2190000), currentTotalPriceSet: money(1145000), totalRefundedSet: money(0), refunds: [],
+  totalPriceSet: money(2190000), currentTotalPriceSet: money(1145000), totalRefundedSet: money(0),
+  // The edit itself, as Shopify records it: a Rp0 refund of the removed lines, CANCEL.
+  refunds: [{ totalRefundedSet: money(0), refundLineItems: { nodes: [1, 2, 3].map((n) => ({ quantity: 1, restockType: 'CANCEL', lineItem: { id: `gid://shopify/LineItem/${n}` } })) } }],
   lineItems: { nodes: [
     line(1, 'Inside-Out-60-Protocol180+30', 1, 0, 1045000),
     line(2, 'GFT-POUCH-001', 1, 0, 0),
@@ -45,7 +47,7 @@ test('refunded units are not mistaken for removed ones', () => {
   order.totalPriceSet = money(1400000);
   order.currentTotalPriceSet = money(700000);
   order.totalRefundedSet = money(700000);
-  order.refunds = [{ refundLineItems: { nodes: [{ quantity: 1, lineItem: { id: 'gid://shopify/LineItem/9' } }] } }];
+  order.refunds = [{ totalRefundedSet: money(700000), refundLineItems: { nodes: [{ quantity: 1, restockType: 'RETURN', lineItem: { id: 'gid://shopify/LineItem/9' } }] } }];
   assert.equal(withoutRemoved(order), order, 'untouched: refunds keep their own handling');
   assert.equal(mapOrder(order).lines[0].qty, 2);
   assert.equal(mapOrder(order).total, 1400000);
@@ -56,6 +58,7 @@ test('a partly removed line keeps only its share of the discount', () => {
   order.lineItems.nodes = [line(7, 'OMO-30-001', 3, 1, 470000, 300000)];
   order.totalPriceSet = money(1110000);
   order.currentTotalPriceSet = money(370000);
+  order.refunds = [];
   const [l] = mapOrder(order).finance.lines;
   assert.deepEqual([l.qty, l.unitDiscount], [1, 100000]);
   assert.equal(mapOrder(order).total, 370000);
@@ -80,4 +83,11 @@ test('only a Shopify orders/edited push rewrites an invoice, and an amend answer
   assert.equal(isOrderEdit({ channel: 'shopify', reason: 'orders/paid' }), false);
   assert.equal(isOrderEdit({ channel: 'shopee', reason: 'orders/edited' }), false);
   assert.equal(statusFor({ status: 'amended' }), 200);
+});
+
+test('an order cancelled whole keeps showing what was bought', () => {
+  const order = order13131();
+  order.lineItems.nodes = [line(1, 'OMC-180-001', 1, 0, 700000)];
+  order.refunds = [{ totalRefundedSet: money(700000), refundLineItems: { nodes: [{ quantity: 1, restockType: 'CANCEL', lineItem: { id: 'gid://shopify/LineItem/1' } }] } }];
+  assert.equal(mapOrder(order).lines[0].qty, 1);
 });

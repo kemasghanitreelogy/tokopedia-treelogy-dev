@@ -60,7 +60,7 @@ query TreelogyOrders($cursor: String, $query: String) {
       totalPriceSet { shopMoney { amount currencyCode } }
       currentTotalPriceSet { shopMoney { amount } }
       totalRefundedSet { shopMoney { amount } }
-      refunds(first: 10) { refundLineItems(first: 50) { nodes { quantity lineItem { id } } } }
+      refunds(first: 10) { totalRefundedSet { shopMoney { amount } } refundLineItems(first: 50) { nodes { quantity restockType lineItem { id } } } }
       email
       shippingAddress { name address1 address2 city province zip countryCodeV2 phone }
       billingAddress { name address1 address2 city province zip countryCodeV2 }
@@ -205,10 +205,16 @@ export async function fetchOrders({ since, until, max = 800, config = loadShopif
  *
  * `currentQuantity` also takes out refunded units, and refunds already have their own
  * handling here (a refunded order is voided in the books, not shrunk). So only the
- * edited-away units come off: kept = currentQuantity + refunded, never above the
- * original. Discounts Shopify allocated to removed units go with them, and the total
- * moves only when something was actually removed, so an untouched order reads exactly
- * as it always has.
+ * edited-away units come off: kept = currentQuantity + units refunded as returns, never
+ * above the original. Discounts Shopify allocated to removed units go with them, and the
+ * total moves only when something was actually removed, so an untouched order reads
+ * exactly as it always has.
+ *
+ * An edit is itself recorded as a refund: removing the bundle from #13131 created a
+ * Rp0 refund whose refundLineItems carry restockType CANCEL. Those are units that never
+ * leave the shelf - removed, or cancelled before fulfilment - and they come off the
+ * order. Only RETURN / NO_RESTOCK / LEGACY_RESTOCK lines are a refund of goods sold, and
+ * only refunds with no CANCEL line add their money back onto the total.
  *
  * A node without `currentQuantity` (a test fixture, an old stored payload) is returned
  * unchanged.
@@ -218,8 +224,13 @@ export function withoutRemoved(order) {
   if (!Array.isArray(nodes) || !nodes.some((li) => li.currentQuantity !== undefined && li.currentQuantity !== null)) return order;
 
   const refunded = new Map();
+  let refundedMoney = 0;
   for (const refund of order.refunds ?? []) {
-    for (const row of refund.refundLineItems?.nodes ?? []) {
+    const rows = refund.refundLineItems?.nodes ?? [];
+    const cancels = rows.some((row) => row.restockType === 'CANCEL');
+    if (!cancels) refundedMoney += Number(refund.totalRefundedSet?.shopMoney?.amount) || 0;
+    for (const row of rows) {
+      if (row.restockType === 'CANCEL') continue;
       const id = row.lineItem?.id;
       if (id) refunded.set(id, (refunded.get(id) ?? 0) + (Number(row.quantity) || 0));
     }
@@ -242,9 +253,12 @@ export function withoutRemoved(order) {
     };
   });
   if (!removedAny) return order;
+  // Nothing left at all is a cancelled or wholly refunded order, not an edit: it keeps
+  // showing what was bought, and its stage already takes it out of the books.
+  if (kept.every((li) => (Number(li.quantity) || 0) <= 0)) return order;
 
   const amount = (set) => Number(set?.shopMoney?.amount) || 0;
-  const total = Math.min(amount(order.totalPriceSet), amount(order.currentTotalPriceSet) + amount(order.totalRefundedSet));
+  const total = Math.min(amount(order.totalPriceSet), amount(order.currentTotalPriceSet) + refundedMoney);
   return {
     ...order,
     lineItems: { ...order.lineItems, nodes: kept },
@@ -300,7 +314,7 @@ query TreelogyOrderByGid($id: ID!) {
     totalPriceSet { shopMoney { amount currencyCode } }
     currentTotalPriceSet { shopMoney { amount } }
     totalRefundedSet { shopMoney { amount } }
-    refunds(first: 10) { refundLineItems(first: 50) { nodes { quantity lineItem { id } } } }
+    refunds(first: 10) { totalRefundedSet { shopMoney { amount } } refundLineItems(first: 50) { nodes { quantity restockType lineItem { id } } } }
     email
     shippingAddress { name address1 address2 city province zip countryCodeV2 phone }
     billingAddress { name address1 address2 city province zip countryCodeV2 }

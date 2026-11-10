@@ -3,6 +3,7 @@ import { fetchOrderByGid } from '../shopify/shop.js';
 import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES, voidInvoice } from '../mekari/sync.js';
 import { postingAccounts } from '../mekari/accounts.js';
 import { customIdFor } from '../mekari/invoice.js';
+import { amendManualInvoice } from '../mekari/amend.js';
 import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
@@ -136,6 +137,22 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
       }
       return { status: outcome.outcome === 'voided' ? 'voided' : outcome.outcome, customId, invoiceId: known.invoice_id };
     }
+    // Edited after it was invoiced: the invoice is rewritten in place to what the order
+    // now says, keeping its number. Same builder and the same refusal as an edited
+    // typed-in sale - an invoice that already has a payment against it is not rewritten,
+    // and that failure goes to Telegram because somebody has to fix it by hand.
+    if (isOrderEdit({ channel, reason }) && known.invoice_id && !known.voided && POSTABLE_STAGES.has(order.stage) && liveEnabled()) {
+      try {
+        // An edit can add a product; it has to exist in Jurnal before a line can name it.
+        await ensureReady({ dryRun: false, readyAt: ledger.ready_at ?? null, readyFor: ledger.ready_for ?? null });
+        const amended = await amendManualInvoice(order);
+        invalidate('jurnal');
+        console.log(`webhook/${channel}: ${order.id} ${reason} -> faktur diperbarui (${amended.total})`);
+        return { status: 'amended', customId, invoiceId: known.invoice_id, total: amended.total };
+      } catch (error) {
+        return { status: 'failed', customId, invoiceId: known.invoice_id, error: `pesanan diedit tapi faktur Jurnal tidak bisa diperbarui: ${error.message}` };
+      }
+    }
     return { status: 'exists', customId, invoiceId: known.invoice_id ?? null };
   }
 
@@ -183,4 +200,7 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
  * stream of them gets the whole push channel suspended - which would cost us far more
  * orders than the one we could not book.
  */
+/** A Shopify order edited in the admin; the topic header is lower-case with a slash. */
+export const isOrderEdit = ({ channel, reason }) => channel === 'shopify' && /^orders\/edited$/i.test(String(reason ?? ''));
+
 export const statusFor = (outcome) => (outcome.status === 'failed' ? 500 : 200);

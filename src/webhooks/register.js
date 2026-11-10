@@ -35,7 +35,12 @@ export const TIKTOK_EVENTS = ['ORDER_STATUS_CHANGE'];
  * other to Jurnal - the loser got a 409 and rang the phone. orders/paid fires for every
  * paid order, including ones paid at creation, so create adds nothing but the race.
  */
-export const SHOPIFY_TOPICS = ['ORDERS_PAID'];
+/*
+ * ORDERS_EDITED because paid is not final on Shopify: an order can be edited in the admin
+ * after payment, and #13131 was - the bundle swapped for capsules - while our row and its
+ * Jurnal invoice kept describing the cart at checkout. Nothing else announces an edit.
+ */
+export const SHOPIFY_TOPICS = ['ORDERS_PAID', 'ORDERS_EDITED'];
 export const SHOPIFY_RETIRED_TOPICS = ['ORDERS_CREATE'];
 
 export function baseUrl(config = loadConfig()) {

@@ -2,9 +2,10 @@ import { readRawBody, verifyShopify } from '../../src/webhooks/verify.js';
 import { handlePush, statusFor } from '../../src/webhooks/handle.js';
 import { beatRejected } from '../../src/mekari/heartbeat.js';
 import { loadShopifyConfig } from '../../src/shopify/config.js';
+import { shopifyPushOrder } from '../../src/webhooks/shopify-push.js';
 
 /**
- * Shopify webhook receiver for orders/paid and orders/create.
+ * Shopify webhook receiver for orders/paid and orders/edited.
  *
  * Shopify posts the whole order, but only its id is used: the order is re-read through
  * the Admin API so the numbers that reach the books come from a call we signed. Shopify
@@ -39,13 +40,14 @@ export default async function handler(req, res) {
     return res.end('invalid signature');
   }
 
-  let order;
+  let body;
   try {
-    order = JSON.parse(raw);
+    body = JSON.parse(raw);
   } catch {
     res.statusCode = 400;
     return res.end('bad json');
   }
+  const order = shopifyPushOrder(body);
 
   // The webhook body is REST-shaped; `admin_graphql_api_id` is the GID the Admin API
   // wants, and the numeric id only becomes one by string surgery, so prefer the former.

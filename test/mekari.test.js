@@ -694,9 +694,9 @@ test('a duplicate invoice is an "exists" with the id Jurnal returned, never a fa
   assert.equal(dup.body.id, 1967902018);
 });
 
-test('the Shopify subscription is paid-only; create is retired, not merely unused', async () => {
+test('the Shopify subscription is paid plus edited; create is retired, not merely unused', async () => {
   const { SHOPIFY_TOPICS, SHOPIFY_RETIRED_TOPICS } = await import('../src/webhooks/register.js');
-  assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID']);
+  assert.deepEqual(SHOPIFY_TOPICS, ['ORDERS_PAID', 'ORDERS_EDITED']);
   assert.deepEqual(SHOPIFY_RETIRED_TOPICS, ['ORDERS_CREATE']);
 });
 

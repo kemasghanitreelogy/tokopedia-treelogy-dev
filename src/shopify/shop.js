@@ -58,12 +58,15 @@ query TreelogyOrders($cursor: String, $query: String) {
       displayFulfillmentStatus
       paymentGatewayNames
       totalPriceSet { shopMoney { amount currencyCode } }
+      currentTotalPriceSet { shopMoney { amount } }
+      totalRefundedSet { shopMoney { amount } }
+      refunds(first: 10) { refundLineItems(first: 50) { nodes { quantity lineItem { id } } } }
       email
       shippingAddress { name address1 address2 city province zip countryCodeV2 phone }
       billingAddress { name address1 address2 city province zip countryCodeV2 }
       lineItems(first: 50) {
         nodes {
-          quantity sku title variantTitle
+          id quantity currentQuantity sku title variantTitle
           originalUnitPriceSet { shopMoney { amount } }
           totalDiscountSet { shopMoney { amount } }
           discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } }
@@ -157,6 +160,8 @@ const lines = (order) => {
   for (const item of order.lineItems?.nodes ?? []) {
     const sku = item.sku || item.title || '(tanpa sku)';
     const qty = Number(item.quantity) || 0;
+    // A line removed in the order editor stays in the list at zero; nobody packs it.
+    if (qty <= 0) continue;
     const existing = bySku.get(sku);
     if (existing) existing.qty += qty;
     // The variant is what tells 180 capsules from 270 on a packing bench, so it travels
@@ -188,8 +193,68 @@ export async function fetchOrders({ since, until, max = 800, config = loadShopif
   return orders.map(mapOrder);
 }
 
+/**
+ * The order as it stands after any edit, with refunds left exactly as they were.
+ *
+ * `LineItem.quantity` is what the buyer put in the cart at checkout and it never moves.
+ * An order edited in the admin keeps the removed lines in `lineItems` with that original
+ * quantity, and only `currentQuantity` says they are gone. Reading `quantity` alone,
+ * #13131 - edited from an Inside Out bundle to 270 capsules plus a free oil - showed all
+ * five lines and a total of Rp2.190.000 on the dashboard, sent the warehouse a bundle
+ * that was no longer sold, and went into Jurnal as the bundle at Rp1.045.000.
+ *
+ * `currentQuantity` also takes out refunded units, and refunds already have their own
+ * handling here (a refunded order is voided in the books, not shrunk). So only the
+ * edited-away units come off: kept = currentQuantity + refunded, never above the
+ * original. Discounts Shopify allocated to removed units go with them, and the total
+ * moves only when something was actually removed, so an untouched order reads exactly
+ * as it always has.
+ *
+ * A node without `currentQuantity` (a test fixture, an old stored payload) is returned
+ * unchanged.
+ */
+export function withoutRemoved(order) {
+  const nodes = order?.lineItems?.nodes;
+  if (!Array.isArray(nodes) || !nodes.some((li) => li.currentQuantity !== undefined && li.currentQuantity !== null)) return order;
+
+  const refunded = new Map();
+  for (const refund of order.refunds ?? []) {
+    for (const row of refund.refundLineItems?.nodes ?? []) {
+      const id = row.lineItem?.id;
+      if (id) refunded.set(id, (refunded.get(id) ?? 0) + (Number(row.quantity) || 0));
+    }
+  }
+
+  let removedAny = false;
+  const kept = nodes.map((li) => {
+    const original = Number(li.quantity) || 0;
+    if (li.currentQuantity === undefined || li.currentQuantity === null) return li;
+    const qty = Math.min(original, (Number(li.currentQuantity) || 0) + (refunded.get(li.id) ?? 0));
+    if (qty >= original) return li;
+    removedAny = true;
+    const share = original > 0 ? qty / original : 0;
+    const scale = (set) => (set?.shopMoney ? { ...set, shopMoney: { ...set.shopMoney, amount: String(Math.round(Number(set.shopMoney.amount || 0) * share)) } } : set);
+    return {
+      ...li,
+      quantity: qty,
+      totalDiscountSet: scale(li.totalDiscountSet),
+      discountAllocations: (li.discountAllocations ?? []).map((a) => ({ ...a, allocatedAmountSet: scale(a.allocatedAmountSet) })),
+    };
+  });
+  if (!removedAny) return order;
+
+  const amount = (set) => Number(set?.shopMoney?.amount) || 0;
+  const total = Math.min(amount(order.totalPriceSet), amount(order.currentTotalPriceSet) + amount(order.totalRefundedSet));
+  return {
+    ...order,
+    lineItems: { ...order.lineItems, nodes: kept },
+    totalPriceSet: { ...order.totalPriceSet, shopMoney: { ...order.totalPriceSet?.shopMoney, amount: String(total) } },
+  };
+}
+
 /** One GraphQL order node in the shape every channel shares. */
-export function mapOrder(order) {
+export function mapOrder(raw) {
+  const order = withoutRemoved(raw);
   const tracking = order.fulfillments?.[0]?.trackingInfo?.[0] ?? {};
   return {
     channel: 'shopify',
@@ -212,7 +277,7 @@ export function mapOrder(order) {
     billTo: formatAddress(order.billingAddress),
     // How the buyer paid decides the order-code prefix (Xendit vs Shopify Payments).
     gateways: order.paymentGatewayNames ?? [],
-    items: order.lineItems?.nodes?.length ?? 0,
+    items: (order.lineItems?.nodes ?? []).filter((li) => (Number(li.quantity) || 0) > 0).length,
     lines: lines(order),
     // Grams, as Shopify keeps it. The packing label prints it; nothing else reads it.
     weightGram: Number(order.totalWeight) || 0,
@@ -233,12 +298,15 @@ query TreelogyOrderByGid($id: ID!) {
     displayFulfillmentStatus
     paymentGatewayNames
     totalPriceSet { shopMoney { amount currencyCode } }
+    currentTotalPriceSet { shopMoney { amount } }
+    totalRefundedSet { shopMoney { amount } }
+    refunds(first: 10) { refundLineItems(first: 50) { nodes { quantity lineItem { id } } } }
     email
     shippingAddress { name address1 address2 city province zip countryCodeV2 phone }
     billingAddress { name address1 address2 city province zip countryCodeV2 }
     lineItems(first: 50) {
       nodes {
-        quantity sku title variantTitle
+        id quantity currentQuantity sku title variantTitle
         originalUnitPriceSet { shopMoney { amount } }
         totalDiscountSet { shopMoney { amount } }
         discountAllocations { allocatedAmountSet { shopMoney { amount } } discountApplication { index } }

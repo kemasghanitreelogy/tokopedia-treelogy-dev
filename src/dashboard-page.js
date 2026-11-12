@@ -3925,6 +3925,19 @@ export function renderPicklist({ picklist, orders = [], images = {}, batch = nul
  * It downloads with fetch rather than by navigating, so the button can say what is
  * happening - preparing, done, or why not - and the page underneath never blinks.
  */
+/**
+ * The same dialog for the Stok page's movement history, so both doors open one file:
+ * the dialog, its styles and its script, ready to drop into another page.
+ */
+export function stockExportKit(data) {
+  return {
+    button: `<button class="exbtn" type="button" id="stock-export-open" aria-haspopup="dialog">${svg('export')}Download</button>`,
+    dialog: stockExportDialog(data),
+    style: EXPORT_STYLE + STOCK_EXPORT_STYLE,
+    script: STOCK_EXPORT_SCRIPT,
+  };
+}
+
 function stockExportDialog({ today, first, days }) {
   const formats = [
     ['xlsx', 'Excel', 'Siap diolah & di-pivot'],

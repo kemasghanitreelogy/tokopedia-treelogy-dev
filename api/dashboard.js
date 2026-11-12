@@ -2283,7 +2283,10 @@ export default async function handler(req, res) {
       const item = String(url.searchParams.get('item') ?? '').slice(0, 20);
       const kind = String(url.searchParams.get('kind') ?? '').slice(0, 10);
       console.log(`dashboard/stock: gudang ${Object.keys(warehouse.items ?? {}).length} barang`);
-      send(200, renderWarehouse({ user, warehouse, item, kind, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash }));
+      send(200, renderWarehouse({
+        user, warehouse, item, kind, range, errors: {}, shopeeShop: null, generatedAt: Date.now(), csrf, flash,
+        stockExport: { today: businessToday(), first: FIRST_DAY, days: movementsByDay(warehouse) },
+      }));
       return;
     }
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { shell, svg, escape } from '../dashboard-page.js';
+import { shell, svg, escape, stockExportKit } from '../dashboard-page.js';
 import { PRODUCTS, familyOf } from '../master.js';
 import { GROUPS, recipeOf, REFUND_REASONS } from '../warehouse.js';
 import { can as allowed } from '../users.js';
@@ -24,7 +24,7 @@ const KIND = {
   in: ['Masuk', 'k-in'], out: ['Keluar', 'k-out'], count: ['Opname', 'k-count'],
 };
 
-export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind = '', ...common }) {
+export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind = '', stockExport = null, ...common }) {
   const items = warehouse.items ?? {};
   const moves = [...(warehouse.moves ?? [])].reverse();
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
@@ -164,7 +164,10 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
   const shown = moves.filter((m) => (!item || m.code === item) && (!kind || m.kind === kind)).slice(0, 150);
   const kindChips = [['', 'Semua'], ...Object.entries(KIND).map(([k, [l]]) => [k, l])].map(([k, l]) =>
     `<a class="chip${kind === k ? ' is-on' : ''}" href="?view=stock${item ? `&amp;item=${encodeURIComponent(item)}` : ''}${k ? `&amp;kind=${k}` : ''}#riwayat">${escape(l)}</a>`).join('');
-  const history = `<section class="wh__grp" id="riwayat"><h2 class="wh__h">Riwayat gerakan${item ? ` · ${escape(items[item]?.name ?? item)}` : ''}<span>${shown.length}</span></h2>
+  // The whole log as a file - every day or a chosen range - through the picklist's own
+  // export dialog, so both pages hand over the same Inventory Movement sheet.
+  const kit = stockExport ? stockExportKit(stockExport) : null;
+  const history = `<section class="wh__grp" id="riwayat"><div class="wh__hrow"><h2 class="wh__h">Riwayat gerakan${item ? ` · ${escape(items[item]?.name ?? item)}` : ''}<span>${shown.length}</span></h2>${kit ? kit.button : ''}</div>
     <div class="wh__filters">${kindChips}${item ? `<a class="chip" href="?view=stock#riwayat">${svg('x')} Semua barang</a>` : ''}</div>
     ${shown.length ? `<ol class="wh__log">${shown.map((m) => `<li>
       <span class="wh__t mono">${escape(when(m.at))}</span>
@@ -180,9 +183,9 @@ export function renderWarehouse({ warehouse, csrf, flash, user, item = '', kind 
     <p class="wh__intro">Stok fisik di gudang, per barang. Terpisah dari stok yang tampil di marketplace: halaman ini tidak pernah mengubah listing. Stok di sini berkurang saat pesanan masuk picklist (labelnya dicetak), sesuai isi tiap produk. Pesanan yang batal, diretur atau direfund setelah labelnya dicetak muncul di atas sampai tim memastikan barangnya kembali ke rak atau tidak.</p>
     <div class="wh__cols"><div>${receive}${shelf}</div><div>${can}</div></div>
     ${history}
-  </div>`;
+  </div>${kit ? kit.dialog : ''}`;
 
-  return shell({ ...common, csrf, flash, user, kpis, body, title: 'Stok gudang', scope: 'gudang', view: 'stock', hideRangeControls: true, style: STYLE, script: SCRIPT });
+  return shell({ ...common, csrf, flash, user, kpis, body, title: 'Stok gudang', scope: 'gudang', view: 'stock', hideRangeControls: true, style: STYLE + (kit ? kit.style : ''), script: SCRIPT + (kit ? kit.script : '') });
 }
 
 /**

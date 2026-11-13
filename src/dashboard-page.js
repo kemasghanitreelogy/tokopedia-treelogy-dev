@@ -6343,6 +6343,21 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         ${stat('Sudah jalan', String(counts.reprint))}
       </div>`,
     body: `${reprintFilters}
+        ${directPrinter ? `<div class="dp" id="dp">
+          <div class="dp__row">
+            <strong>${escape(directPrinter.model)}</strong> <span class="dim">&middot; Bluetooth, tanpa dialog print</span>
+            <span class="grow"></span>
+            <button class="chip" type="button" id="dp-connect">Sambungkan printer</button>
+            <button class="chip" type="button" id="dp-test" disabled>Halaman tes</button>
+            <button class="cta" type="button" id="dp-go" disabled>Cetak langsung</button>
+          </div>
+          <div class="dp__row dp__opts">
+            <label>Bahasa <select class="dr__in" id="dp-proto"><option value="tspl">TSPL</option><option value="escpos">ESC/POS</option></select></label>
+            <label><input type="checkbox" id="dp-invert"> balik warna</label>
+            <label><input type="checkbox" id="dp-rotate"> putar 180&deg;</label>
+            <span class="dp__state dim">Belum tersambung.</span>
+          </div>
+        </div>` : ''}
         ${!showReprints && (counts.changed > 0 || onlyChanged) ? `<div class="filters lb-changed">
           <a class="chip${onlyChanged ? '' : ' is-on'}" href="?view=labels">Semua</a>
           <a class="chip${onlyChanged ? ' is-on' : ''}" href="?view=labels&amp;changed=1">Data berubah &middot; ${counts.changed}</a>
@@ -6375,21 +6390,6 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
             <tbody id="lb-rows">${rows}</tbody>
             <tbody id="lbq-more"></tbody>
           </table></div>
-          ${directPrinter ? `<div class="dp" id="dp">
-            <div class="dp__row">
-              <strong>${escape(directPrinter.model)}</strong> <span class="dim">&middot; Bluetooth, tanpa dialog print</span>
-              <span class="grow"></span>
-              <button class="chip" type="button" id="dp-connect">Sambungkan printer</button>
-              <button class="chip" type="button" id="dp-test" disabled>Halaman tes</button>
-              <button class="cta" type="button" id="dp-go" disabled>Cetak langsung</button>
-            </div>
-            <div class="dp__row dp__opts">
-              <label>Bahasa <select class="dr__in" id="dp-proto"><option value="tspl">TSPL</option><option value="escpos">ESC/POS</option></select></label>
-              <label><input type="checkbox" id="dp-invert"> balik warna</label>
-              <label><input type="checkbox" id="dp-rotate"> putar 180&deg;</label>
-              <span class="dp__state dim">Belum tersambung.</span>
-            </div>
-          </div>` : ''}
           <div class="apply">
             <button type="submit" id="go">Cetak <span id="n">${ticked}</span> label</button>
             <span class="dim" id="over" hidden>Maksimal ${MAX_PRESELECT} label sekali cetak &mdash; bagi jadi beberapa batch.</span>

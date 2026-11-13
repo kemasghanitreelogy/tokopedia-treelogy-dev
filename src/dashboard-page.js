@@ -5971,7 +5971,7 @@ function labelRowHtml({ order: o, readiness, entry = null }, { batchKey = null, 
         <span class="pick__s">${escape(dateTime(o.createdAt, o.channel))} &middot; ${escape(o.carrier) || 'kurir belum ada'}</span>
       </td>
       <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
-      <td class="nowrap"><span class="${READY_TONE[readiness.state] ?? 'dim'}">${escape(readiness.note)}</span>${
+      <td class="nowrap"><span class="${readiness.changed ? 'stop' : (READY_TONE[readiness.state] ?? 'dim')}">${escape(readiness.note)}</span>${
         times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}${
         why ? `<br><span class="dim">${escape(why)}</span>` : ''}</td>
     </tr>`;
@@ -6097,15 +6097,16 @@ export function renderLabelLookup({ orders, printed = {}, arranged = {}, people 
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, onlyChanged = false, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
   const assessed = orders.map((o) => ({ order: o, readiness: labelReadiness(o, printed, arranged) }));
 
-  const counts = { needsPrint: 0, waiting: 0, arrange: 0, reprint: 0 };
+  const counts = { needsPrint: 0, waiting: 0, arrange: 0, reprint: 0, changed: 0 };
   for (const { readiness } of assessed) {
     if (counts[readiness.state] !== undefined) counts[readiness.state] += 1;
+    if (readiness.changed) counts.changed += 1;
   }
 
   const wanted = showReprints ? ['needsPrint', 'reprint'] : ['needsPrint'];
@@ -6117,9 +6118,20 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
    * saying why. Only when our own ledger printed it: one printed in Seller Center has no
    * run to sit in and nothing to find.
    */
+  /*
+   * A label already on a parcel that no longer matches its order comes first.
+   *
+   * Name, phone, address or products moved after the sheet came out, so a parcel may
+   * be sitting on the bench with the wrong address on it. That outranks a label nobody
+   * has printed yet, and the filter for it appears only when there is something to show.
+   */
   const printable = assessed
     .filter(({ order, readiness }) => wanted.includes(readiness.state)
-      && (!readiness.unavailable || (showReprints && printedEntry(printed, order))));
+      && (!readiness.unavailable || (showReprints && printedEntry(printed, order))))
+    .filter(({ readiness }) => showReprints || !onlyChanged || readiness.changed)
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => (showReprints ? 0 : Number(Boolean(b.row.readiness.changed)) - Number(Boolean(a.row.readiness.changed))) || a.index - b.index)
+    .map(({ row }) => row);
   /*
    * Printing is capped server-side; ticking past it would hand the operator a button that
    * always errors.
@@ -6307,15 +6319,21 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     flash,
     kpis: `
       <div class="strip">
+        ${counts.changed > 0 ? stat('Perlu cetak ulang', String(counts.changed), 'stop') : ''}
         ${stat('Perlu dicetak', String(counts.needsPrint), counts.needsPrint > 0 ? 'ok' : '')}
         ${stat('Menunggu kurir', String(counts.waiting), counts.waiting > 0 ? 'flag' : '')}
         ${stat('Atur pengiriman', String(counts.arrange), counts.arrange > 0 ? 'flag' : '')}
         ${stat('Sudah jalan', String(counts.reprint))}
       </div>`,
     body: `${reprintFilters}
+        ${!showReprints && (counts.changed > 0 || onlyChanged) ? `<div class="filters lb-changed">
+          <a class="chip${onlyChanged ? '' : ' is-on'}" href="?view=labels">Semua</a>
+          <a class="chip${onlyChanged ? ' is-on' : ''}" href="?view=labels&amp;changed=1">Perlu cetak ulang &middot; ${counts.changed}</a>
+          <span class="dim">nama, telepon, alamat atau produk berubah setelah label dicetak</span>
+        </div>` : ''}
         ${search}
         ${empty ? `<div id="lb-empty"><p class="empty">${!showReprints
-          ? 'Semua label sudah dicetak.'
+          ? (onlyChanged ? 'Tidak ada label yang perlu dicetak ulang.' : 'Semua label sudah dicetak.')
           : filtering
             ? 'Tidak ada batch cetak yang cocok dengan filter ini.'
             : 'Tidak ada label yang bisa dicetak.'}</p>

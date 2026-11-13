@@ -429,7 +429,8 @@ export async function markPrinted(ids, { by = '', at = Math.floor(Date.now() / 1
         first: existing?.first ?? at,
         times: (existing?.times ?? 0) + 1,
         // What this sheet said (Shopify only), so a later edit sends it back to the queue.
-        ...(sigs[id] ? { sig: sigs[id] } : {}),
+        // `as` keeps the words too, so the queue can say what changed: the address, the name.
+        ...(sigs[id]?.sig ? { sig: sigs[id].sig, as: sigs[id].as } : typeof sigs[id] === 'string' ? { sig: sigs[id] } : {}),
         // Marked as printed without printing (a backlog cleared): no label came out now,
         // so the warehouse does not read this as goods leaving.
         ...((marked && !existing) || existing?.marked ? { marked: true } : {}),

@@ -656,16 +656,35 @@ const wasPrinted = (printed, order) => {
  * the label is compared with the order as it stands every time the queue is drawn. An
  * entry printed before fingerprints existed has none and is taken as current.
  */
-export function labelSignature(order) {
+export function labelSnapshot(order) {
   const lines = (order?.lines ?? [])
     .map((l) => [String(l.sku ?? ''), Number(l.qty) || 0])
     .filter(([, qty]) => qty > 0)
-    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-  const body = JSON.stringify({
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    .map(([sku, qty]) => `${sku}x${qty}`)
+    .join(', ');
+  return {
     lines, buyer: String(order?.buyer ?? '').trim(), phone: String(order?.buyerPhone ?? '').trim(),
     shipTo: String(order?.shipTo ?? '').trim(),
-  });
-  return createHash('sha1').update(body).digest('hex').slice(0, 16);
+  };
+}
+
+export function labelSignature(order) {
+  return createHash('sha1').update(JSON.stringify(labelSnapshot(order))).digest('hex').slice(0, 16);
+}
+
+/** What the person at the bench calls each part of the sheet. */
+const LABEL_FIELDS = [['lines', 'produk'], ['buyer', 'nama'], ['phone', 'telepon'], ['shipTo', 'alamat']];
+
+/**
+ * Which parts of a printed Shopify sheet no longer match the order, in plain words.
+ * Empty when only the fingerprint was kept (printed before the snapshot was), or when
+ * nothing moved.
+ */
+export function labelChanges(entry, order) {
+  if (!entry?.as) return [];
+  const now = labelSnapshot(order);
+  return LABEL_FIELDS.filter(([key]) => String(entry.as[key] ?? '') !== now[key]).map(([, name]) => name);
 }
 
 export const labelOutdated = (entry, order) => Boolean(entry?.sig) && order?.channel === 'shopify' && entry.sig !== labelSignature(order);
@@ -831,7 +850,11 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     if (!arranged[order.id]) return { state: 'arrange', note: 'atur pengiriman dulu' };
     // Printed, then edited in Shopify: the sheet on the parcel is wrong. Named, so it is
     // not read as a label nobody has got round to.
-    if (printedEntry(printed, order)) return { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' };
+    const entry = printedEntry(printed, order);
+    if (entry) {
+      const what = labelChanges(entry, order);
+      return { state: 'needsPrint', changed: true, note: `diubah setelah dicetak${what.length ? ` (${what.join(', ')})` : ''} - cetak ulang` };
+    }
     return { state: 'needsPrint', note: 'siap dicetak' };
   }
 
@@ -852,7 +875,7 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
     // A sheet that was printed and then invalidated by an edit is worth naming: "siap
     // dicetak" alone would read as a label nobody has got round to.
-    if (printedEntry(printed, order)) return { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' };
+    if (printedEntry(printed, order)) return { state: 'needsPrint', changed: true, note: 'diubah setelah dicetak - cetak ulang' };
     /*
      * The house rule, which the typed-in branch was never held to: a label comes after
      * the parcel has been arranged, not before.
@@ -1062,7 +1085,7 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
     const page = (bytes, jobs, channel) => {
       pages.push({ bytes, order: { id: jobs[0].row.id, channel }, covers: jobs.map(({ row }) => ({ channel: row.channel, id: row.id })) });
       printed.push(...jobs.map(({ row }) => row.id));
-      for (const { row, order } of jobs) sigs[printKey(row.channel, row.id)] = labelSignature(order);
+      for (const { row, order } of jobs) sigs[printKey(row.channel, row.id)] = { sig: labelSignature(order), as: labelSnapshot(order) };
     };
     for (const [channel, jobs] of byChannel) {
       try {

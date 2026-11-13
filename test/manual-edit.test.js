@@ -177,7 +177,7 @@ test('a label printed before the edit goes back into the queue, and says why', (
   // Marked stale by an edit: the sheet exists and it is wrong, so the parcel is waiting
   // to be printed again rather than done.
   assert.deepEqual(labelReadiness(shipping, { [key]: { at: 1, by: 'a', times: 1, stale: true } }),
-    { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' });
+    { state: 'needsPrint', changed: true, note: 'diubah setelah dicetak - cetak ulang' });
 });
 
 /* ------------------------------------------------------------------- the buttons */

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { labelReadiness, labelSignature, printKey } from '../src/labels.js';
+import { labelReadiness, labelSignature, labelSnapshot, printKey } from '../src/labels.js';
+import { renderLabels } from '../src/dashboard-page.js';
 
 const order = (lines, extra = {}) => ({
   channel: 'shopify', id: '#13131', stage: 'to_ship', buyer: 'Wiwiek', buyerPhone: '0813', shipTo: 'Cengkareng',
@@ -9,12 +10,12 @@ const order = (lines, extra = {}) => ({
 const bundle = [{ sku: 'Inside-Out-60-Protocol180+30', qty: 1 }, { sku: 'GFT-POUCH-001', qty: 1 }];
 const swapped = [{ sku: 'OMC-270-001', qty: 1 }, { sku: 'OMO-30-001', qty: 1 }];
 const arranged = { '#13131': 1 };
-const printedAs = (o) => ({ [printKey('shopify', '#13131')]: { at: 1, by: 'a', times: 1, sig: labelSignature(o) } });
+const printedAs = (o) => ({ [printKey('shopify', '#13131')]: { at: 1, by: 'a', times: 1, sig: labelSignature(o), as: labelSnapshot(o) } });
 
 test('a Shopify label printed and then edited in Shopify goes back to the queue, named', () => {
   const printed = printedAs(order(bundle));
   assert.equal(labelReadiness(order(bundle), printed, arranged).state, 'reprint');
-  assert.deepEqual(labelReadiness(order(swapped), printed, arranged), { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' });
+  assert.deepEqual(labelReadiness(order(swapped), printed, arranged), { state: 'needsPrint', changed: true, note: 'diubah setelah dicetak (produk) - cetak ulang' });
 });
 
 test('the address or the name moving sends it back too; nothing else on the order does', () => {
@@ -32,4 +33,27 @@ test('a label printed before fingerprints existed stays printed', () => {
 
 test('reprinting with the new contents settles it', () => {
   assert.equal(labelReadiness(order(swapped), printedAs(order(swapped)), arranged).state, 'reprint');
+});
+
+test('the queue says which part of the sheet is wrong', () => {
+  const printed = printedAs(order(bundle));
+  assert.equal(labelReadiness(order(bundle, { shipTo: 'Kebon Jeruk' }), printed, arranged).note, 'diubah setelah dicetak (alamat) - cetak ulang');
+  assert.equal(labelReadiness(order(swapped, { buyer: 'Budi', buyerPhone: '0812' }), printed, arranged).note, 'diubah setelah dicetak (produk, nama, telepon) - cetak ulang');
+  const hashOnly = { [printKey('shopify', '#13131')]: { at: 1, by: 'a', times: 1, sig: labelSignature(order(bundle)) } };
+  assert.equal(labelReadiness(order(swapped), hashOnly, arranged).note, 'diubah setelah dicetak - cetak ulang');
+});
+
+test('labels to reprint lead the list, and their filter shows only when there are some', () => {
+  const fresh = order(bundle, { id: '#13200', createdAt: 1 });
+  const edited = order(swapped, { createdAt: 2 });
+  const args = { range: {}, errors: {}, shopeeShop: null, generatedAt: 0, csrf: 't', flash: null,
+    sizes: { a6: { label: 'A6' } }, defaultSize: 'a6', arranged: { '#13131': 1, '#13200': 1 } };
+  const html = renderLabels({ ...args, orders: [fresh, edited], printed: printedAs(order(bundle)) });
+  assert.ok(html.indexOf('data-id="#13131"') < html.indexOf('data-id="#13200"'), 'the edited one is first');
+  assert.match(html, /changed=1">Perlu cetak ulang &middot; 1/);
+  assert.match(html, /Perlu cetak ulang/);
+  const only = renderLabels({ ...args, orders: [fresh, edited], printed: printedAs(order(bundle)), onlyChanged: true });
+  assert.doesNotMatch(only, /data-id="#13200"/);
+  const none = renderLabels({ ...args, orders: [fresh], printed: {} });
+  assert.doesNotMatch(none, /changed=1/);
 });

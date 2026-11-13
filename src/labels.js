@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
 import { buildShopifyLabels, reservePickNumbers } from './shopify/label.js';
 import { PREFIXES, sourceShips } from './mekari/prefix.js';
@@ -642,8 +643,32 @@ export const printedEntry = (printed, order) => printed[printKey(order.channel, 
  */
 const wasPrinted = (printed, order) => {
   const entry = printedEntry(printed, order);
-  return entry && !entry.stale ? entry : null;
+  return entry && !entry.stale && !labelOutdated(entry, order) ? entry : null;
 };
+
+/**
+ * What a Shopify label carries, fingerprinted when it is printed.
+ *
+ * The sheet is drawn by us from the order - products and quantities, buyer, phone,
+ * address - so a change to any of those after it came out means the parcel would leave
+ * with the old contents written on the outside. A typed-in sale is marked stale by the
+ * edit itself; a Shopify order is edited in Shopify's admin, where nothing tells us, so
+ * the label is compared with the order as it stands every time the queue is drawn. An
+ * entry printed before fingerprints existed has none and is taken as current.
+ */
+export function labelSignature(order) {
+  const lines = (order?.lines ?? [])
+    .map((l) => [String(l.sku ?? ''), Number(l.qty) || 0])
+    .filter(([, qty]) => qty > 0)
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const body = JSON.stringify({
+    lines, buyer: String(order?.buyer ?? '').trim(), phone: String(order?.buyerPhone ?? '').trim(),
+    shipTo: String(order?.shipTo ?? '').trim(),
+  });
+  return createHash('sha1').update(body).digest('hex').slice(0, 16);
+}
+
+export const labelOutdated = (entry, order) => Boolean(entry?.sig) && order?.channel === 'shopify' && entry.sig !== labelSignature(order);
 
 /**
  * Which print run an order belongs to.
@@ -804,6 +829,9 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     if (wasPrinted(printed, order)) return { state: 'reprint', note: 'sudah dicetak' };
     if (order.stage !== 'to_ship') return { state: 'none', note: 'sudah selesai, tidak perlu label' };
     if (!arranged[order.id]) return { state: 'arrange', note: 'atur pengiriman dulu' };
+    // Printed, then edited in Shopify: the sheet on the parcel is wrong. Named, so it is
+    // not read as a label nobody has got round to.
+    if (printedEntry(printed, order)) return { state: 'needsPrint', note: 'diubah setelah dicetak - cetak ulang' };
     return { state: 'needsPrint', note: 'siap dicetak' };
   }
 
@@ -987,6 +1015,8 @@ export async function buildLabelSheet({ orders, size = DEFAULT_SIZE, resolvePack
     pageCount,
     requested: orders.length,
     printed,
+    // What each Shopify sheet said, so an edit made after printing sends it back to the queue.
+    sigs: Object.fromEntries(Object.entries(shopifyResult.sigs ?? {}).filter(([key]) => printed.includes(key))),
     failures: [...skipped, ...tiktokResult.failures, ...shopeeResult.failures, ...shopifyResult.failures, ...mergeFailures],
     size,
   };
@@ -1027,10 +1057,12 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
 
     const pages = [];
     const printed = [];
+    const sigs = {};
     const draw = (jobs) => buildShopifyLabels(jobs.map(({ order, pick }) => ({ order, pick })), { width: stock.width, height: stock.height });
     const page = (bytes, jobs, channel) => {
       pages.push({ bytes, order: { id: jobs[0].row.id, channel }, covers: jobs.map(({ row }) => ({ channel: row.channel, id: row.id })) });
       printed.push(...jobs.map(({ row }) => row.id));
+      for (const { row, order } of jobs) sigs[printKey(row.channel, row.id)] = labelSignature(order);
     };
     for (const [channel, jobs] of byChannel) {
       try {
@@ -1048,7 +1080,7 @@ async function drawShopifyLabels(selection, resolveShopify, stock = LABEL_SIZES[
         if (good.length) page(await draw(good), good, channel);
       }
     }
-    return { pages, printed, failures };
+    return { pages, printed, failures, sigs };
   } catch (error) {
     // Drawing is arithmetic on data we already hold, so a failure here is a bug rather
     // than a bad parcel - it is reported against all of them because it stopped all of them.

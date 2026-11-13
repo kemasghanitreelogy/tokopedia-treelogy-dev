@@ -115,7 +115,7 @@ export default async function handler(req, res) {
     // or the order would ask to be printed again tomorrow.
     let unrecorded = '';
     if (sheet.printed?.length) {
-      await markPrinted(sheet.printed, { by: user.email }).catch((error) => {
+      await markPrinted(sheet.printed, { by: user.email, sigs: sheet.sigs ?? {} }).catch((error) => {
         console.warn(`labels: gagal mencatat cetakan Shopify - ${error.message}`);
         unrecorded = error.message;
       });

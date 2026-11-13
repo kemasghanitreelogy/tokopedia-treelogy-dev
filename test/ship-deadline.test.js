@@ -36,18 +36,28 @@ const SHOPEE = {
   item_list: [],
 };
 
-test('an order nobody has arranged races the ready-to-ship clock, not the comfortable one', () => {
+test('the SLA is Seller Center\'s "Ship order by", even before the order is arranged', () => {
+  // tts_sla_time, not rts_sla_time: order 587132760688002624 on 13 Nov 2026 showed
+  // "Ship order by 11/14/2026 12:59:59 AM" in Seller Center, the same instant as tts_sla_time.
   const order = mapTikTokOrder(TOKOPEDIA);
-  // Five hours fifty, not five days. Showing the later figure would say there is time
-  // when there are six hours, which is worse than showing nothing at all.
-  assert.equal(order.shipBy, 1790240400);
+  assert.equal(order.shipBy, TOKOPEDIA.tts_sla_time);
+  assert.notEqual(order.shipBy, TOKOPEDIA.rts_sla_time);
   assert.notEqual(order.shipBy, TOKOPEDIA.shipping_due_time);
-  assert.notEqual(order.shipBy, TOKOPEDIA.collection_due_time);
 });
 
-test('once arranged, the handover clock is the one left to miss', () => {
+test('once arranged, it is still the same deadline', () => {
   const order = mapTikTokOrder({ ...TOKOPEDIA, status: 'AWAITING_COLLECTION' });
   assert.equal(order.shipBy, 1790269199);
+});
+
+test('the live order the team pointed at reads as Seller Center shows it', () => {
+  const order = mapTikTokOrder({
+    ...TOKOPEDIA, id: '587132760688002624', status: 'AWAITING_COLLECTION',
+    rts_sla_time: 1794560400, tts_sla_time: 1794589199, collection_due_time: 1794934799, shipping_due_time: 1794848399,
+  });
+  // 1794589199 = 14 Nov 2026 00:59:59 UTC+8.
+  assert.equal(order.shipBy, 1794589199);
+  assert.equal(new Date((order.shipBy + 8 * 3600) * 1000).toISOString().slice(0, 19), '2026-11-14T00:59:59');
 });
 
 test('a field sent in milliseconds is not read as a date in the year 58000', () => {

@@ -3455,8 +3455,8 @@ export function renderProcess({ orders, range, errors, shopeeShop, generatedAt, 
   const deadline = (o) => {
     const at = Number(o.shipBy) || 0;
     if (!at) return '';
-    const label = o.channel === 'shopee' || o.stage !== 'to_ship' || o.status !== 'AWAITING_SHIPMENT'
-      ? 'Batas kirim' : 'Batas atur';
+    // Every marketplace's figure is now its own "ship by" deadline.
+    const label = 'Batas kirim';
     return `<span class="sla" data-deadline="${at}" data-tone="${untilTone(at)}" title="${escape(label)}: ${escape(dateTime(at, o.channel))}">
       ${svg('clock')}<span class="sla__t">${escape(untilText(at))}</span>
       <span class="sla__at">${escape(label.toLowerCase())} ${escape(dateTime(at, o.channel))}</span>

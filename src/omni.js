@@ -224,7 +224,7 @@ export function mapTikTokOrder(o) {
  * Shopee publishes one, `ship_by_date`, and for the same afternoon it read 00:59 the next
  * day - the same shape as TikTok's tts_sla_time.
  *
- * So the number shown is the one for the move still owed. An order nobody has arranged
+ * (Superseded - see below.) The number shown used to be the one for the move still owed. An order nobody has arranged
  * is racing the ready-to-ship clock, and showing it the comfortable five-day figure
  * instead would be worse than showing nothing: it would say there is time when there is
  * six hours. Once arranged, the handover clock is the one left to miss.
@@ -235,11 +235,15 @@ const seconds = (value) => {
   return n > 4e11 ? Math.floor(n / 1000) : n;
 };
 
+/*
+ * Changed 13 Nov 2026, at the team's request: the SLA is Seller Center's "Ship order by",
+ * whatever the status. Read off order 587132760688002624 that day - Seller Center showed
+ * "Ship order by 11/14/2026 12:59:59 AM" (UTC+8) and the API's tts_sla_time was the same
+ * instant. Until then an unarranged order showed rts_sla_time instead ("Arrange shipment
+ * by 5:00 PM"), a different, earlier clock than the one the team is measured on.
+ */
 function tiktokDeadline(order) {
-  const rts = seconds(order.rts_sla_time);
-  const handover = seconds(order.tts_sla_time) || seconds(order.collection_due_time);
-  if (order.status === 'AWAITING_SHIPMENT') return rts || handover || 0;
-  return handover || rts || 0;
+  return seconds(order.tts_sla_time) || seconds(order.collection_due_time) || seconds(order.rts_sla_time) || 0;
 }
 
 function financeFromTikTok(order) {

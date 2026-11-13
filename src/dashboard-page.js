@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta, isMarketplac
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { directPrintScript } from './direct-print.js';
+import { directPrintScript, directPrintPanel, DIRECT_PRINT_CSS } from './direct-print.js';
 import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
@@ -843,11 +843,7 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   .dr__in{flex:1; min-width:0} .dr__go{flex-basis:100%; min-height:36px}
 }
 .ok{color:var(--good)} .flag{color:var(--warn)} .stop{color:var(--bad)}
-.dp{margin:.75rem 0; padding:.75rem 1rem; border:1px solid var(--line); border-radius:10px; background:var(--panel-2)}
-.dp__row{display:flex; flex-wrap:wrap; align-items:center; gap:.6rem}
-.dp__opts{margin-top:.5rem; font-size:.9rem; color:var(--muted)}
-.dp__opts label{display:inline-flex; align-items:center; gap:.3rem}
-.dp__state{flex-basis:100%}
+${DIRECT_PRINT_CSS}
 .lb-tip{position:relative; display:inline-flex; vertical-align:-.2em; color:var(--muted); cursor:help; border-radius:50%}
 .lb-tip .ico{width:1rem; height:1rem}
 .lb-tip:hover, .lb-tip:focus-visible{color:var(--fg); outline:none}
@@ -6343,21 +6339,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         ${stat('Sudah jalan', String(counts.reprint))}
       </div>`,
     body: `${reprintFilters}
-        ${directPrinter ? `<div class="dp" id="dp">
-          <div class="dp__row">
-            <strong>${escape(directPrinter.model)}</strong> <span class="dim">&middot; Bluetooth, tanpa dialog print</span>
-            <span class="grow"></span>
-            <button class="chip" type="button" id="dp-connect">Sambungkan printer</button>
-            <button class="chip" type="button" id="dp-test" disabled>Halaman tes</button>
-            <button class="cta" type="button" id="dp-go" disabled>Cetak langsung</button>
-          </div>
-          <div class="dp__row dp__opts">
-            <label>Bahasa <select class="dr__in" id="dp-proto"><option value="tspl">TSPL</option><option value="escpos">ESC/POS</option></select></label>
-            <label><input type="checkbox" id="dp-invert"> balik warna</label>
-            <label><input type="checkbox" id="dp-rotate"> putar 180&deg;</label>
-            <span class="dp__state dim">Belum tersambung.</span>
-          </div>
-        </div>` : ''}
+        ${directPrinter ? directPrintPanel(directPrinter, { escape }) : ''}
         ${!showReprints && (counts.changed > 0 || onlyChanged) ? `<div class="filters lb-changed">
           <a class="chip${onlyChanged ? '' : ' is-on'}" href="?view=labels">Semua</a>
           <a class="chip${onlyChanged ? ' is-on' : ''}" href="?view=labels&amp;changed=1">Data berubah &middot; ${counts.changed}</a>

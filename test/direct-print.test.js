@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packMono, tsplJob, escposJob, directPrinterFor, directPrintScript } from '../src/direct-print.js';
+import { packMono, tsplJob, escposJob, inkBands, placePage, directPrinterFor, directPrintScript, CALIBRATION_STOPS } from '../src/direct-print.js';
 import { renderLabels } from '../src/dashboard-page.js';
 
 // 16x2 image: top row all black, bottom row white except the last pixel.
@@ -53,4 +53,41 @@ test('the browser script is self-contained: the encoders are inlined, not import
   assert.match(script, /function packMono/);
   assert.match(script, /function tsplJob/);
   new Function(script); // parses
+});
+
+test('blank rows are not sent: one BITMAP per band of ink, close bands merged', () => {
+  // 8 px wide, 40 rows: ink on rows 2-3, 30, and 36-39 (gap of 5 blank rows from 30).
+  const rgba = new Uint8Array(8 * 40 * 4).fill(255);
+  const inkRow = (y) => { for (let x = 0; x < 8; x += 1) rgba.set([0, 0, 0, 255], (y * 8 + x) * 4); };
+  [2, 3, 30, 36, 37, 38, 39].forEach(inkRow);
+  const mono = packMono(rgba, 8, 40, { black: 0 });
+  assert.deepEqual(inkBands(mono), [[2, 4], [30, 40]]);
+  const text = Buffer.from(tsplJob(mono)).toString('latin1');
+  assert.match(text, /BITMAP 0,2,1,2,0,\x00\x00\r\nBITMAP 0,30,1,10,0,/);
+  assert.equal((text.match(/BITMAP/g) ?? []).length, 2);
+  assert.ok(text.endsWith('PRINT 1,1\r\n'));
+  // A white label sends no bitmap at all.
+  const white = packMono(new Uint8Array(8 * 4 * 4).fill(255), 8, 4, { black: 0 });
+  assert.doesNotMatch(Buffer.from(tsplJob(white)).toString('latin1'), /BITMAP/);
+  // The inverted polarity reads 0x00 as blank.
+  assert.deepEqual(inkBands(packMono(rgba, 8, 40, { black: 1 }), { blank: 0x00 }), [[2, 4], [30, 40]]);
+});
+
+test('a page is fitted into the calibrated part of the label, centred there', () => {
+  const full = placePage(298, 420, { width: 800, height: 1200, fit: 1 });
+  assert.equal(Math.round(298 * full.scale), 800);
+  assert.deepEqual([full.x, full.y], [0, Math.round((1200 - 420 * full.scale) / 2)]);
+  const half = placePage(298, 420, { width: 800, height: 1200, fit: 0.5 });
+  assert.equal(Math.round(298 * half.scale), 400, 'a printer that stretches 2x gets a half-size drawing');
+  assert.ok(half.x >= 0 && half.y >= 0 && 420 * half.scale <= 600);
+  assert.equal(CALIBRATION_STOPS[CALIBRATION_STOPS.length - 1], 100);
+});
+
+test('the panel is on the reprint list too, with one primary button and the calibration stops', () => {
+  const args = { orders: [], range: {}, errors: {}, shopeeShop: null, generatedAt: 0, csrf: 't', flash: null, sizes: { a6: { label: 'A6' } }, defaultSize: 'a6', directPrinter: directPrinterFor({ email: 'kemas@treelogy.com' }) };
+  const reprint = renderLabels({ ...args, showReprints: true });
+  assert.match(reprint, /id="dp-go"/);
+  assert.match(reprint, /data-fit="60"/);
+  assert.equal((reprint.match(/class="cta dp__go"/g) ?? []).length, 1);
+  assert.match(reprint, /navigator\.bluetooth\.getDevices/);
 });

@@ -24,6 +24,7 @@ import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
 import { printedLabels, markPrinted, markLabelStale, arrangedOrders } from '../src/shopify/label.js';
 import { directPrinterFor, directPrintHostPage } from '../src/direct-print.js';
+import { benchSnapshot } from '../src/print-queue.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
@@ -2539,6 +2540,11 @@ export default async function handler(req, res) {
      * order number should not wait on three platforms to be told about one row. Rows come
      * back as markup from the same function the list uses, so the page only inserts them.
      */
+    // The bench's pulse for the label page: polled, so answered before any worklist is read.
+    if (view === 'labels' && url.searchParams.get('bench') === '1') {
+      send(200, JSON.stringify(await benchSnapshot()), { 'Content-Type': 'application/json; charset=utf-8' });
+      return;
+    }
     if (view === 'labels' && url.searchParams.has('lookup')) {
       const fragment = String(url.searchParams.get('lookup') ?? '').slice(0, 64);
       const json = (status, body) => send(status, JSON.stringify(body), { 'Content-Type': 'application/json; charset=utf-8' });
@@ -2602,6 +2608,7 @@ export default async function handler(req, res) {
         showReprints, reprintFilter, now: Math.floor(Date.now() / 1000),
         onlyChanged: url.searchParams.get('changed') === '1',
         directPrinter: directPrinterFor(user),
+        bench: await benchSnapshot().catch(() => null),
         readAt: labelling.readAt, settleFailed: labelling.failed,
       }));
       return;

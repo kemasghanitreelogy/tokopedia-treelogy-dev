@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta, isMarketplac
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { directPrintScript, directPrintPanel, DIRECT_PRINT_CSS, directPrinterFor, directPrintEnterScript } from './direct-print.js';
+import { directPrintScript, directPrintPanel, DIRECT_PRINT_CSS, directPrinterFor, directPrintEnterScript, benchPanel, benchScript } from './direct-print.js';
 import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
@@ -6111,11 +6111,19 @@ export function renderLabelLookup({ orders, printed = {}, arranged = {}, people 
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, onlyChanged = false, directPrinter = null, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, onlyChanged = false, directPrinter = null, bench = null, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
   const assessed = orders.map((o) => ({ order: o, readiness: labelReadiness(o, printed, arranged) }));
+  /*
+   * Which "Cetak langsung" this page gets. A bench with an agent (seen within the week)
+   * serves everybody and needs no phone to hold a printer; only when there is none does
+   * a person with their own Bluetooth printer get that road instead.
+   */
+  const benchKnown = Boolean(bench?.seenAt && now * 1000 - bench.seenAt < 7 * 86400_000);
+  const printPanel = benchKnown ? benchPanel(bench, { escape }) : (directPrinter ? directPrintPanel(directPrinter, { escape }) : '');
+  const printScript = benchKnown ? benchScript() : (directPrinter ? directPrintScript(directPrinter) : '');
 
   const counts = { needsPrint: 0, waiting: 0, arrange: 0, reprint: 0, changed: 0 };
   for (const { readiness } of assessed) {
@@ -6340,7 +6348,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
         ${stat('Sudah jalan', String(counts.reprint))}
       </div>`,
     body: `${reprintFilters}
-        ${directPrinter ? directPrintPanel(directPrinter, { escape }) : ''}
+        ${printPanel}
         ${!showReprints && (counts.changed > 0 || onlyChanged) ? `<div class="filters lb-changed">
           <a class="chip${onlyChanged ? '' : ' is-on'}" href="?view=labels">Semua</a>
           <a class="chip${onlyChanged ? ' is-on' : ''}" href="?view=labels&amp;changed=1">Data berubah &middot; ${counts.changed}</a>
@@ -6384,7 +6392,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
           </div>
           <input type="hidden" name="view" value="labels">
         </form>`,
-    script: `${directPrinter ? directPrintScript(directPrinter) : ''}
+    script: `${printScript}
 (function () {
   var form = document.getElementById('lbform');
   var counter = document.getElementById('n');

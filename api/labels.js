@@ -10,6 +10,8 @@ import {
 import { recordActivity } from '../src/audit.js';
 import { can } from '../src/users.js';
 import { directPrinterFor } from '../src/direct-print.js';
+import { rasterizePdf } from '../src/label-raster.js';
+import { enqueueJob } from '../src/print-queue.js';
 
 /**
  * Streams a merged, print-ready PDF of official carrier waybills.
@@ -64,7 +66,7 @@ export default async function handler(req, res) {
   try {
     // A hundred selections of ~30 bytes each still fits comfortably.
     form = await readFormBody(req, 16384);
-    wantsJson = form.get('format') === 'json';
+    wantsJson = form.get('format') === 'json' || form.get('format') === 'queue';
   } catch {
     fail(400, 'Permintaan terlalu besar', 'Pilih lebih sedikit pesanan sekaligus.');
     return;
@@ -151,6 +153,25 @@ export default async function handler(req, res) {
     // parcel that did not make it instead of leaving the operator to count paper.
     if (sheet.failures.length > 0) {
       console.warn(`labels: ${sheet.failures.map((f) => `${f.id}:${f.reason}`).join('; ')}`);
+    }
+    // To the bench: rendered here into the printer's language and queued for the agent
+    // on the packing laptop. Anybody who may print may queue; nothing to hold or pair.
+    if (form.get('format') === 'queue') {
+      const pages = [];
+      for (const group of sheet.groups) {
+        // eslint-disable-next-line no-await-in-loop
+        for (const tspl of await rasterizePdf(group.bytes)) pages.push(Buffer.from(tspl).toString('base64'));
+      }
+      const job = await enqueueJob({
+        by: user.email, label: `${pages.length} label · ${user.name || user.email}`,
+        orders: chosen.map((o) => `${o.channel}:${o.id}`), pages,
+      });
+      console.log(`labels: ${pages.length} halaman masuk antrian gudang (${job.id}) oleh ${user.email}`);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(JSON.stringify({ jobId: job.id, pages: pages.length, failures: sheet.failures, unrecorded }));
+      return;
     }
     // Straight to a Bluetooth printer: the page renders and sends the PDFs itself, so it
     // wants the stacks as data rather than a report to open. Only for whoever has one.

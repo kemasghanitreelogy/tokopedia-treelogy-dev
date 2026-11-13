@@ -33,7 +33,7 @@
 
 // 0.65 printed whole but a touch small (83% of the paper's width against the driver's
 // 85%, and shorter); 0.70 is the second measurement, 13 Nov 2026 afternoon.
-const OKAY_D100 = { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.70 };
+export const OKAY_D100 = { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.70 };
 
 /** Who prints to which printer. One D100 on the packing bench, shared by the two who pack. */
 export const DIRECT_PRINTERS = {
@@ -712,6 +712,124 @@ export function hostScript(printer) {
 
   ready();
   resume();
+})();
+`;
+}
+
+/* ------------------------------------------------------------ the bench queue */
+
+/**
+ * The panel when the bench has an agent: the printer belongs to nobody's phone, labels
+ * are rendered on the server and queued, and the agent on the bench laptop prints them.
+ * Shown to everyone who can print; "online" means the agent asked within the last
+ * minute and a half.
+ */
+export function benchPanel(bench, { escape = esc } = {}) {
+  const online = Boolean(bench?.online);
+  const waiting = (bench?.pending ?? 0) + (bench?.printing ?? 0);
+  const seen = bench?.seenAt ? new Date(bench.seenAt).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit' }) : '';
+  const state = online
+    ? (waiting ? `Siap · ${waiting} antri` : 'Siap')
+    : `Agen printer tidak aktif${seen ? ` · terakhir ${seen} WIB` : ''}`;
+  return `<section class="dp" id="bp" aria-label="Printer gudang" data-online="${online ? 1 : 0}">
+    <div class="dp__head">
+      <span class="dp__dot ${online ? 'is-on' : 'is-off'}" id="bp-dot" aria-hidden="true"></span>
+      <span class="dp__name">Printer gudang</span>
+      <span class="dp__state" id="bp-state" role="status" aria-live="polite">${escape(state)}</span>
+    </div>
+    <button class="cta dp__go" type="button" id="bp-go" disabled>
+      <span class="dp__go-label">Cetak langsung</span><span class="dp__go-n" id="bp-n"></span>
+    </button>
+    <div class="dp__bar" id="bp-bar" hidden><span id="bp-fill"></span></div>
+  </section>`;
+}
+
+/** The panel's script: send the ticked labels to the queue, then watch them print. */
+export function benchScript() {
+  return `
+(function () {
+  var box = document.getElementById('bp');
+  var form = document.getElementById('lbform');
+  if (!box) return;
+  var $ = function (id) { return document.getElementById(id); };
+  var dot = $('bp-dot'), state = $('bp-state'), goBtn = $('bp-go'), goN = $('bp-n'), bar = $('bp-bar'), fill = $('bp-fill');
+  var online = box.getAttribute('data-online') === '1', busy = false;
+
+  function say(text, tone) { state.textContent = text; dot.className = 'dp__dot ' + (tone || ''); }
+  function picked() { return form ? form.querySelectorAll('.pick:checked:not(:disabled)').length : 0; }
+  function ready() {
+    var n = picked();
+    goN.textContent = n ? n + ' label' : '';
+    goBtn.disabled = !online || busy || n === 0;
+  }
+  if (form) { form.addEventListener('change', ready); new MutationObserver(ready).observe(form, { childList: true, subtree: true }); }
+  function progress(frac) { bar.hidden = false; fill.style.width = Math.round(frac * 100) + '%'; }
+  function progressOff() { bar.hidden = true; fill.style.width = '0'; }
+  function stamp(at) { try { return new Date(at).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
+
+  async function snapshot() {
+    var res = await fetch(location.pathname + '?view=labels&bench=1', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+  function show(b) {
+    online = !!b.online;
+    if (busy) return;
+    var waiting = (b.pending || 0) + (b.printing || 0);
+    say(online ? (waiting ? 'Siap · ' + waiting + ' antri' : 'Siap') : ('Agen printer tidak aktif' + (b.seenAt ? ' · terakhir ' + stamp(b.seenAt) + ' WIB' : '')), online ? 'is-on' : 'is-off');
+    ready();
+  }
+  // The bench's pulse, read while the page is open; nothing is sent when it is hidden.
+  setInterval(function () { if (!document.hidden) snapshot().then(show).catch(function () {}); }, 10000);
+
+  function markPrinted(orders, failures) {
+    orders.forEach(function (v) {
+      var id = v.slice(v.indexOf(':') + 1).toLowerCase();
+      var row = form && form.querySelector('tr[data-id="' + id.replace(/"/g, '') + '"]');
+      if (!row) return;
+      var pick = row.querySelector('.pick');
+      if (pick) { pick.checked = false; pick.disabled = true; }
+      var note = row.querySelector('td:last-child');
+      if (note && !failures.some(function (f) { return String(f.id).toLowerCase() === id; })) note.innerHTML = '<span class="ok">dicetak di gudang</span>';
+    });
+    if (form) form.dispatchEvent(new Event('change'));
+  }
+
+  goBtn.addEventListener('click', async function () {
+    if (!form || busy || !online) return;
+    var body = new URLSearchParams(new FormData(form));
+    body.set('format', 'queue');
+    var orders = body.getAll('order');
+    if (!orders.length) { say('Centang pesanan dulu.', 'is-on'); return; }
+    busy = true; ready();
+    try {
+      say('Menyiapkan ' + orders.length + ' label…', 'is-busy'); progress(0.1);
+      var res = await fetch('/api/labels', { method: 'POST', body: body, credentials: 'same-origin' });
+      var out = await res.json();
+      if (!res.ok) throw new Error(out.error || ('HTTP ' + res.status));
+      var failures = out.failures || [];
+      say(out.pages + ' label masuk antrian…', 'is-busy'); progress(0.3);
+      // Watch the job until the bench says it printed. Three minutes is far longer than
+      // any print; after that the agent's reclaim rule takes over and the page lets go.
+      var started = Date.now(), status = 'pending';
+      while (Date.now() - started < 180000) {
+        await new Promise(function (r) { setTimeout(r, 1500); });
+        var b = await snapshot().catch(function () { return null; });
+        if (!b) continue;
+        var job = (b.recent || []).filter(function (j) { return j.id === out.jobId; })[0];
+        if (!job) continue;
+        status = job.status;
+        if (status === 'printing') { say('Sedang dicetak…', 'is-busy'); progress(0.7); }
+        if (status === 'done' || status === 'failed') { if (status === 'failed') throw new Error(job.error || 'printer gagal'); break; }
+      }
+      if (status !== 'done') throw new Error('belum ada kabar dari agen printer - cek laptop di meja packing');
+      say(out.pages + ' label dicetak' + (failures.length ? ' · ' + failures.length + ' gagal disiapkan: ' + failures.map(function (f) { return f.id; }).join(', ') : ''), failures.length ? 'is-busy' : 'is-on');
+      markPrinted(orders, failures);
+    } catch (e) {
+      say('Gagal: ' + e.message, 'is-off');
+    } finally { busy = false; progressOff(); ready(); }
+  });
+  ready();
 })();
 `;
 }

@@ -21,6 +21,7 @@ const ROUTES = {
   '/api/activate': './api/activate.js',
   '/api/invoice': './api/invoice.js',
   '/api/labels': './api/labels.js',
+  '/api/print-agent': './api/print-agent.js',
   '/api/export': './api/export.js',
   '/api/status': './api/status.js',
   '/api/events': './api/events.js',

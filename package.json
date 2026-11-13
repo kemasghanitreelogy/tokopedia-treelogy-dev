@@ -86,8 +86,10 @@
     "mekari:repool": "node bin/tts.mjs mekari:repool"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.65",
     "@vercel/blob": "^2.8.0",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
     "redis": "^5.12.1"
   }
 }

@@ -27,14 +27,18 @@
  *   ask the host to print over postMessage; the host answers with progress. Entering
  *   the host once is remembered on the phone, so every later visit lands in it.
  *
- * Offered per person: the printer is a device on one person's desk, not a property of
- * the shop. Everybody else keeps the print dialog exactly as before.
+ * Offered per person: the printer is a device on the packing bench, named for the people
+ * who stand at it, not a property of the shop. Everybody else keeps the print dialog.
  */
 
+// 0.65 printed whole but a touch small (83% of the paper's width against the driver's
+// 85%, and shorter); 0.70 is the second measurement, 13 Nov 2026 afternoon.
+const OKAY_D100 = { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.70 };
+
+/** Who prints to which printer. One D100 on the packing bench, shared by the two who pack. */
 export const DIRECT_PRINTERS = {
-  // 0.65 printed whole but a touch small (83% of the paper's width against the driver's
-  // 85%, and shorter); 0.70 is the second measurement, 13 Nov 2026 afternoon.
-  'kemas@treelogy.com': { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.70 },
+  'kemas@treelogy.com': OKAY_D100,
+  'agas@treelogy.com': OKAY_D100,
 };
 
 export function directPrinterFor(user) {

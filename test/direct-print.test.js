@@ -36,8 +36,9 @@ test('the ESC/POS job is a GS v 0 raster with little-endian dimensions', () => {
   assert.deepEqual(bytes.slice(10, 14), [0xff, 0xff, 0x00, 0x01]);
 });
 
-test('only Kemas gets the direct printer, and only his page carries the panel', () => {
+test('only the packers get the direct printer, and only their pages carry the panel', () => {
   assert.equal(directPrinterFor({ email: 'KEMAS@treelogy.com' })?.model, 'OKAY D100');
+  assert.equal(directPrinterFor({ email: 'agas@treelogy.com' })?.model, 'OKAY D100', 'Agas packs at the same bench');
   assert.equal(directPrinterFor({ email: 'vanya@treelogy.com' }), null);
   assert.equal(directPrinterFor(null), null);
   const args = { orders: [], range: {}, errors: {}, shopeeShop: null, generatedAt: 0, csrf: 't', flash: null, sizes: { a6: { label: 'A6' } }, defaultSize: 'a6' };

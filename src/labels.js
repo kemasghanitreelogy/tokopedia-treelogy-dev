@@ -853,7 +853,8 @@ export function labelReadiness(order, printed = {}, arranged = {}) {
     const entry = printedEntry(printed, order);
     if (entry) {
       const what = labelChanges(entry, order);
-      return { state: 'needsPrint', changed: true, note: `diubah setelah dicetak${what.length ? ` (${what.join(', ')})` : ''} - cetak ulang` };
+      // The note stays short; which parts moved rides along for the info icon.
+      return { state: 'needsPrint', changed: true, note: 'diubah setelah dicetak - cetak ulang', ...(what.length ? { what } : {}) };
     }
     return { state: 'needsPrint', note: 'siap dicetak' };
   }

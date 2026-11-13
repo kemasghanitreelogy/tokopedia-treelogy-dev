@@ -92,6 +92,7 @@ icon.ext = '<path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.
 icon.grid = '<path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"/>';
 icon.list = '<path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
 icon.image = '<path d="m2.25 15.75 5.16-5.16a2.25 2.25 0 0 1 3.18 0l5.16 5.16m-1.5-1.5 1.41-1.41a2.25 2.25 0 0 1 3.18 0l2.91 2.91m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>';
+icon.info = '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.75h.01"/>';
 icon.export = '<path d="M12 15V3m0 0L8.5 6.5M12 3l3.5 3.5M20.25 14.25v4.5a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5v-4.5"/>';
 
 export const svg = (name, cls = '') =>
@@ -841,6 +842,14 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   .dr__in{flex:1; min-width:0} .dr__go{flex-basis:100%; min-height:36px}
 }
 .ok{color:var(--good)} .flag{color:var(--warn)} .stop{color:var(--bad)}
+.lb-tip{position:relative; display:inline-flex; vertical-align:-.2em; color:var(--muted); cursor:help; border-radius:50%}
+.lb-tip .ico{width:1rem; height:1rem}
+.lb-tip:hover, .lb-tip:focus-visible{color:var(--fg); outline:none}
+.lb-tip::after{content:attr(data-tip); position:absolute; right:0; bottom:calc(100% + 6px); z-index:5;
+  white-space:nowrap; padding:.35rem .55rem; border-radius:6px; font-size:.8rem; line-height:1.3;
+  background:var(--panel-2); color:var(--fg); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.25);
+  opacity:0; transform:translateY(2px); pointer-events:none; transition:opacity .12s, transform .12s}
+.lb-tip:hover::after, .lb-tip:focus-visible::after{opacity:1; transform:none}
 .note{font-size:.75rem; color:var(--muted)}
 /* --- the ink slab: this page's numbers at display size, hairlines between them --- */
 .strip{display:flex; align-items:center; gap:.5rem 0; flex-wrap:wrap; padding:.25rem 1.1rem; margin-bottom:1rem;
@@ -5972,6 +5981,8 @@ function labelRowHtml({ order: o, readiness, entry = null }, { batchKey = null, 
       </td>
       <td class="nowrap">${escape(o.buyer) || '<span class="dim">&mdash;</span>'}</td>
       <td class="nowrap"><span class="${readiness.changed ? 'stop' : (READY_TONE[readiness.state] ?? 'dim')}">${escape(readiness.note)}</span>${
+        // What moved is a hover away, so the row stays one short line.
+        readiness.what?.length ? ` <span class="lb-tip" tabindex="0" role="img" aria-label="${escape(`Yang berubah: ${readiness.what.join(', ')}`)}" data-tip="${escape(`Yang berubah: ${readiness.what.join(', ')}`)}">${svg('info')}</span>` : ''}${
         times > 1 ? ` <span class="dim">&middot; ${times}&times;</span>` : ''}${
         why ? `<br><span class="dim">${escape(why)}</span>` : ''}</td>
     </tr>`;
@@ -6328,8 +6339,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
     body: `${reprintFilters}
         ${!showReprints && (counts.changed > 0 || onlyChanged) ? `<div class="filters lb-changed">
           <a class="chip${onlyChanged ? '' : ' is-on'}" href="?view=labels">Semua</a>
-          <a class="chip${onlyChanged ? ' is-on' : ''}" href="?view=labels&amp;changed=1">Perlu cetak ulang &middot; ${counts.changed}</a>
-          <span class="dim">nama, telepon, alamat atau produk berubah setelah label dicetak</span>
+          <a class="chip${onlyChanged ? ' is-on' : ''}" href="?view=labels&amp;changed=1">Data berubah &middot; ${counts.changed}</a>
         </div>` : ''}
         ${search}
         ${empty ? `<div id="lb-empty"><p class="empty">${!showReprints

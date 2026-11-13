@@ -15,7 +15,7 @@ const printedAs = (o) => ({ [printKey('shopify', '#13131')]: { at: 1, by: 'a', t
 test('a Shopify label printed and then edited in Shopify goes back to the queue, named', () => {
   const printed = printedAs(order(bundle));
   assert.equal(labelReadiness(order(bundle), printed, arranged).state, 'reprint');
-  assert.deepEqual(labelReadiness(order(swapped), printed, arranged), { state: 'needsPrint', changed: true, note: 'diubah setelah dicetak (produk) - cetak ulang' });
+  assert.deepEqual(labelReadiness(order(swapped), printed, arranged), { state: 'needsPrint', changed: true, note: 'diubah setelah dicetak - cetak ulang', what: ['produk'] });
 });
 
 test('the address or the name moving sends it back too; nothing else on the order does', () => {
@@ -35,12 +35,14 @@ test('reprinting with the new contents settles it', () => {
   assert.equal(labelReadiness(order(swapped), printedAs(order(swapped)), arranged).state, 'reprint');
 });
 
-test('the queue says which part of the sheet is wrong', () => {
+test('which part of the sheet is wrong is kept for the info icon, not written into the note', () => {
   const printed = printedAs(order(bundle));
-  assert.equal(labelReadiness(order(bundle, { shipTo: 'Kebon Jeruk' }), printed, arranged).note, 'diubah setelah dicetak (alamat) - cetak ulang');
-  assert.equal(labelReadiness(order(swapped, { buyer: 'Budi', buyerPhone: '0812' }), printed, arranged).note, 'diubah setelah dicetak (produk, nama, telepon) - cetak ulang');
+  const moved = labelReadiness(order(bundle, { shipTo: 'Kebon Jeruk' }), printed, arranged);
+  assert.equal(moved.note, 'diubah setelah dicetak - cetak ulang');
+  assert.deepEqual(moved.what, ['alamat']);
+  assert.deepEqual(labelReadiness(order(swapped, { buyer: 'Budi', buyerPhone: '0812' }), printed, arranged).what, ['produk', 'nama', 'telepon']);
   const hashOnly = { [printKey('shopify', '#13131')]: { at: 1, by: 'a', times: 1, sig: labelSignature(order(bundle)) } };
-  assert.equal(labelReadiness(order(swapped), hashOnly, arranged).note, 'diubah setelah dicetak - cetak ulang');
+  assert.equal(labelReadiness(order(swapped), hashOnly, arranged).what, undefined);
 });
 
 test('labels to reprint lead the list, and their filter shows only when there are some', () => {
@@ -50,8 +52,8 @@ test('labels to reprint lead the list, and their filter shows only when there ar
     sizes: { a6: { label: 'A6' } }, defaultSize: 'a6', arranged: { '#13131': 1, '#13200': 1 } };
   const html = renderLabels({ ...args, orders: [fresh, edited], printed: printedAs(order(bundle)) });
   assert.ok(html.indexOf('data-id="#13131"') < html.indexOf('data-id="#13200"'), 'the edited one is first');
-  assert.match(html, /changed=1">Perlu cetak ulang &middot; 1/);
-  assert.match(html, /Perlu cetak ulang/);
+  assert.match(html, /changed=1">Data berubah &middot; 1/);
+  assert.match(html, /class="lb-tip"[^>]*data-tip="Yang berubah: produk"/);
   const only = renderLabels({ ...args, orders: [fresh, edited], printed: printedAs(order(bundle)), onlyChanged: true });
   assert.doesNotMatch(only, /data-id="#13200"/);
   const none = renderLabels({ ...args, orders: [fresh], printed: {} });

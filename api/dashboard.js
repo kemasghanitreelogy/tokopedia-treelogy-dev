@@ -23,6 +23,7 @@ import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
 import { printedLabels, markPrinted, markLabelStale, arrangedOrders } from '../src/shopify/label.js';
+import { directPrinterFor } from '../src/direct-print.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
@@ -2591,6 +2592,7 @@ export default async function handler(req, res) {
         ...data, range, csrf, flash, sizes: LABEL_SIZES, defaultSize: DEFAULT_SIZE, printed, arranged: arrangedNow, people,
         showReprints, reprintFilter, now: Math.floor(Date.now() / 1000),
         onlyChanged: url.searchParams.get('changed') === '1',
+        directPrinter: directPrinterFor(user),
         readAt: labelling.readAt, settleFailed: labelling.failed,
       }));
       return;

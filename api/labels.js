@@ -9,6 +9,7 @@ import {
 } from '../src/dashboard-auth.js';
 import { recordActivity } from '../src/audit.js';
 import { can } from '../src/users.js';
+import { directPrinterFor } from '../src/direct-print.js';
 
 /**
  * Streams a merged, print-ready PDF of official carrier waybills.
@@ -24,10 +25,17 @@ const SELECTION = /^(tokopedia|tiktok_shop|shopee|shopify|manual):([A-Za-z0-9_#-
 const MAX_LABELS = 100;
 
 export default async function handler(req, res) {
+  let wantsJson = false;
   const fail = (status, heading, detail) => {
     res.statusCode = status;
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
+    // The direct-print page reads the answer itself, so it needs words it can show.
+    if (wantsJson) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ error: `${heading}: ${detail}` }));
+      return;
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(dashboardError(heading, detail));
   };
 
@@ -56,6 +64,7 @@ export default async function handler(req, res) {
   try {
     // A hundred selections of ~30 bytes each still fits comfortably.
     form = await readFormBody(req, 16384);
+    wantsJson = form.get('format') === 'json';
   } catch {
     fail(400, 'Permintaan terlalu besar', 'Pilih lebih sedikit pesanan sekaligus.');
     return;
@@ -142,6 +151,18 @@ export default async function handler(req, res) {
     // parcel that did not make it instead of leaving the operator to count paper.
     if (sheet.failures.length > 0) {
       console.warn(`labels: ${sheet.failures.map((f) => `${f.id}:${f.reason}`).join('; ')}`);
+    }
+    // Straight to a Bluetooth printer: the page renders and sends the PDFs itself, so it
+    // wants the stacks as data rather than a report to open. Only for whoever has one.
+    if (form.get('format') === 'json' && directPrinterFor(user)) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(JSON.stringify({
+        pageCount: sheet.pageCount, failures: sheet.failures, unrecorded,
+        groups: sheet.groups.map((group) => ({ key: group.key, label: group.label, pageCount: group.pageCount, pdfBase64: Buffer.from(group.bytes).toString('base64') })),
+      }));
+      return;
     }
     res.statusCode = 200;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');

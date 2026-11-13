@@ -3,6 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta, isMarketplac
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
+import { directPrintScript } from './direct-print.js';
 import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
@@ -842,6 +843,11 @@ h1{margin:0; font-size:clamp(1.55rem,2.6vw,2.1rem); font-weight:600; letter-spac
   .dr__in{flex:1; min-width:0} .dr__go{flex-basis:100%; min-height:36px}
 }
 .ok{color:var(--good)} .flag{color:var(--warn)} .stop{color:var(--bad)}
+.dp{margin:.75rem 0; padding:.75rem 1rem; border:1px solid var(--line); border-radius:10px; background:var(--panel-2)}
+.dp__row{display:flex; flex-wrap:wrap; align-items:center; gap:.6rem}
+.dp__opts{margin-top:.5rem; font-size:.9rem; color:var(--muted)}
+.dp__opts label{display:inline-flex; align-items:center; gap:.3rem}
+.dp__state{flex-basis:100%}
 .lb-tip{position:relative; display:inline-flex; vertical-align:-.2em; color:var(--muted); cursor:help; border-radius:50%}
 .lb-tip .ico{width:1rem; height:1rem}
 .lb-tip:hover, .lb-tip:focus-visible{color:var(--fg); outline:none}
@@ -6108,7 +6114,7 @@ export function renderLabelLookup({ orders, printed = {}, arranged = {}, people 
  * unticking is the exception. The form posts to a separate endpoint that streams the PDF
  * straight into the browser's print preview.
  */
-export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, onlyChanged = false, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
+export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, csrf, flash, sizes, defaultSize, showReprints = false, onlyChanged = false, directPrinter = null, printed = {}, arranged = {}, people = {}, reprintFilter = {}, now = Math.floor(Date.now() / 1000), user = null, readAt = null, settleFailed = false }) {
   // The list shows only what actually needs printing today, so everything on screen is
   // ticked and everything ticked will print. Reprints of parcels the courier already
   // took are a deliberate detour, not clutter in the daily view.
@@ -6369,6 +6375,21 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
             <tbody id="lb-rows">${rows}</tbody>
             <tbody id="lbq-more"></tbody>
           </table></div>
+          ${directPrinter ? `<div class="dp" id="dp">
+            <div class="dp__row">
+              <strong>${escape(directPrinter.model)}</strong> <span class="dim">&middot; Bluetooth, tanpa dialog print</span>
+              <span class="grow"></span>
+              <button class="chip" type="button" id="dp-connect">Sambungkan printer</button>
+              <button class="chip" type="button" id="dp-test" disabled>Halaman tes</button>
+              <button class="cta" type="button" id="dp-go" disabled>Cetak langsung</button>
+            </div>
+            <div class="dp__row dp__opts">
+              <label>Bahasa <select class="dr__in" id="dp-proto"><option value="tspl">TSPL</option><option value="escpos">ESC/POS</option></select></label>
+              <label><input type="checkbox" id="dp-invert"> balik warna</label>
+              <label><input type="checkbox" id="dp-rotate"> putar 180&deg;</label>
+              <span class="dp__state dim">Belum tersambung.</span>
+            </div>
+          </div>` : ''}
           <div class="apply">
             <button type="submit" id="go">Cetak <span id="n">${ticked}</span> label</button>
             <span class="dim" id="over" hidden>Maksimal ${MAX_PRESELECT} label sekali cetak &mdash; bagi jadi beberapa batch.</span>
@@ -6380,7 +6401,7 @@ export function renderLabels({ orders, range, errors, shopeeShop, generatedAt, c
           </div>
           <input type="hidden" name="view" value="labels">
         </form>`,
-    script: `
+    script: `${directPrinter ? directPrintScript(directPrinter) : ''}
 (function () {
   var form = document.getElementById('lbform');
   var counter = document.getElementById('n');

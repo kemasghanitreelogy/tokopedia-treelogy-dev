@@ -9,11 +9,14 @@
  *
  * What the first print taught:
  *
- * - The output came out about twice too large. Whether the head is narrower than the
- *   label or the firmware stretches the bitmap, the cure is the same: draw the label
- *   into the first W mm of the bitmap, where W is what the printer actually puts on
- *   100 mm of paper. W is found once by printing a ruler and tapping the last number
- *   that reached the edge (`fit`), and remembered on the phone.
+ * - The output came out 1.5x too large: cut evenly on the left and right, running off
+ *   the bottom, measured from two photos against a label the Windows driver printed.
+ *   So the printer enlarges what we send about the centre of the paper and down from
+ *   the top - exactly what a 300 dpi head does with a job written in 203 dpi dots, and
+ *   also what a narrower sticker in the middle of the head would show. Either way the
+ *   cure is the same: draw the label at `fit` of the bitmap, centred across, flush to
+ *   the top. 0.65 is the measured figure, fixed here: the paper never changes, so there
+ *   is nothing for the person printing to set.
  * - A full label is 120 KB of dots and BLE moves a few hundred bytes per packet, so the
  *   bytes are what the print costs. Blank rows are not sent at all (one BITMAP per band
  *   of ink), the packet size is probed upward from the safe 20 bytes and remembered, and
@@ -26,7 +29,7 @@
  */
 
 export const DIRECT_PRINTERS = {
-  'kemas@treelogy.com': { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8 },
+  'kemas@treelogy.com': { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.65 },
 };
 
 export function directPrinterFor(user) {
@@ -127,19 +130,15 @@ export function escposJob(mono) {
 }
 
 /**
- * Where a page goes on the bitmap: fitted inside the first `fit` of the label on both
- * axes and centred there, so a printer that puts our 800 dots across W mm of paper
- * prints the label at its true size. {x, y, scale} for a page of `pageW`x`pageH` points.
+ * Where a page goes on the bitmap: scaled to `fit` of the label, centred across and
+ * flush to the top - the way this printer enlarges it back. {x, y, scale} for a page
+ * of `pageW`x`pageH` points.
  */
 export function placePage(pageW, pageH, { width, height, fit = 1 }) {
-  const boxW = Math.round(width * fit);
-  const boxH = Math.round(height * fit);
-  const scale = Math.min(boxW / pageW, boxH / pageH);
-  return { x: Math.round((boxW - pageW * scale) / 2), y: Math.round((boxH - pageH * scale) / 2), scale };
+  const scale = Math.min((width * fit) / pageW, (height * fit) / pageH);
+  return { x: Math.round((width - pageW * scale) / 2), y: 0, scale };
 }
 
-/** Which label widths the calibration offers, in mm; the ruler is marked to match. */
-export const CALIBRATION_STOPS = [40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
 
 /**
  * BLE services cheap thermal printers expose their write characteristic under. Web
@@ -171,21 +170,16 @@ export function directPrintPanel(printer, { escape }) {
     <div class="dp__bar" id="dp-bar" hidden><span id="dp-fill"></span></div>
     <div class="dp__tools">
       <button class="dp__link" type="button" id="dp-connect">Sambungkan</button>
-      <button class="dp__link" type="button" id="dp-cal" disabled>Kalibrasi ukuran</button>
-      <button class="dp__link" type="button" id="dp-test" disabled>Halaman tes</button>
       <details class="dp__adv">
         <summary class="dp__link">Lanjutan</summary>
         <div class="dp__advrow">
+          <button class="dp__link" type="button" id="dp-test" disabled>Halaman tes</button>
           <label>Bahasa <select class="dr__in" id="dp-proto"><option value="tspl">TSPL</option><option value="escpos">ESC/POS</option></select></label>
           <label><input type="checkbox" id="dp-invert"> balik warna</label>
           <label><input type="checkbox" id="dp-rotate"> putar 180&deg;</label>
           <span class="dim" id="dp-meta"></span>
         </div>
       </details>
-    </div>
-    <div class="dp__cal" id="dp-calrow" hidden>
-      <p>Angka terakhir yang masih terbaca di tepi kanan kertas:</p>
-      <div class="dp__stops">${CALIBRATION_STOPS.map((mm) => `<button class="chip" type="button" data-fit="${mm}">${mm}</button>`).join('')}</div>
     </div>
   </section>`;
 }
@@ -209,10 +203,6 @@ export const DIRECT_PRINT_CSS = `
 .dp__adv{flex-basis:100%} .dp__adv summary{list-style:none; display:inline-block} .dp__adv summary::-webkit-details-marker{display:none}
 .dp__advrow{display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.4rem 0 .2rem; font-size:.9rem; color:var(--muted)}
 .dp__advrow label{display:inline-flex; align-items:center; gap:.3rem}
-.dp__cal{margin-top:.6rem; padding-top:.6rem; border-top:1px solid var(--line)}
-.dp__cal p{margin:0 0 .5rem; color:var(--muted); font-size:.9rem}
-.dp__stops{display:flex; flex-wrap:wrap; gap:.4rem}
-.dp__stops .chip{min-height:40px; min-width:44px; justify-content:center; cursor:pointer}
 @media (prefers-reduced-motion: reduce){.dp__dot,.dp__bar span,.dp__link{transition:none}}
 `;
 
@@ -235,7 +225,7 @@ export function directPrintScript(printer) {
   if (!box) return;
   var $ = function (id) { return document.getElementById(id); };
   var dot = $('dp-dot'), state = $('dp-state'), goBtn = $('dp-go'), goN = $('dp-n'), bar = $('dp-bar'), fill = $('dp-fill');
-  var connectBtn = $('dp-connect'), calBtn = $('dp-cal'), testBtn = $('dp-test'), calRow = $('dp-calrow');
+  var connectBtn = $('dp-connect'), testBtn = $('dp-test');
   var protoSel = $('dp-proto'), invertBox = $('dp-invert'), rotateBox = $('dp-rotate'), meta = $('dp-meta');
 
   /* ---- remembered on this phone: printer, packet size, scale, switches ---- */
@@ -245,7 +235,8 @@ export function directPrintScript(printer) {
     proto: store.get('dp.proto') || 'tspl',
     invert: store.get('dp.invert') === '1',
     rotate: store.get('dp.rotate') === '1',
-    fit: Math.min(1, Math.max(0.3, Number(store.get('dp.fit')) || 1)),
+    // Fixed for this paper and printer; measured once, never asked of anybody.
+    fit: printer.fit || 1,
     chunk: Number(store.get('dp.chunk')) || 0,
     device: store.get('dp.device') || '',
   };
@@ -269,7 +260,7 @@ export function directPrintScript(printer) {
     var n = picked();
     goN.textContent = n ? n + ' label' : '';
     goBtn.disabled = !ch || busy || n === 0;
-    testBtn.disabled = !ch || busy; calBtn.disabled = !ch || busy;
+    testBtn.disabled = !ch || busy;
     connectBtn.textContent = ch ? 'Ganti printer' : 'Sambungkan';
     connectBtn.disabled = busy;
   }
@@ -476,29 +467,16 @@ export function directPrintScript(printer) {
   });
 
   /* ---- test page and calibration ---- */
+  // The test sheet: a frame the size the label will be, centred and flush to the top.
   function framed() {
     var c = blankCanvas(), ctx = c.getContext('2d', { willReadFrequently: true });
-    var w = Math.round(c.width * prefs.fit), h = Math.round(c.height * prefs.fit);
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 6; ctx.strokeRect(16, 16, w - 32, h - 32);
+    var w = Math.round(c.width * prefs.fit), h = Math.round(c.height * prefs.fit), x0 = Math.round((c.width - w) / 2);
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 6; ctx.strokeRect(x0 + 12, 12, w - 24, h - 24);
     ctx.fillStyle = '#000'; ctx.textAlign = 'center';
     ctx.font = 'bold ' + Math.round(56 * prefs.fit) + 'px sans-serif';
-    ctx.fillText('TES ' + printer.model, w / 2, h / 2 - 30 * prefs.fit);
+    ctx.fillText('TES ' + printer.model, c.width / 2, h / 2 - 30 * prefs.fit);
     ctx.font = Math.round(34 * prefs.fit) + 'px sans-serif';
-    ctx.fillText('bingkai harus pas di tepi kertas', w / 2, h / 2 + 40 * prefs.fit);
-    return c;
-  }
-  function ruler() {
-    var c = blankCanvas(), ctx = c.getContext('2d', { willReadFrequently: true });
-    var d = printer.dotsPerMm;
-    ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = 'bold 44px sans-serif';
-    for (var mm = 5; mm <= printer.widthMm; mm += 5) {
-      var x = mm * d, tall = mm % 10 === 0;
-      ctx.fillRect(x - 2, 0, 4, tall ? 70 : 40);
-      ctx.fillRect(x - 2, c.height - (tall ? 70 : 40), 4, tall ? 70 : 40);
-      if (tall) { ctx.fillText(String(mm), x, 120); ctx.fillText(String(mm), x, c.height - 85); }
-    }
-    ctx.font = '30px sans-serif';
-    ctx.fillText('angka terakhir yang terbaca di kanan = lebar cetak', c.width / 2, c.height / 2);
+    ctx.fillText('bingkai harus pas di tepi kertas', c.width / 2, h / 2 + 40 * prefs.fit);
     return c;
   }
   async function oneOff(label, canvas, after) {
@@ -510,17 +488,6 @@ export function directPrintScript(printer) {
   testBtn.addEventListener('click', function () {
     oneOff('Mengirim halaman tes…', framed(), 'Halaman tes terkirim. Bingkai pas di tepi = ukuran benar.');
   });
-  calBtn.addEventListener('click', function () {
-    calRow.hidden = false;
-    oneOff('Mengirim penggaris…', ruler(), 'Lihat kertasnya, lalu ketuk angka terakhir yang terbaca.');
-  });
-  calRow.addEventListener('click', function (e) {
-    var b = e.target.closest('[data-fit]'); if (!b) return;
-    prefs.fit = Number(b.getAttribute('data-fit')) / printer.widthMm;
-    store.set('dp.fit', prefs.fit); showMeta(); calRow.hidden = true;
-    oneOff('Skala ' + Math.round(prefs.fit * 100) + '% disimpan · mencetak halaman tes…', framed(), 'Skala disimpan. Bingkai harus pas di tepi kertas sekarang.');
-  });
-
   ready();
   resume();
 })();

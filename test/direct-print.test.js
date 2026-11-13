@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packMono, tsplJob, escposJob, inkBands, placePage, directPrinterFor, directPrintScript, CALIBRATION_STOPS } from '../src/direct-print.js';
+import { packMono, tsplJob, escposJob, inkBands, placePage, directPrinterFor, directPrintScript } from '../src/direct-print.js';
 import { renderLabels } from '../src/dashboard-page.js';
 
 // 16x2 image: top row all black, bottom row white except the last pixel.
@@ -73,21 +73,25 @@ test('blank rows are not sent: one BITMAP per band of ink, close bands merged', 
   assert.deepEqual(inkBands(packMono(rgba, 8, 40, { black: 1 }), { blank: 0x00 }), [[2, 4], [30, 40]]);
 });
 
-test('a page is fitted into the calibrated part of the label, centred there', () => {
+test('a page is drawn at the calibrated size, centred across and flush to the top', () => {
   const full = placePage(298, 420, { width: 800, height: 1200, fit: 1 });
   assert.equal(Math.round(298 * full.scale), 800);
-  assert.deepEqual([full.x, full.y], [0, Math.round((1200 - 420 * full.scale) / 2)]);
-  const half = placePage(298, 420, { width: 800, height: 1200, fit: 0.5 });
-  assert.equal(Math.round(298 * half.scale), 400, 'a printer that stretches 2x gets a half-size drawing');
-  assert.ok(half.x >= 0 && half.y >= 0 && 420 * half.scale <= 600);
-  assert.equal(CALIBRATION_STOPS[CALIBRATION_STOPS.length - 1], 100);
+  assert.deepEqual([full.x, full.y], [0, 0]);
+  // The measured D100: 1.5x enlargement about the centre, down from the top.
+  const d100 = placePage(298, 420, { width: 800, height: 1200, fit: 0.65 });
+  assert.equal(Math.round(298 * d100.scale), 520);
+  assert.equal(d100.x, 140, 'centred: the printer enlarges about the middle of the paper');
+  assert.equal(d100.y, 0, 'flush to the top: the printer runs down from the top edge');
+  assert.ok(420 * d100.scale <= 780);
+  assert.equal(directPrinterFor({ email: 'kemas@treelogy.com' }).fit, 0.65, 'the measured figure, fixed in code');
 });
 
-test('the panel is on the reprint list too, with one primary button and the calibration stops', () => {
+test('the panel is on the reprint list too, with one primary button and nothing to calibrate', () => {
   const args = { orders: [], range: {}, errors: {}, shopeeShop: null, generatedAt: 0, csrf: 't', flash: null, sizes: { a6: { label: 'A6' } }, defaultSize: 'a6', directPrinter: directPrinterFor({ email: 'kemas@treelogy.com' }) };
   const reprint = renderLabels({ ...args, showReprints: true });
   assert.match(reprint, /id="dp-go"/);
-  assert.match(reprint, /data-fit="60"/);
+  assert.doesNotMatch(reprint, /alibrasi/);
+  assert.doesNotMatch(directPrintScript({ model: 'x', fit: 0.65 }), /dp\.fit/, 'the scale is never read from the phone');
   assert.equal((reprint.match(/class="cta dp__go"/g) ?? []).length, 1);
   assert.match(reprint, /navigator\.bluetooth\.getDevices/);
 });

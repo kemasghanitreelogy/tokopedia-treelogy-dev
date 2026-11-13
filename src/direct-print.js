@@ -192,11 +192,11 @@ export function directPrintPanel(printer, { escape }) {
 
 export const DIRECT_PRINT_CSS = `
 .dp{margin:.75rem 0 1rem; padding:.9rem 1rem 1rem; border:1px solid var(--line); border-radius:12px; background:var(--panel-2)}
-.dp__head{display:flex; align-items:center; gap:.5rem; margin-bottom:.7rem; min-height:1.5rem}
+.dp__head{display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .5rem; margin-bottom:.7rem; min-height:1.5rem}
 .dp__dot{width:.6rem; height:.6rem; border-radius:50%; background:var(--dim); flex:none; transition:background .2s}
 .dp__dot.is-busy{background:var(--warn)} .dp__dot.is-on{background:var(--good); box-shadow:0 0 8px var(--good)} .dp__dot.is-off{background:var(--bad)}
-.dp__name{font-weight:600}
-.dp__state{color:var(--muted); font-size:.9rem; margin-left:auto; text-align:right}
+.dp__name{font-weight:600; white-space:nowrap}
+.dp__state{color:var(--muted); font-size:.9rem; flex-basis:100%; padding-left:1.1rem}
 .dp__go{width:100%; min-height:48px; justify-content:center; gap:.5rem; font-size:1.05rem; cursor:pointer}
 .dp__go:disabled{opacity:.5; cursor:default}
 .dp__go-n:not(:empty)::before{content:'· '}

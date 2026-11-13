@@ -123,11 +123,22 @@ test('an iPhone is told about Bluefy, and the host writes in a way every impleme
   assert.match(panel, /bluefy:\/\/open\?url=/);
   assert.match(panel, /apps\.apple\.com\/app\/id1492822055/);
   const host = hostScript({ model: 'x', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.7 });
-  assert.match(host, /part\.slice\(0\)/, 'a copy, not a view with an offset');
+  assert.match(host, /part\.slice\(0\)\.buffer/, 'a fresh ArrayBuffer, not a view with an offset');
   assert.match(host, /typeof ch\.writeValueWithoutResponse === 'function'/);
+  assert.match(host, /var careful = !\(window\.chrome && \/Android\//, 'outside Chrome Android every packet is acknowledged');
+  assert.match(host, /sizes: \[180, 100, 20\], remember: false/, 'and the size is never remembered across sessions there');
   assert.match(host, /getPrimaryService\(SERVICES\[u\]\)/, 'service by service where listing all is refused');
   new Function(panel); new Function(host);
   const page = directPrintHostPage({ printer: directPrinterFor({ email: 'kemas@treelogy.com' }), go: null });
   assert.match(page, /100dvh/);
   assert.match(page, /id="nb"/);
+});
+
+test('the printer is held only while printing, so another phone can take its turn', () => {
+  const host = hostScript({ model: 'x', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.7 });
+  assert.match(host, /HOLD_MS = 15000/);
+  assert.match(host, /visibilitychange/, 'put the phone away and the printer is free');
+  assert.match(host, /await hold\(\);/, 'a print takes the link first, without a prompt');
+  assert.match(host, /sedang dipakai HP lain/);
+  new Function(host);
 });

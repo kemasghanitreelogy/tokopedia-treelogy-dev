@@ -439,6 +439,30 @@ export function hostScript(printer) {
                 del: function (k) { try { localStorage.removeItem(k); } catch (e) {} } };
   var prefs = { chunk: Number(store.get('dp.chunk')) || 0, device: store.get('dp.device') || '', fit: printer.fit || 1 };
   var device = null, ch = null, busy = false, lastText = '', lastTone = '';
+  /*
+   * One printer, several phones. A BLE printer takes one connection at a time, so a
+   * phone that holds it idle locks everyone else out. The link is therefore held only
+   * while printing: released a little after the last label and whenever this page is
+   * put away, and taken again - with no prompt, the device object outlives the link -
+   * the moment the next print starts. A phone that finds the printer taken waits a
+   * few seconds for the other to finish before giving up.
+   */
+  var HOLD_MS = 15000, releaseTimer = null, releasing = false;
+  function usable() { return !!device; }
+  function release(why) {
+    if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
+    if (!device || !device.gatt.connected || busy) return;
+    releasing = true;
+    try { device.gatt.disconnect(); } catch (e) {}
+    ch = null;
+    say('Siap · ' + (device.name || printer.model) + (why ? ' · ' + why : ''), 'is-on'); ready();
+  }
+  function holdThenRelease() {
+    if (releaseTimer) clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(function () { release('dilepas agar HP lain bisa mencetak'); }, HOLD_MS);
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) release(''); });
+  window.addEventListener('pagehide', function () { release(''); });
 
   /* ---- the frame: keep the address bar honest, and the page's title ---- */
   function framePath() {
@@ -459,9 +483,9 @@ export function hostScript(printer) {
   /* ---- status, shown here and mirrored into the frame ---- */
   function say(text, tone) { lastText = text; lastTone = tone || ''; state.textContent = text; dot.className = 'dot ' + lastTone; }
   function tell() {
-    try { frame.contentWindow.postMessage({ type: 'dp:state', connected: !!ch, busy: busy, text: lastText, tone: lastTone }, location.origin); } catch (e) {}
+    try { frame.contentWindow.postMessage({ type: 'dp:state', connected: usable(), busy: busy, text: lastText, tone: lastTone }, location.origin); } catch (e) {}
   }
-  function ready() { connectBtn.textContent = ch ? 'Ganti' : 'Sambungkan'; connectBtn.disabled = busy; connectBtn.classList.toggle('btn--go', !ch); tell(); }
+  function ready() { connectBtn.textContent = usable() ? 'Ganti' : 'Sambungkan'; connectBtn.disabled = busy; connectBtn.classList.toggle('btn--go', !usable()); tell(); }
   function progress(frac, text) {
     prog.hidden = false; fill.style.width = Math.round(frac * 100) + '%';
     if (text) say(text, 'is-busy');
@@ -480,7 +504,11 @@ export function hostScript(printer) {
   function wire(dev) {
     device = dev;
     dev.addEventListener('gattserverdisconnected', function () {
-      ch = null; say('Terputus - menyambung lagi…', 'is-busy'); ready();
+      ch = null;
+      // Let go on purpose: nothing to chase. Dropped mid-print: get it back now.
+      if (releasing) { releasing = false; ready(); return; }
+      if (!busy) { say('Siap · ' + (dev.name || printer.model), 'is-on'); ready(); return; }
+      say('Terputus - menyambung lagi…', 'is-busy'); ready();
       attach(dev, 3).catch(function () { say('Printer terputus. Nyalakan lagi, lalu ketuk Sambungkan.', 'is-off'); ready(); });
     });
   }
@@ -507,6 +535,16 @@ export function hostScript(printer) {
     if (!ch) throw new Error('printer tersambung tapi tidak ada jalur tulis Bluetooth (BLE) yang dikenal');
     store.set('dp.device', dev.id); prefs.device = dev.id;
     say('Siap · ' + (dev.name || printer.model), 'is-on'); ready();
+    if (!busy) holdThenRelease();
+  }
+  // The link for a print: taken if it is not held, waiting out another phone's turn.
+  async function hold() {
+    if (ch && device && device.gatt.connected) return;
+    if (!device) throw new Error('printer belum dipilih - ketuk Sambungkan');
+    if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
+    say('Menyambung ke printer…', 'is-busy'); ready();
+    try { await attach(device, 6); }
+    catch (e) { throw new Error('printer sedang dipakai HP lain atau mati - coba lagi sebentar'); }
   }
   async function choose() {
     say('Pilih printer di daftar…', 'is-busy');
@@ -542,37 +580,56 @@ export function hostScript(printer) {
     choose().catch(function (e) { ch = null; say(e.name === 'NotFoundError' ? 'Batal memilih printer.' : 'Gagal menyambung: ' + e.message, 'is-off'); ready(); });
   });
 
-  /* ---- transfer: the biggest packet the link takes, found once, no idle waits ---- */
-  var SIZES = [244, 180, 120, 60, 20];
-  // A copy, never a view: a subarray with an offset is handed to some implementations
-  // as its whole underlying buffer. And writeValueWithoutResponse is missing in some
-  // (Bluefy on iPhone among them), so writeValue is the fallback, not an error.
+  /* ---- transfer ----
+   *
+   * Two kinds of link. Chrome on Android negotiates a large MTU and its write-without-
+   * response has real back-pressure, so the biggest packet it takes is probed once and
+   * remembered, and nothing waits. Everywhere else (Bluefy on iPhone, 13 Nov 2026) a
+   * write-without-response bigger than the link's limit is dropped without a word: the
+   * probe "succeeded" at 244 bytes, every packet vanished, and the page said "terkirim"
+   * to a printer that had heard nothing. So outside Chrome Android each packet is
+   * written WITH a response - the printer acknowledges it or the write fails - and the
+   * size steps down on failure. Only when the printer offers no acknowledged write at
+   * all is write-without-response used, at the 20 bytes every link carries.
+   */
+  var careful = !(window.chrome && /Android/.test(navigator.userAgent || ''));
   var quick = function () { return !!(ch.properties.writeWithoutResponse && typeof ch.writeValueWithoutResponse === 'function'); };
-  async function writeChunk(part) {
-    var copy = part.slice(0);
-    if (quick()) await ch.writeValueWithoutResponse(copy);
-    else await ch.writeValue(copy);
+  var acked = function () { return !!(ch.properties.write && typeof ch.writeValue === 'function'); };
+  function plan() {
+    if (!careful) return { resp: !quick(), sizes: [244, 180, 120, 60, 20], remember: true };
+    if (acked()) return { resp: true, sizes: [180, 100, 20], remember: false };
+    return { resp: false, sizes: [20], remember: false };
   }
-  async function probeChunk() {
-    if (prefs.chunk) return prefs.chunk;
-    for (var i = 0; i < SIZES.length; i++) {
-      try { await writeChunk(ascii('\\r\\n'.padEnd(SIZES[i], ' '))); prefs.chunk = SIZES[i]; break; } catch (e) {}
+  // A fresh ArrayBuffer of exactly these bytes: a view with an offset is handed to some
+  // implementations as its whole underlying buffer, and a bridged one may not take a view.
+  async function writeChunk(part, resp) {
+    var buf = part.slice(0).buffer;
+    if (resp) await ch.writeValue(buf); else await ch.writeValueWithoutResponse(buf);
+  }
+  var sessionChunk = 0;
+  async function probeChunk(p) {
+    var known = p.remember ? prefs.chunk : sessionChunk;
+    if (known) return known;
+    var size = p.sizes[p.sizes.length - 1];
+    for (var i = 0; i < p.sizes.length; i++) {
+      try { await writeChunk(ascii('\\r\\n'.padEnd(p.sizes[i], ' ')), p.resp); size = p.sizes[i]; break; } catch (e) {}
     }
-    prefs.chunk = prefs.chunk || 20; store.set('dp.chunk', prefs.chunk);
-    return prefs.chunk;
+    if (p.remember) { prefs.chunk = size; store.set('dp.chunk', size); } else sessionChunk = size;
+    return size;
   }
   async function send(bytes, onProgress) {
-    var size = await probeChunk();
-    var fast = quick();
+    var p = plan();
+    var size = await probeChunk(p);
     for (var at = 0; at < bytes.length; at += size) {
-      try { await writeChunk(bytes.subarray(at, at + size)); }
+      try { await writeChunk(bytes.subarray(at, at + size), p.resp); }
       catch (e) {
-        var smaller = SIZES.filter(function (s) { return s < size; })[0];
+        var smaller = p.sizes.filter(function (s) { return s < size; })[0];
         if (!smaller) throw e;
-        size = smaller; prefs.chunk = size; store.set('dp.chunk', size);
+        size = smaller;
+        if (p.remember) { prefs.chunk = size; store.set('dp.chunk', size); } else sessionChunk = size;
         await sleep(50); at -= size; continue;
       }
-      if (fast && ((at / size) & 3) === 3) await sleep(2);
+      if (!p.resp && !careful && ((at / size) & 3) === 3) await sleep(2);
       if (onProgress) onProgress(Math.min(1, (at + size) / bytes.length));
     }
   }
@@ -623,7 +680,7 @@ export function hostScript(printer) {
 
   /* ---- what the pages ask for ---- */
   async function print(groups) {
-    if (!ch) throw new Error('printer belum tersambung');
+    await hold();
     var canvases = [];
     for (var g = 0; g < groups.length; g++) canvases = canvases.concat(await renderPages(groups[g]));
     var jobs = canvases.map(job);
@@ -650,7 +707,7 @@ export function hostScript(printer) {
     } catch (err) {
       say('Gagal: ' + err.message, 'is-off');
       reply({ type: 'dp:done', error: err.message });
-    } finally { busy = false; progressOff(); ready(); }
+    } finally { busy = false; progressOff(); ready(); holdThenRelease(); }
   });
 
   ready();

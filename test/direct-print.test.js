@@ -98,12 +98,12 @@ test('a page is drawn at the calibrated size, centred across and flush to the to
   assert.equal(Math.round(298 * full.scale), 800);
   assert.deepEqual([full.x, full.y], [0, 0]);
   // The measured D100: 1.5x enlargement about the centre, down from the top.
-  const d100 = placePage(298, 420, { width: 800, height: 1200, fit: 0.65 });
-  assert.equal(Math.round(298 * d100.scale), 520);
-  assert.equal(d100.x, 140, 'centred: the printer enlarges about the middle of the paper');
+  const d100 = placePage(298, 420, { width: 800, height: 1200, fit: 0.70 });
+  assert.equal(Math.round(298 * d100.scale), 560);
+  assert.equal(d100.x, 120, 'centred: the printer enlarges about the middle of the paper');
   assert.equal(d100.y, 0, 'flush to the top: the printer runs down from the top edge');
-  assert.ok(420 * d100.scale <= 780);
-  assert.equal(directPrinterFor({ email: 'kemas@treelogy.com' }).fit, 0.65, 'the measured figure, fixed in code');
+  assert.ok(420 * d100.scale <= 840);
+  assert.equal(directPrinterFor({ email: 'kemas@treelogy.com' }).fit, 0.70, 'the measured figure, fixed in code');
 });
 
 test('the panel is on the reprint list too, with one primary button and nothing to calibrate', () => {

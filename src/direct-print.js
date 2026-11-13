@@ -15,7 +15,7 @@
  *   the top - what a 300 dpi head does with a job written in 203 dpi dots, and also
  *   what a narrower sticker in the middle of the head would show. Either way the cure
  *   is the same: draw the label at `fit` of the bitmap, centred across, flush to the
- *   top. 0.65 is the measured figure, fixed here: the paper never changes, so there is
+ *   top. The figure is measured and fixed here: the paper never changes, so there is
  *   nothing for the person printing to set.
  * - A full label is 120 KB of dots and BLE moves a few hundred bytes per packet, so the
  *   bytes are what the print costs. Blank rows are not sent at all (one BITMAP per band
@@ -32,7 +32,9 @@
  */
 
 export const DIRECT_PRINTERS = {
-  'kemas@treelogy.com': { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.65 },
+  // 0.65 printed whole but a touch small (83% of the paper's width against the driver's
+  // 85%, and shorter); 0.70 is the second measurement, 13 Nov 2026 afternoon.
+  'kemas@treelogy.com': { model: 'OKAY D100', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.70 },
 };
 
 export function directPrinterFor(user) {

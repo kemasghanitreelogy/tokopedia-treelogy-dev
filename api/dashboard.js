@@ -23,7 +23,7 @@ import { needsPickupTime } from '../src/shopee/pickup.js';
 import { fetchOrdersByIds } from '../src/omni.js';
 import { LABEL_SIZES, DEFAULT_SIZE, printedEntry } from '../src/labels.js';
 import { printedLabels, markPrinted, markLabelStale, arrangedOrders } from '../src/shopify/label.js';
-import { directPrinterFor } from '../src/direct-print.js';
+import { directPrinterFor, directPrintHostPage } from '../src/direct-print.js';
 import { ringExpressBacklog } from '../src/alerts-express.js';
 import { refreshOrders, refreshOneOrder, RESHIPS, diffOrder } from '../src/orders-refresh.js';
 import { discardManual } from '../src/mekari/discard.js';
@@ -2205,6 +2205,15 @@ export default async function handler(req, res) {
   if (url.searchParams.has('retry')) invalidate();
 
   const requestedView = url.searchParams.get('view') ?? 'orders';
+  // The printer host: a bar that owns one person's Bluetooth printer, with the dashboard
+  // in a frame beneath it, so moving between pages never drops the printer. Anyone
+  // without a printer lands on the labels as before.
+  if (requestedView === 'printer') {
+    const printer = directPrinterFor(user);
+    if (!printer) { redirect('?view=labels'); return; }
+    send(200, directPrintHostPage({ printer, go: url.searchParams.get('go') }));
+    return;
+  }
   // The stock tab was folded into products; old links and bookmarks still land somewhere useful.
   const view = Object.hasOwn(VALID_VIEWS, requestedView) ? requestedView : 'orders';
   // A role held to a few menus is sent to its own page rather than shown an error: the

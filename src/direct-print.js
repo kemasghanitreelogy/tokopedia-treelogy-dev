@@ -1,28 +1,31 @@
 /**
  * Printing a label straight to a Bluetooth label printer from the phone, no print dialog.
  *
- * Kemas prints from an Android phone to an OKAY D100 (110 mm thermal, USB + Bluetooth,
- * 100x150 labels; the seller lists TSPL/EPL/ZPL/DPL emulation). Chrome on Android talks
- * to it over Web Bluetooth (BLE GATT): the label PDF the server already builds is
- * rendered page by page in the browser, turned into 1-bit dots at 8 dots/mm and sent as
- * a TSPL job. Confirmed on 13 Nov 2026: the printer took TSPL over BLE and printed.
+ * Kemas prints from an Android phone to an OKAY D100 (110 mm thermal, USB + Bluetooth;
+ * the seller lists TSPL/EPL/ZPL/DPL emulation). Chrome on Android talks to it over Web
+ * Bluetooth (BLE GATT): the label PDF the server already builds is rendered page by page
+ * in the browser, turned into 1-bit dots at 8 dots/mm and sent as a TSPL job. Confirmed
+ * on 13 Nov 2026: the printer took TSPL over BLE and printed.
  *
- * What the first print taught:
+ * What the first prints taught:
  *
  * - The output came out 1.5x too large: cut evenly on the left and right, running off
  *   the bottom, measured from two photos against a label the Windows driver printed.
  *   So the printer enlarges what we send about the centre of the paper and down from
- *   the top - exactly what a 300 dpi head does with a job written in 203 dpi dots, and
- *   also what a narrower sticker in the middle of the head would show. Either way the
- *   cure is the same: draw the label at `fit` of the bitmap, centred across, flush to
- *   the top. 0.65 is the measured figure, fixed here: the paper never changes, so there
- *   is nothing for the person printing to set.
+ *   the top - what a 300 dpi head does with a job written in 203 dpi dots, and also
+ *   what a narrower sticker in the middle of the head would show. Either way the cure
+ *   is the same: draw the label at `fit` of the bitmap, centred across, flush to the
+ *   top. 0.65 is the measured figure, fixed here: the paper never changes, so there is
+ *   nothing for the person printing to set.
  * - A full label is 120 KB of dots and BLE moves a few hundred bytes per packet, so the
  *   bytes are what the print costs. Blank rows are not sent at all (one BITMAP per band
- *   of ink), the packet size is probed upward from the safe 20 bytes and remembered, and
- *   the printer stays connected between prints. "Pencet, langsung kekirim."
- * - The printer is remembered by id and reconnected on page load without a tap where
- *   Chrome allows it (getDevices); otherwise one tap on "Sambungkan".
+ *   of ink), the packet size is probed upward from the safe 20 bytes and remembered.
+ * - A Bluetooth connection belongs to a page, and every menu, filter and button on the
+ *   dashboard loads a new page - so "sambungkan" came back on every move. The
+ *   connection therefore lives in a host page that never navigates: a slim bar holding
+ *   the printer, with the whole dashboard in a frame beneath it. Pages inside the frame
+ *   ask the host to print over postMessage; the host answers with progress. Entering
+ *   the host once is remembered on the phone, so every later visit lands in it.
  *
  * Offered per person: the printer is a device on one person's desk, not a property of
  * the shop. Everybody else keeps the print dialog exactly as before.
@@ -36,6 +39,17 @@ export function directPrinterFor(user) {
   const email = String(user?.email ?? '').toLowerCase();
   return DIRECT_PRINTERS[email] ?? null;
 }
+
+/** Where the host frame starts: only a dashboard path, never the host itself. */
+export const HOST_PATH = '/api/dashboard?view=printer';
+export function safeGo(value, fallback = '/api/dashboard?view=labels') {
+  const go = String(value ?? '');
+  if (!/^\/api\/dashboard(\?[^#\s]*)?$/.test(go)) return fallback;
+  if (/[?&]view=printer(&|$)/.test(go)) return fallback;
+  return go;
+}
+
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /*
  * The encoders below run in the browser - their source is sent with the page - and are
@@ -104,8 +118,7 @@ export function inkBands(mono, { blank = 0xff, gap = 8 } = {}) {
 
 /**
  * One TSPL label: the size, then one BITMAP per band of ink, then PRINT. TSPL's BITMAP
- * prints a dot where the bit is 0, so the image is packed with `black: 0` unless the
- * page's "balik warna" switch says this printer differs - in which case `blank` is 0x00.
+ * prints a dot where the bit is 0, so the image is packed with `black: 0`.
  */
 export function tsplJob(mono, { widthMm = 100, heightMm = 150, gapMm = 2, rotate = false, blank = 0xff } = {}) {
   const parts = [ascii(`SIZE ${widthMm} mm,${heightMm} mm\r\nGAP ${gapMm} mm,0 mm\r\nDIRECTION ${rotate ? 1 : 0}\r\nCLS\r\n`)];
@@ -139,7 +152,6 @@ export function placePage(pageW, pageH, { width, height, fit = 1 }) {
   return { x: Math.round((width - pageW * scale) / 2), y: 0, scale };
 }
 
-
 /**
  * BLE services cheap thermal printers expose their write characteristic under. Web
  * Bluetooth only lets a page reach services it named up front, so the common ones are
@@ -156,31 +168,35 @@ export const PRINTER_SERVICES = [
   'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
 ];
 
-/** The panel. One primary action; everything else is a text button or folded away. */
-export function directPrintPanel(printer, { escape }) {
+/* ------------------------------------------------------------------ the pages */
+
+/**
+ * Put at the top of every dashboard page this person loads: once they have entered the
+ * host on this phone, every later visit that lands outside it is moved inside, before
+ * anything is drawn. Inside the frame (or on the host itself) it does nothing.
+ */
+export function directPrintEnterScript() {
+  return `(function(){try{if(window.top!==window.self)return;if(/[?&]view=printer(&|$)/.test(location.search))return;
+if(localStorage.getItem('dp.host')!=='1')return;
+location.replace(${JSON.stringify(HOST_PATH)}+'&go='+encodeURIComponent(location.pathname+location.search));}catch(e){}})();`;
+}
+
+/**
+ * The panel on the label page. Inside the host it is the print button and a mirror of
+ * the host's status; outside it, it is the door into the host.
+ */
+export function directPrintPanel(printer, { escape = esc } = {}) {
   return `<section class="dp" id="dp" aria-label="Cetak langsung ke ${escape(printer.model)}">
     <div class="dp__head">
       <span class="dp__dot" id="dp-dot" aria-hidden="true"></span>
       <span class="dp__name">${escape(printer.model)}</span>
-      <span class="dp__state" id="dp-state" role="status" aria-live="polite">Mencari printer…</span>
+      <span class="dp__state" id="dp-state" role="status" aria-live="polite">Memeriksa printer…</span>
     </div>
     <button class="cta dp__go" type="button" id="dp-go" disabled>
       <span class="dp__go-label">Cetak langsung</span><span class="dp__go-n" id="dp-n"></span>
     </button>
     <div class="dp__bar" id="dp-bar" hidden><span id="dp-fill"></span></div>
-    <div class="dp__tools">
-      <button class="dp__link" type="button" id="dp-connect">Sambungkan</button>
-      <details class="dp__adv">
-        <summary class="dp__link">Lanjutan</summary>
-        <div class="dp__advrow">
-          <button class="dp__link" type="button" id="dp-test" disabled>Halaman tes</button>
-          <label>Bahasa <select class="dr__in" id="dp-proto"><option value="tspl">TSPL</option><option value="escpos">ESC/POS</option></select></label>
-          <label><input type="checkbox" id="dp-invert"> balik warna</label>
-          <label><input type="checkbox" id="dp-rotate"> putar 180&deg;</label>
-          <span class="dim" id="dp-meta"></span>
-        </div>
-      </details>
-    </div>
+    <div class="dp__tools"><button class="dp__link" type="button" id="dp-enter" hidden>Sambungkan printer</button></div>
   </section>`;
 }
 
@@ -196,89 +212,215 @@ export const DIRECT_PRINT_CSS = `
 .dp__go-n:not(:empty)::before{content:'· '}
 .dp__bar{height:4px; margin:.6rem 0 0; border-radius:2px; background:var(--line); overflow:hidden}
 .dp__bar span{display:block; height:100%; width:0; background:var(--good); transition:width .15s}
-.dp__tools{display:flex; flex-wrap:wrap; align-items:center; gap:.25rem 1rem; margin-top:.7rem}
+.dp__tools{display:flex; flex-wrap:wrap; align-items:center; gap:.25rem 1rem; margin-top:.4rem}
 .dp__link{background:none; border:0; padding:.5rem 0; color:var(--muted); font:inherit; font-size:.9rem; cursor:pointer; text-decoration:underline; text-underline-offset:3px; text-decoration-color:transparent; transition:color .15s, text-decoration-color .15s}
 .dp__link:hover, .dp__link:focus-visible{color:var(--fg); text-decoration-color:currentColor; outline:none}
-.dp__link:disabled{opacity:.45; cursor:default; text-decoration:none}
-.dp__adv{flex-basis:100%} .dp__adv summary{list-style:none; display:inline-block} .dp__adv summary::-webkit-details-marker{display:none}
-.dp__advrow{display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.4rem 0 .2rem; font-size:.9rem; color:var(--muted)}
-.dp__advrow label{display:inline-flex; align-items:center; gap:.3rem}
 @media (prefers-reduced-motion: reduce){.dp__dot,.dp__bar span,.dp__link{transition:none}}
 `;
 
-/** The browser half, as source: the encoders plus the Bluetooth and PDF plumbing. */
+/** The panel's script: talks to the host over postMessage, or leads into it. */
 export function directPrintScript(printer) {
+  return `
+(function () {
+  var box = document.getElementById('dp');
+  var form = document.getElementById('lbform');
+  if (!box) return;
+  var $ = function (id) { return document.getElementById(id); };
+  var dot = $('dp-dot'), state = $('dp-state'), goBtn = $('dp-go'), goN = $('dp-n'), bar = $('dp-bar'), fill = $('dp-fill'), enterBtn = $('dp-enter');
+  var HOST = ${JSON.stringify(HOST_PATH)};
+  var host = null, connected = false, busy = false, printing = null;
+
+  function say(text, tone) { state.textContent = text; dot.className = 'dp__dot ' + (tone || ''); }
+  function picked() { return form ? form.querySelectorAll('.pick:checked:not(:disabled)').length : 0; }
+  function ready() {
+    var n = picked();
+    goN.textContent = n ? n + ' label' : '';
+    goBtn.disabled = !connected || busy || n === 0;
+  }
+  if (form) { form.addEventListener('change', ready); new MutationObserver(ready).observe(form, { childList: true, subtree: true }); }
+  function progress(frac) { bar.hidden = false; fill.style.width = Math.round(frac * 100) + '%'; }
+  function progressOff() { bar.hidden = true; fill.style.width = '0'; }
+
+  /* ---- outside the host: one tap leads in, and is remembered ---- */
+  function outside(reason) {
+    connected = false;
+    say(reason || 'Printer belum tersambung.', '');
+    enterBtn.hidden = false; ready();
+  }
+  enterBtn.addEventListener('click', function () {
+    try { localStorage.setItem('dp.host', '1'); } catch (e) {}
+    window.top.location.href = HOST + '&go=' + encodeURIComponent(location.pathname + location.search);
+  });
+
+  /* ---- inside the host: mirror its state, hand it the labels ---- */
+  var inFrame = false;
+  try { inFrame = window.parent !== window && window.parent.location.origin === location.origin; } catch (e) { inFrame = false; }
+  if (!inFrame) { outside(); return; }
+  host = window.parent;
+  var answered = false;
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin || !e.data || typeof e.data.type !== 'string') return;
+    var m = e.data;
+    if (m.type === 'dp:state') {
+      answered = true; enterBtn.hidden = true;
+      connected = !!m.connected; busy = !!m.busy;
+      if (!busy) say(m.text || (connected ? 'Siap' : 'Ketuk Sambungkan di bilah atas.'), connected ? 'is-on' : (m.tone || ''));
+      ready();
+    } else if (m.type === 'dp:progress') {
+      busy = true; say(m.text || 'Mengirim…', 'is-busy'); progress(m.frac || 0); ready();
+    } else if (m.type === 'dp:done') {
+      busy = false; progressOff();
+      if (m.error) { say('Gagal: ' + m.error, 'is-off'); }
+      else {
+        var failed = (printing && printing.failures) || [];
+        say(m.pages + ' label terkirim' + (failed.length ? ' · ' + failed.length + ' gagal: ' + failed.map(function (f) { return f.id; }).join(', ') : ''), failed.length ? 'is-busy' : 'is-on');
+        // The print is on record server-side; take the printed rows off the list here.
+        ((printing && printing.orders) || []).forEach(function (v) {
+          var id = v.slice(v.indexOf(':') + 1).toLowerCase();
+          var row = form && form.querySelector('tr[data-id="' + id.replace(/"/g, '') + '"]');
+          if (!row) return;
+          var pick = row.querySelector('.pick');
+          if (pick) { pick.checked = false; pick.disabled = true; }
+          var note = row.querySelector('td:last-child');
+          if (note && !failed.some(function (f) { return String(f.id).toLowerCase() === id; })) note.innerHTML = '<span class="ok">dicetak langsung</span>';
+        });
+        if (form) form.dispatchEvent(new Event('change'));
+      }
+      printing = null; ready();
+    }
+  });
+  host.postMessage({ type: 'dp:hello' }, location.origin);
+  setTimeout(function () { if (!answered) outside(); }, 1500);
+
+  goBtn.addEventListener('click', async function () {
+    if (!form || busy || !connected) return;
+    var body = new URLSearchParams(new FormData(form));
+    body.set('format', 'json');
+    var orders = body.getAll('order');
+    if (!orders.length) { say('Centang pesanan dulu.', 'is-on'); return; }
+    busy = true; ready();
+    try {
+      say('Menyiapkan ' + orders.length + ' label…', 'is-busy'); progress(0);
+      var res = await fetch('/api/labels', { method: 'POST', body: body, credentials: 'same-origin' });
+      var out = await res.json();
+      if (!res.ok) throw new Error(out.error || ('HTTP ' + res.status));
+      printing = { orders: orders, failures: out.failures || [] };
+      host.postMessage({ type: 'dp:print', groups: out.groups.map(function (g) { return g.pdfBase64; }) }, location.origin);
+    } catch (e) {
+      busy = false; progressOff(); say('Gagal: ' + e.message, 'is-off'); ready();
+    }
+  });
+  ready();
+})();
+`;
+}
+
+/**
+ * The host: a bar that owns the printer, and the dashboard in a frame under it. The
+ * bar never navigates, so the Bluetooth link outlives every page the frame moves to.
+ */
+export function directPrintHostPage({ printer, go, escape = esc }) {
+  const start = safeGo(go);
+  return `<!doctype html><html lang="id"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Treelogy</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#141B19">
+<style>
+:root{--bg:#141B19; --fg:#F1F3EE; --muted:#A7B3A6; --dim:#839187; --line:#2C3934; --good:#6FBF8B; --warn:#E2B252; --bad:#E08573; --cta:#C2531C}
+@media (prefers-color-scheme: light){:root{--bg:#F3F4EF; --fg:#161E1B; --muted:#4F5C56; --dim:#7B877F; --line:#DADFD3; --good:#2F7D4F; --warn:#8A5A12; --bad:#A8412E}}
+html,body{height:100%; margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 Inter,system-ui,-apple-system,sans-serif}
+body{display:flex; flex-direction:column}
+.bar{display:flex; align-items:center; gap:.6rem; padding:.45rem .9rem; border-bottom:1px solid var(--line); min-height:44px; flex:none}
+.dot{width:.6rem; height:.6rem; border-radius:50%; background:var(--dim); flex:none; transition:background .2s}
+.dot.is-busy{background:var(--warn)} .dot.is-on{background:var(--good); box-shadow:0 0 8px var(--good)} .dot.is-off{background:var(--bad)}
+.name{font-weight:600; white-space:nowrap}
+.state{color:var(--muted); font-size:.9rem; min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.btn{min-height:36px; padding:0 .9rem; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--fg); font:inherit; font-size:.9rem; cursor:pointer; white-space:nowrap}
+.btn:hover,.btn:focus-visible{border-color:var(--fg); outline:none}
+.btn:disabled{opacity:.5; cursor:default}
+.btn--go{background:var(--cta); border-color:var(--cta); color:#fff; font-weight:600}
+.leave{color:var(--muted); font-size:.85rem; text-decoration:underline; text-underline-offset:3px; white-space:nowrap; background:none; border:0; padding:0; cursor:pointer; font-family:inherit}
+.prog{height:3px; background:var(--line); flex:none}
+.prog span{display:block; height:100%; width:0; background:var(--good); transition:width .15s}
+iframe{flex:1; width:100%; border:0; background:var(--bg)}
+@media (prefers-reduced-motion: reduce){.dot,.prog span{transition:none}}
+</style>
+</head><body>
+<div class="bar" role="region" aria-label="Printer">
+  <span class="dot" id="dot" aria-hidden="true"></span>
+  <span class="name">${escape(printer.model)}</span>
+  <span class="state" id="state" role="status" aria-live="polite">Mencari printer…</span>
+  <button class="btn btn--go" type="button" id="connect">Sambungkan</button>
+  <button class="leave" type="button" id="leave" title="Keluar dari mode printer">Keluar</button>
+</div>
+<div class="prog" id="prog" hidden><span id="fill"></span></div>
+<iframe id="frame" src="${escape(start)}" title="Dashboard Treelogy"></iframe>
+<script>${hostScript(printer)}</script>
+</body></html>`;
+}
+
+/** The host's script: the printer, the frame, and the messages between them. */
+export function hostScript(printer) {
   return `
 (function () {
   var printer = ${JSON.stringify(printer)};
   var SERVICES = ${JSON.stringify(PRINTER_SERVICES)};
+  var HOST = ${JSON.stringify(HOST_PATH)};
   var packMono = ${packMono.toString()};
   var ascii = ${ascii.toString()};
   var join = ${join.toString()};
   var inkBands = ${inkBands.toString()};
   var tsplJob = ${tsplJob.toString()};
-  var escposJob = ${escposJob.toString()};
   var placePage = ${placePage.toString()};
 
-  var box = document.getElementById('dp');
-  var form = document.getElementById('lbform');
-  if (!box) return;
   var $ = function (id) { return document.getElementById(id); };
-  var dot = $('dp-dot'), state = $('dp-state'), goBtn = $('dp-go'), goN = $('dp-n'), bar = $('dp-bar'), fill = $('dp-fill');
-  var connectBtn = $('dp-connect'), testBtn = $('dp-test');
-  var protoSel = $('dp-proto'), invertBox = $('dp-invert'), rotateBox = $('dp-rotate'), meta = $('dp-meta');
-
-  /* ---- remembered on this phone: printer, packet size, scale, switches ---- */
+  var dot = $('dot'), state = $('state'), connectBtn = $('connect'), leaveBtn = $('leave'), frame = $('frame'), prog = $('prog'), fill = $('fill');
   var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-                set: function (k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} } };
-  var prefs = {
-    proto: store.get('dp.proto') || 'tspl',
-    invert: store.get('dp.invert') === '1',
-    rotate: store.get('dp.rotate') === '1',
-    // Fixed for this paper and printer; measured once, never asked of anybody.
-    fit: printer.fit || 1,
-    chunk: Number(store.get('dp.chunk')) || 0,
-    device: store.get('dp.device') || '',
-  };
-  protoSel.value = prefs.proto; invertBox.checked = prefs.invert; rotateBox.checked = prefs.rotate;
-  protoSel.onchange = function () { prefs.proto = protoSel.value; store.set('dp.proto', prefs.proto); showMeta(); };
-  invertBox.onchange = function () { prefs.invert = invertBox.checked; store.set('dp.invert', prefs.invert ? 1 : 0); };
-  rotateBox.onchange = function () { prefs.rotate = rotateBox.checked; store.set('dp.rotate', prefs.rotate ? 1 : 0); };
-  function showMeta() {
-    meta.textContent = 'skala ' + Math.round(prefs.fit * 100) + '%' + (prefs.chunk ? ' · paket ' + prefs.chunk + ' B' : '') + ' · ' + prefs.proto.toUpperCase();
-  }
-  showMeta();
+                set: function (k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} },
+                del: function (k) { try { localStorage.removeItem(k); } catch (e) {} } };
+  var prefs = { chunk: Number(store.get('dp.chunk')) || 0, device: store.get('dp.device') || '', fit: printer.fit || 1 };
+  var device = null, ch = null, busy = false, lastText = '', lastTone = '';
 
-  /* ---- status ---- */
-  var device = null, ch = null, busy = false;
-  function say(text, tone) { state.textContent = text; dot.className = 'dp__dot ' + (tone || ''); }
-  function picked() {
-    if (!form) return 0;
-    return form.querySelectorAll('.pick:checked:not(:disabled)').length;
+  /* ---- the frame: keep the address bar honest, and the page's title ---- */
+  function framePath() {
+    try { var l = frame.contentWindow.location; return l.pathname + l.search; } catch (e) { return null; }
   }
-  function ready() {
-    var n = picked();
-    goN.textContent = n ? n + ' label' : '';
-    goBtn.disabled = !ch || busy || n === 0;
-    testBtn.disabled = !ch || busy;
-    connectBtn.textContent = ch ? 'Ganti printer' : 'Sambungkan';
-    connectBtn.disabled = busy;
-  }
-  if (form) form.addEventListener('change', ready);
-  // The search adds rows after the fact; count again when the list changes.
-  if (form) new MutationObserver(ready).observe(form, { childList: true, subtree: true });
+  frame.addEventListener('load', function () {
+    var path = framePath();
+    if (path) history.replaceState(null, '', HOST + '&go=' + encodeURIComponent(path));
+    try { document.title = frame.contentDocument.title || 'Treelogy'; } catch (e) {}
+    tell();
+  });
+  leaveBtn.addEventListener('click', function () {
+    store.del('dp.host');
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    location.href = framePath() || '/api/dashboard?view=labels';
+  });
 
-  if (!navigator.bluetooth) {
-    say('Buka di Chrome Android untuk mencetak langsung.', 'is-off');
-    connectBtn.disabled = true; ready(); return;
+  /* ---- status, shown here and mirrored into the frame ---- */
+  function say(text, tone) { lastText = text; lastTone = tone || ''; state.textContent = text; dot.className = 'dot ' + lastTone; }
+  function tell() {
+    try { frame.contentWindow.postMessage({ type: 'dp:state', connected: !!ch, busy: busy, text: lastText, tone: lastTone }, location.origin); } catch (e) {}
   }
+  function ready() { connectBtn.textContent = ch ? 'Ganti' : 'Sambungkan'; connectBtn.disabled = busy; connectBtn.classList.toggle('btn--go', !ch); tell(); }
+  function progress(frac, text) {
+    prog.hidden = false; fill.style.width = Math.round(frac * 100) + '%';
+    if (text) say(text, 'is-busy');
+    try { frame.contentWindow.postMessage({ type: 'dp:progress', frac: frac, text: text || lastText }, location.origin); } catch (e) {}
+  }
+  function progressOff() { prog.hidden = true; fill.style.width = '0'; }
+
+  if (!navigator.bluetooth) { say('Buka di Chrome Android untuk mencetak langsung.', 'is-off'); connectBtn.disabled = true; }
 
   /* ---- connection ---- */
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   function wire(dev) {
     device = dev;
     dev.addEventListener('gattserverdisconnected', function () {
-      ch = null; ready(); say('Terputus - menyambung lagi…', 'is-busy');
-      // Printers nap; wake them with a retry or three rather than a tap.
+      ch = null; say('Terputus - menyambung lagi…', 'is-busy'); ready();
       attach(dev, 3).catch(function () { say('Printer terputus. Nyalakan lagi, lalu ketuk Sambungkan.', 'is-off'); ready(); });
     });
   }
@@ -298,8 +440,7 @@ export function directPrintScript(printer) {
     }
     if (!ch) throw new Error('printer tersambung tapi tidak ada jalur tulis Bluetooth (BLE) yang dikenal');
     store.set('dp.device', dev.id); prefs.device = dev.id;
-    ready();
-    say('Siap · ' + (dev.name || printer.model), 'is-on');
+    say('Siap · ' + (dev.name || printer.model), 'is-on'); ready();
   }
   async function choose() {
     say('Pilih printer di daftar…', 'is-busy');
@@ -308,16 +449,16 @@ export function directPrintScript(printer) {
     prefs.chunk = 0; store.set('dp.chunk', 0);
     await attach(dev, 1);
   }
-  // Without a tap: Chrome hands back devices this page was allowed before.
+  // Without a tap, where Chrome hands back devices this origin was allowed before.
   async function resume() {
+    if (!navigator.bluetooth) return;
     if (!prefs.device || !navigator.bluetooth.getDevices) { say('Ketuk Sambungkan untuk memilih printer.', ''); ready(); return; }
     try {
       var known = (await navigator.bluetooth.getDevices()).filter(function (d) { return d.id === prefs.device; })[0];
       if (!known) { say('Ketuk Sambungkan untuk memilih printer.', ''); ready(); return; }
-      say('Menyambung ke ' + (known.name || printer.model) + '…', 'is-busy');
+      say('Menyambung ke ' + (known.name || printer.model) + '…', 'is-busy'); ready();
       wire(known);
       try { await attach(known, 2); return; } catch (e) {}
-      // Not reachable yet: wait for it to advertise, then connect.
       if (known.watchAdvertisements) {
         var done = false;
         known.addEventListener('advertisementreceived', function () {
@@ -332,11 +473,10 @@ export function directPrintScript(printer) {
   }
   connectBtn.addEventListener('click', function () {
     if (device && device.gatt.connected) device.gatt.disconnect();
-    choose().catch(function (e) { ch = null; ready(); say(e.name === 'NotFoundError' ? 'Batal memilih printer.' : 'Gagal menyambung: ' + e.message, 'is-off'); });
+    choose().catch(function (e) { ch = null; say(e.name === 'NotFoundError' ? 'Batal memilih printer.' : 'Gagal menyambung: ' + e.message, 'is-off'); ready(); });
   });
 
   /* ---- transfer: the biggest packet the link takes, found once, no idle waits ---- */
-  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   var SIZES = [244, 180, 120, 60, 20];
   async function writeChunk(part) {
     if (ch.properties.writeWithoutResponse) await ch.writeValueWithoutResponse(part);
@@ -347,7 +487,7 @@ export function directPrintScript(printer) {
     for (var i = 0; i < SIZES.length; i++) {
       try { await writeChunk(ascii('\\r\\n'.padEnd(SIZES[i], ' '))); prefs.chunk = SIZES[i]; break; } catch (e) {}
     }
-    prefs.chunk = prefs.chunk || 20; store.set('dp.chunk', prefs.chunk); showMeta();
+    prefs.chunk = prefs.chunk || 20; store.set('dp.chunk', prefs.chunk);
     return prefs.chunk;
   }
   async function send(bytes, onProgress) {
@@ -356,14 +496,11 @@ export function directPrintScript(printer) {
     for (var at = 0; at < bytes.length; at += size) {
       try { await writeChunk(bytes.subarray(at, at + size)); }
       catch (e) {
-        // A packet the link refused mid-job: drop a size and go on from the same place.
         var smaller = SIZES.filter(function (s) { return s < size; })[0];
         if (!smaller) throw e;
-        size = smaller; prefs.chunk = size; store.set('dp.chunk', size); showMeta();
+        size = smaller; prefs.chunk = size; store.set('dp.chunk', size);
         await sleep(50); at -= size; continue;
       }
-      // Write-without-response has no back-pressure; a breath every few packets keeps a
-      // small printer buffer from overflowing without idling the link.
       if (quick && ((at / size) & 3) === 3) await sleep(2);
       if (onProgress) onProgress(Math.min(1, (at + size) / bytes.length));
     }
@@ -380,18 +517,9 @@ export function directPrintScript(printer) {
   function job(canvas) {
     var ctx = canvas.getContext('2d', { willReadFrequently: true });
     var px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    var tspl = prefs.proto === 'tspl';
-    // TSPL prints where the bit is 0, ESC/POS where it is 1; the switch flips either.
-    var blackBit = (tspl ? 0 : 1) ^ (prefs.invert ? 1 : 0);
-    var mono = packMono(px, canvas.width, canvas.height, { black: blackBit });
-    return tspl
-      ? tsplJob(mono, { widthMm: printer.widthMm, heightMm: printer.heightMm, gapMm: printer.gapMm, rotate: prefs.rotate, blank: blackBit ? 0x00 : 0xff })
-      : escposJob(mono);
+    var mono = packMono(px, canvas.width, canvas.height, { black: 0 });
+    return tsplJob(mono, { widthMm: printer.widthMm, heightMm: printer.heightMm, gapMm: printer.gapMm, blank: 0xff });
   }
-  function progress(frac) { bar.hidden = false; fill.style.width = Math.round(frac * 100) + '%'; }
-  function progressOff() { bar.hidden = true; fill.style.width = '0'; }
-
-  /* ---- pdf.js, fetched while the page is still being read ---- */
   var pdfjsReady = new Promise(function (resolve, reject) {
     var tag = document.createElement('script');
     tag.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
@@ -402,7 +530,6 @@ export function directPrintScript(printer) {
     tag.onerror = function () { reject(new Error('pembaca PDF gagal dimuat')); };
     document.head.appendChild(tag);
   });
-
   async function renderPages(base64) {
     var lib = await pdfjsReady;
     var raw = atob(base64), data = new Uint8Array(raw.length);
@@ -423,71 +550,38 @@ export function directPrintScript(printer) {
     return canvases;
   }
 
-  /* ---- the one button ---- */
-  goBtn.addEventListener('click', async function () {
-    if (!form || busy) return;
-    var body = new URLSearchParams(new FormData(form));
-    body.set('format', 'json');
-    var n = body.getAll('order').length;
-    if (!n) { say('Centang pesanan dulu.', 'is-on'); return; }
+  /* ---- what the pages ask for ---- */
+  async function print(groups) {
+    if (!ch) throw new Error('printer belum tersambung');
+    var canvases = [];
+    for (var g = 0; g < groups.length; g++) canvases = canvases.concat(await renderPages(groups[g]));
+    var jobs = canvases.map(job);
+    var total = jobs.reduce(function (s, j) { return s + j.length; }, 0), sent = 0;
+    for (var j = 0; j < jobs.length; j++) {
+      var before = sent;
+      await send(jobs[j], function (f) { progress((before + f * jobs[j].length) / total, 'Mengirim ' + (j + 1) + '/' + jobs.length + '…'); });
+      sent += jobs[j].length;
+    }
+    return jobs.length;
+  }
+  window.addEventListener('message', async function (e) {
+    if (e.origin !== location.origin || !e.data || typeof e.data.type !== 'string') return;
+    var m = e.data, reply = function (msg) { try { e.source.postMessage(msg, location.origin); } catch (err) {} };
+    if (m.type === 'dp:hello') { tell(); return; }
+    if (m.type !== 'dp:print') return;
+    if (busy) { reply({ type: 'dp:done', error: 'masih mengirim cetakan sebelumnya' }); return; }
     busy = true; ready();
     try {
-      say('Menyiapkan ' + n + ' label…', 'is-busy'); progress(0);
-      var res = await fetch('/api/labels', { method: 'POST', body: body, credentials: 'same-origin' });
-      var out = await res.json();
-      if (!res.ok) throw new Error(out.error || ('HTTP ' + res.status));
-      // Every stack is rasterised first so the printer gets one steady stream.
-      var canvases = [];
-      for (var g = 0; g < out.groups.length; g++) canvases = canvases.concat(await renderPages(out.groups[g].pdfBase64));
-      var jobs = canvases.map(job);
-      var total = jobs.reduce(function (s, j) { return s + j.length; }, 0), sent = 0;
-      for (var j = 0; j < jobs.length; j++) {
-        say('Mengirim ' + (j + 1) + '/' + jobs.length + '…', 'is-busy');
-        var before = sent;
-        await send(jobs[j], function (f) { progress((before + f * jobs[j].length) / total); });
-        sent += jobs[j].length;
-      }
-      var failed = (out.failures || []).length;
-      say(jobs.length + ' label terkirim' + (failed ? ' · ' + failed + ' gagal: ' + out.failures.map(function (f) { return f.id; }).join(', ') : ''), failed ? 'is-busy' : 'is-on');
-      // The print is on record server-side; take the printed rows off the list here
-      // rather than reloading, which would drop the Bluetooth link.
-      body.getAll('order').forEach(function (v) {
-        var id = v.slice(v.indexOf(':') + 1).toLowerCase();
-        var row = form.querySelector('tr[data-id="' + id.replace(/"/g, '') + '"]');
-        if (!row) return;
-        var pick = row.querySelector('.pick');
-        if (pick) { pick.checked = false; pick.disabled = true; }
-        var note = row.querySelector('td:last-child');
-        if (note && !out.failures.some(function (f) { return String(f.id).toLowerCase() === id; })) note.innerHTML = '<span class="ok">dicetak langsung</span>';
-      });
-      form.dispatchEvent(new Event('change'));
-    } catch (e) {
-      say('Gagal: ' + e.message, 'is-off');
+      progress(0, 'Menyiapkan label…');
+      var pages = await print(m.groups || []);
+      say(pages + ' label terkirim', 'is-on');
+      reply({ type: 'dp:done', pages: pages });
+    } catch (err) {
+      say('Gagal: ' + err.message, 'is-off');
+      reply({ type: 'dp:done', error: err.message });
     } finally { busy = false; progressOff(); ready(); }
   });
 
-  /* ---- test page and calibration ---- */
-  // The test sheet: a frame the size the label will be, centred and flush to the top.
-  function framed() {
-    var c = blankCanvas(), ctx = c.getContext('2d', { willReadFrequently: true });
-    var w = Math.round(c.width * prefs.fit), h = Math.round(c.height * prefs.fit), x0 = Math.round((c.width - w) / 2);
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 6; ctx.strokeRect(x0 + 12, 12, w - 24, h - 24);
-    ctx.fillStyle = '#000'; ctx.textAlign = 'center';
-    ctx.font = 'bold ' + Math.round(56 * prefs.fit) + 'px sans-serif';
-    ctx.fillText('TES ' + printer.model, c.width / 2, h / 2 - 30 * prefs.fit);
-    ctx.font = Math.round(34 * prefs.fit) + 'px sans-serif';
-    ctx.fillText('bingkai harus pas di tepi kertas', c.width / 2, h / 2 + 40 * prefs.fit);
-    return c;
-  }
-  async function oneOff(label, canvas, after) {
-    if (busy) return; busy = true; ready();
-    try { say(label, 'is-busy'); await send(job(canvas), progress); say(after, 'is-on'); }
-    catch (e) { say('Gagal: ' + e.message, 'is-off'); }
-    finally { busy = false; progressOff(); ready(); }
-  }
-  testBtn.addEventListener('click', function () {
-    oneOff('Mengirim halaman tes…', framed(), 'Halaman tes terkirim. Bingkai pas di tepi = ukuran benar.');
-  });
   ready();
   resume();
 })();

@@ -3,7 +3,7 @@ import { CHANNELS, STAGES, STAGE_META, MANUAL_CHANNEL, channelMeta, isMarketplac
 import { DATASETS, EXPORT_CHANNELS, EXPORT_PRODUCTS, PRODUCT_GROUPS, DEFAULT_DATASET } from './export/orders.js';
 import { PRESETS } from './range.js';
 import { CHANNEL_LABEL } from './stock-sync.js';
-import { directPrintScript, directPrintPanel, DIRECT_PRINT_CSS } from './direct-print.js';
+import { directPrintScript, directPrintPanel, DIRECT_PRINT_CSS, directPrinterFor, directPrintEnterScript } from './direct-print.js';
 import { labelReadiness, FETCHABLE, printedEntry, printBatches, filterPrintBatches, printersIn, printDaysIn, reprintPresets, printZoneLabel } from './labels.js';
 import { expressService, INSTANT as EXPRESS_INSTANT } from './express.js';
 import { AWAITING_PACKING } from './alerts-express.js';
@@ -666,6 +666,7 @@ export function shell({
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${escape(title)} &mdash; Treelogy</title>
+${directPrinterFor(user) ? `<script>${directPrintEnterScript()}</script>` : ''}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="mask-icon" href="/favicon.svg" color="#526547">
 <meta name="theme-color" content="#1E2A27" media="(prefers-color-scheme: dark)">

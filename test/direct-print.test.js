@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packMono, tsplJob, escposJob, inkBands, placePage, directPrinterFor, directPrintScript } from '../src/direct-print.js';
+import { packMono, tsplJob, escposJob, inkBands, placePage, directPrinterFor, directPrintScript, directPrintHostPage, hostScript, safeGo, HOST_PATH } from '../src/direct-print.js';
 import { renderLabels } from '../src/dashboard-page.js';
 
 // 16x2 image: top row all black, bottom row white except the last pixel.
@@ -42,17 +42,37 @@ test('only Kemas gets the direct printer, and only his page carries the panel', 
   assert.equal(directPrinterFor(null), null);
   const args = { orders: [], range: {}, errors: {}, shopeeShop: null, generatedAt: 0, csrf: 't', flash: null, sizes: { a6: { label: 'A6' } }, defaultSize: 'a6' };
   assert.doesNotMatch(renderLabels(args), /id="dp"/);
-  const his = renderLabels({ ...args, directPrinter: directPrinterFor({ email: 'kemas@treelogy.com' }) });
-  assert.match(his, /id="dp-connect"/);
-  assert.match(his, /navigator\.bluetooth\.requestDevice/);
+  const kemas = { email: 'kemas@treelogy.com', name: 'Kemas', role: 'owner' };
+  const his = renderLabels({ ...args, user: kemas, directPrinter: directPrinterFor(kemas) });
+  assert.match(his, /id="dp-go"/);
+  assert.match(his, /dp:hello/, 'the panel asks the host, it does not own the printer');
+  assert.doesNotMatch(his, /requestDevice/);
+  assert.match(his, /localStorage\.getItem\('dp\.host'\)/, 'a page outside the host moves into it once entered');
+  assert.doesNotMatch(renderLabels(args), /dp\.host/);
 });
 
-test('the browser script is self-contained: the encoders are inlined, not imported', () => {
-  const script = directPrintScript({ model: 'x', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8 });
+test('the host script is self-contained: the encoders are inlined, not imported', () => {
+  const script = hostScript({ model: 'x', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.65 });
   assert.doesNotMatch(script, /\bimport\b|\brequire\(/);
   assert.match(script, /function packMono/);
   assert.match(script, /function tsplJob/);
+  assert.match(script, /requestDevice/);
   new Function(script); // parses
+  new Function(directPrintScript({ model: 'x' })); // so does the panel's
+});
+
+test('the host frames only dashboard pages, never itself or another site', () => {
+  assert.equal(safeGo('/api/dashboard?view=labels&reprint=1'), '/api/dashboard?view=labels&reprint=1');
+  assert.equal(safeGo('/api/dashboard'), '/api/dashboard');
+  assert.equal(safeGo('https://evil.example/x'), '/api/dashboard?view=labels');
+  assert.equal(safeGo('//evil.example/x'), '/api/dashboard?view=labels');
+  assert.equal(safeGo('/api/labels'), '/api/dashboard?view=labels');
+  assert.equal(safeGo(HOST_PATH + '&go=x'), '/api/dashboard?view=labels', 'no host inside the host');
+  assert.equal(safeGo(null), '/api/dashboard?view=labels');
+  const html = directPrintHostPage({ printer: directPrinterFor({ email: 'kemas@treelogy.com' }), go: '/api/dashboard?view=orders&q="x"' });
+  assert.match(html, /<iframe id="frame" src="\/api\/dashboard\?view=orders&amp;q=&quot;x&quot;"/);
+  assert.match(html, /id="connect"/);
+  assert.match(html, /dp:print/);
 });
 
 test('blank rows are not sent: one BITMAP per band of ink, close bands merged', () => {
@@ -93,5 +113,5 @@ test('the panel is on the reprint list too, with one primary button and nothing 
   assert.doesNotMatch(reprint, /alibrasi/);
   assert.doesNotMatch(directPrintScript({ model: 'x', fit: 0.65 }), /dp\.fit/, 'the scale is never read from the phone');
   assert.equal((reprint.match(/class="cta dp__go"/g) ?? []).length, 1);
-  assert.match(reprint, /navigator\.bluetooth\.getDevices/);
+  assert.match(reprint, /dp:print/);
 });

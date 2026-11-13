@@ -40,7 +40,9 @@ export const TIKTOK_EVENTS = ['ORDER_STATUS_CHANGE'];
  * after payment, and #13131 was - the bundle swapped for capsules - while our row and its
  * Jurnal invoice kept describing the cart at checkout. Nothing else announces an edit.
  */
-export const SHOPIFY_TOPICS = ['ORDERS_PAID', 'ORDERS_EDITED'];
+// ORDERS_UPDATED since 13 Nov 2026: every change to an order, so whatever moves the
+// invoice - a cancelled line, a changed discount - reaches Jurnal, not only admin edits.
+export const SHOPIFY_TOPICS = ['ORDERS_PAID', 'ORDERS_EDITED', 'ORDERS_UPDATED'];
 export const SHOPIFY_RETIRED_TOPICS = ['ORDERS_CREATE'];
 
 export function baseUrl(config = loadConfig()) {

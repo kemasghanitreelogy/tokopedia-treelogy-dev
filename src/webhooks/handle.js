@@ -4,6 +4,7 @@ import { runSync, loadSyncLedger, saveSyncLedger, POSTABLE_STAGES, UNDONE_STAGES
 import { postingAccounts } from '../mekari/accounts.js';
 import { customIdFor } from '../mekari/invoice.js';
 import { amendManualInvoice } from '../mekari/amend.js';
+import { invoiceDrift, invoiceSignature } from '../mekari/drift.js';
 import { ensureReady } from '../mekari/setup.js';
 import { isMekariConfigured } from '../mekari/client.js';
 import { invalidate } from '../cache.js';
@@ -141,7 +142,16 @@ async function handleVerifiedPush({ channel, id, gid = null, reason = 'push' }) 
     // now says, keeping its number. Same builder and the same refusal as an edited
     // typed-in sale - an invoice that already has a payment against it is not rewritten,
     // and that failure goes to Telegram because somebody has to fix it by hand.
-    if (isOrderEdit({ channel, reason }) && known.invoice_id && !known.voided && POSTABLE_STAGES.has(order.stage) && liveEnabled()) {
+    //
+    // Any push counts, not only orders/edited: orders/updated fires for every change, and
+    // the fingerprint decides whether the change touched the invoice at all - a new tag
+    // or a fulfilment does not, a removed line or a changed discount does.
+    const drift = invoiceDrift(order, known);
+    if (drift === 'adopt') {
+      ledger.orders[customId] = { ...known, sig: invoiceSignature(order) };
+      await saveSyncLedger(ledger);
+    }
+    if ((isOrderEdit({ channel, reason }) || drift === 'changed') && known.invoice_id && !known.voided && POSTABLE_STAGES.has(order.stage) && liveEnabled()) {
       try {
         // An edit can add a product; it has to exist in Jurnal before a line can name it.
         await ensureReady({ dryRun: false, readyAt: ledger.ready_at ?? null, readyFor: ledger.ready_for ?? null });

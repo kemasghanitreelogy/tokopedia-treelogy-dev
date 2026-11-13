@@ -5,6 +5,7 @@ import { postingAccounts } from './accounts.js';
 import { forgetCatalogue } from './catalogue.js';
 import { refusalFor } from './discard.js';
 import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
+import { invoiceSignature } from './drift.js';
 
 /**
  * Correcting an invoice in place, rather than deleting it and writing another.
@@ -84,6 +85,8 @@ async function amendNow(order, {
     ...rest,
     total: built.expectedTotal,
     amended_at: new Date().toISOString(),
+    // The invoice now matches this order; the next change is measured from here.
+    sig: invoiceSignature(order),
   };
   await saveLedger(ledger);
 

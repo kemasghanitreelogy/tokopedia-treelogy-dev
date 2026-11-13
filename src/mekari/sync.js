@@ -7,6 +7,7 @@ import { isReadOnly, ReadOnlyError } from '../stock-sync.js';
 import { ensureContact, rememberContacts, knownContactNames, stampReady, explainMissingProduct, ensureProductsFor, PRODUCT_MISSING } from './setup.js';
 import { accountMap } from './accounts.js';
 import { amendManualInvoice } from './amend.js';
+import { invoiceSignature, invoiceDrift } from './drift.js';
 import { receivableFor } from './sources.js';
 import { isSellingSource } from './prefix.js';
 /**
@@ -660,7 +661,11 @@ export function undoneCandidates(orders, ledger) {
 export function pendingAmends(orders, ledger) {
   return orders.filter((o) => {
     const entry = ledger.orders?.[customIdFor(o)];
-    return entry && entry.amend_pending && entry.invoice_id && !entry.voided && POSTABLE_STAGES.has(o.stage);
+    if (!entry || !POSTABLE_STAGES.has(o.stage)) return false;
+    if (entry.amend_pending && entry.invoice_id && !entry.voided) return true;
+    // Changed on Shopify since its invoice was written and the push never landed - or
+    // landed while Jurnal was down. The sweep is the safety net for every change.
+    return invoiceDrift(o, entry) === 'changed';
   });
 }
 
@@ -827,6 +832,8 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
         order_id: order.id,
         total: result.total,
         at: new Date().toISOString(),
+        // What this invoice was made of, so a later change to the order is noticed.
+        ...(result.status === 'created' && order.channel === 'shopify' ? { sig: invoiceSignature(order) } : {}),
         // A wrong number in the books is recorded so it is not re-posted into the same
         // trap, and flagged so it stays visible until a person has dealt with it.
         ...(result.status === 'mismatch' ? { mismatch: true, stored: result.stored } : {}),
@@ -877,6 +884,11 @@ async function runBatch({ orders, accounts, dryRun, limit, deadlineMs = null }) 
     }
   }
   if (!dryRun) {
+    // Older invoices that agree with their order start being watched.
+    for (const order of orders) {
+      const customId = customIdFor(order);
+      if (invoiceDrift(order, ledger.orders?.[customId]) === 'adopt') ledger.orders[customId].sig = invoiceSignature(order);
+    }
     stampReady(ledger, Date.now(), { results });
     await saveSyncLedger(ledger);
     // Written after the ledger, never before: an order recorded as failing that actually

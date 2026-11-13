@@ -116,3 +116,18 @@ test('the panel is on the reprint list too, with one primary button and nothing 
   assert.equal((reprint.match(/class="cta dp__go"/g) ?? []).length, 1);
   assert.match(reprint, /dp:print/);
 });
+
+test('an iPhone is told about Bluefy, and the host writes in a way every implementation takes', () => {
+  const panel = directPrintScript({ model: 'x' });
+  assert.match(panel, /Bluefy/);
+  assert.match(panel, /bluefy:\/\/open\?url=/);
+  assert.match(panel, /apps\.apple\.com\/app\/id1492822055/);
+  const host = hostScript({ model: 'x', widthMm: 100, heightMm: 150, gapMm: 2, dotsPerMm: 8, fit: 0.7 });
+  assert.match(host, /part\.slice\(0\)/, 'a copy, not a view with an offset');
+  assert.match(host, /typeof ch\.writeValueWithoutResponse === 'function'/);
+  assert.match(host, /getPrimaryService\(SERVICES\[u\]\)/, 'service by service where listing all is refused');
+  new Function(panel); new Function(host);
+  const page = directPrintHostPage({ printer: directPrinterFor({ email: 'kemas@treelogy.com' }), go: null });
+  assert.match(page, /100dvh/);
+  assert.match(page, /id="nb"/);
+});

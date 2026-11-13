@@ -176,6 +176,41 @@ export const PRINTER_SERVICES = [
 
 /* ------------------------------------------------------------------ the pages */
 
+export const BLUEFY_STORE = 'https://apps.apple.com/app/id1492822055';
+
+/**
+ * Safari on iPhone has no Web Bluetooth and Apple has said it will not add it. The one
+ * way in on iOS is Bluefy, a free browser built on Web Bluetooth. Pages say so plainly,
+ * carry the link to the app, and try to hand the current address over to it.
+ *
+ * Runs in the browser; kept self-contained like the encoders.
+ */
+function noBluetoothNoticeFn() {
+  return `function (mount) {
+    var ua = navigator.userAgent || '';
+    var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var here = location.href;
+    var esc = function (t) { return String(t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+    if (ios) {
+      mount.innerHTML = '<p class="nb__p">Safari di iPhone tidak bisa Bluetooth. Buka halaman ini di aplikasi <b>Bluefy</b> (gratis), lalu sambungkan printer dari sana.</p>'
+        + '<div class="nb__row"><a class="chip nb__a" href="bluefy://open?url=' + encodeURIComponent(here) + '">Buka di Bluefy</a>'
+        + '<a class="chip nb__a" href="${BLUEFY_STORE}" target="_blank" rel="noopener">Pasang Bluefy</a>'
+        + '<button class="chip" type="button" id="nb-copy">Salin tautan</button></div>'
+        + '<p class="nb__p dim">Kalau tombol pertama tidak membuka apa-apa: salin tautan, buka Bluefy, tempel di kolom alamatnya.</p>';
+      var copy = mount.querySelector('#nb-copy');
+      copy.addEventListener('click', function () {
+        var done = function () { copy.textContent = 'Tersalin'; setTimeout(function () { copy.textContent = 'Salin tautan'; }, 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(here).then(done, function () { window.prompt('Salin tautan ini:', here); });
+        else window.prompt('Salin tautan ini:', here);
+      });
+    } else {
+      mount.innerHTML = '<p class="nb__p">Browser ini tidak mendukung Bluetooth. Gunakan Chrome di Android, atau Bluefy di iPhone.</p>';
+    }
+    return ios;
+  }`;
+}
+
+
 /**
  * Put at the top of every dashboard page this person loads: once they have entered the
  * host on this phone, every later visit that lands outside it is moved inside, before
@@ -203,6 +238,7 @@ export function directPrintPanel(printer, { escape = esc } = {}) {
     </button>
     <div class="dp__bar" id="dp-bar" hidden><span id="dp-fill"></span></div>
     <div class="dp__tools"><button class="dp__link" type="button" id="dp-enter" hidden>Sambungkan printer</button></div>
+    <div class="dp__nb" id="dp-nb" hidden></div>
   </section>`;
 }
 
@@ -221,6 +257,8 @@ export const DIRECT_PRINT_CSS = `
 .dp__tools{display:flex; flex-wrap:wrap; align-items:center; gap:.25rem 1rem; margin-top:.4rem}
 .dp__link{background:none; border:0; padding:.5rem 0; color:var(--muted); font:inherit; font-size:.9rem; cursor:pointer; text-decoration:underline; text-underline-offset:3px; text-decoration-color:transparent; transition:color .15s, text-decoration-color .15s}
 .dp__link:hover, .dp__link:focus-visible{color:var(--fg); text-decoration-color:currentColor; outline:none}
+.dp__nb{margin-top:.5rem} .nb__p{margin:.3rem 0; font-size:.9rem; color:var(--muted)} .nb__p b{color:var(--fg)}
+.nb__row{display:flex; flex-wrap:wrap; gap:.4rem; margin:.5rem 0} .nb__a{text-decoration:none}
 @media (prefers-reduced-motion: reduce){.dp__dot,.dp__bar span,.dp__link{transition:none}}
 `;
 
@@ -248,8 +286,15 @@ export function directPrintScript(printer) {
   function progressOff() { bar.hidden = true; fill.style.width = '0'; }
 
   /* ---- outside the host: one tap leads in, and is remembered ---- */
+  var noBluetoothNotice = ${noBluetoothNoticeFn()};
   function outside(reason) {
     connected = false;
+    if (!navigator.bluetooth) {
+      // No door to lead through: say what this phone can do instead.
+      say('Bluetooth tidak tersedia di browser ini.', 'is-off');
+      var nb = $('dp-nb'); nb.hidden = false; noBluetoothNotice(nb);
+      enterBtn.hidden = true; ready(); return;
+    }
     say(reason || 'Printer belum tersambung.', '');
     enterBtn.hidden = false; ready();
   }
@@ -352,6 +397,10 @@ body{display:flex; flex-direction:column}
 .prog{height:3px; background:var(--line); flex:none}
 .prog span{display:block; height:100%; width:0; background:var(--good); transition:width .15s}
 iframe{flex:1; width:100%; border:0; background:var(--bg)}
+.nb{padding:.6rem .9rem; border-bottom:1px solid var(--line); font-size:.9rem} .nb__p{margin:.3rem 0; color:var(--muted)} .nb__p b{color:var(--fg)}
+.nb__row{display:flex; flex-wrap:wrap; gap:.4rem; margin:.5rem 0}
+.chip{display:inline-flex; align-items:center; min-height:36px; padding:0 .9rem; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--fg); font:inherit; font-size:.9rem; cursor:pointer; text-decoration:none}
+@supports (height: 100dvh){html,body{height:100dvh}}
 @media (prefers-reduced-motion: reduce){.dot,.prog span{transition:none}}
 </style>
 </head><body>
@@ -363,6 +412,7 @@ iframe{flex:1; width:100%; border:0; background:var(--bg)}
   <button class="leave" type="button" id="leave" title="Keluar dari mode printer">Keluar</button>
 </div>
 <div class="prog" id="prog" hidden><span id="fill"></span></div>
+<div class="nb" id="nb" hidden></div>
 <iframe id="frame" src="${escape(start)}" title="Dashboard Treelogy"></iframe>
 <script>${hostScript(printer)}</script>
 </body></html>`;
@@ -419,7 +469,11 @@ export function hostScript(printer) {
   }
   function progressOff() { prog.hidden = true; fill.style.width = '0'; }
 
-  if (!navigator.bluetooth) { say('Buka di Chrome Android untuk mencetak langsung.', 'is-off'); connectBtn.disabled = true; }
+  var noBluetoothNotice = ${noBluetoothNoticeFn()};
+  if (!navigator.bluetooth) {
+    say('Bluetooth tidak tersedia di browser ini.', 'is-off'); connectBtn.disabled = true;
+    var nb = $('nb'); nb.hidden = false; noBluetoothNotice(nb);
+  }
 
   /* ---- connection ---- */
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
@@ -436,7 +490,13 @@ export function hostScript(printer) {
       try { server = await dev.gatt.connect(); } catch (e) { err = e; await sleep(600 * (t + 1)); }
     }
     if (!server) throw err || new Error('tidak tersambung');
-    var services = await server.getPrimaryServices();
+    // Listing every service needs no argument in Chrome; implementations that insist on
+    // one are asked for each known printer service in turn.
+    var services = [];
+    try { services = await server.getPrimaryServices(); } catch (e) {}
+    if (!services.length) {
+      for (var u = 0; u < SERVICES.length; u++) { try { services.push(await server.getPrimaryService(SERVICES[u])); } catch (e) {} }
+    }
     ch = null;
     for (var s = 0; s < services.length && !ch; s++) {
       var chars = await services[s].getCharacteristics();
@@ -484,9 +544,14 @@ export function hostScript(printer) {
 
   /* ---- transfer: the biggest packet the link takes, found once, no idle waits ---- */
   var SIZES = [244, 180, 120, 60, 20];
+  // A copy, never a view: a subarray with an offset is handed to some implementations
+  // as its whole underlying buffer. And writeValueWithoutResponse is missing in some
+  // (Bluefy on iPhone among them), so writeValue is the fallback, not an error.
+  var quick = function () { return !!(ch.properties.writeWithoutResponse && typeof ch.writeValueWithoutResponse === 'function'); };
   async function writeChunk(part) {
-    if (ch.properties.writeWithoutResponse) await ch.writeValueWithoutResponse(part);
-    else await ch.writeValue(part);
+    var copy = part.slice(0);
+    if (quick()) await ch.writeValueWithoutResponse(copy);
+    else await ch.writeValue(copy);
   }
   async function probeChunk() {
     if (prefs.chunk) return prefs.chunk;
@@ -498,7 +563,7 @@ export function hostScript(printer) {
   }
   async function send(bytes, onProgress) {
     var size = await probeChunk();
-    var quick = !!ch.properties.writeWithoutResponse;
+    var fast = quick();
     for (var at = 0; at < bytes.length; at += size) {
       try { await writeChunk(bytes.subarray(at, at + size)); }
       catch (e) {
@@ -507,7 +572,7 @@ export function hostScript(printer) {
         size = smaller; prefs.chunk = size; store.set('dp.chunk', size);
         await sleep(50); at -= size; continue;
       }
-      if (quick && ((at / size) & 3) === 3) await sleep(2);
+      if (fast && ((at / size) & 3) === 3) await sleep(2);
       if (onProgress) onProgress(Math.min(1, (at + size) / bytes.length));
     }
   }

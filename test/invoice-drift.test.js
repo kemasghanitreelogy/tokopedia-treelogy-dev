@@ -35,6 +35,8 @@ test('an invoice whose order changed is rewritten; one that did not is left alon
 test('an older invoice without a fingerprint is adopted when it agrees, untouched when it does not', () => {
   assert.equal(invoiceDrift(order(bundle), { invoice_id: 1, total: 1045000 }), 'adopt');
   assert.equal(invoiceDrift(order(swapped), { invoice_id: 1, total: 1160000 }), null, 'old discount gaps wait for the audit');
+  assert.equal(invoiceDrift(order(bundle), { invoice_id: 1, total: null }), 'adopt', 're-learned from Jurnal, no total');
+  assert.equal(invoiceDrift(order(bundle), { invoice_id: 1, total: 1045001.8 }), 'adopt', 'rupiah rounding');
 });
 
 test('the sweep picks up a changed order whose push never arrived', () => {

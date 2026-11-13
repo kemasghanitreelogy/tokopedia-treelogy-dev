@@ -39,5 +39,9 @@ export function invoiceDrift(order, entry) {
   if (!entry?.invoice_id || entry.voided || entry.needs_review || entry.mismatch) return null;
   const now = invoiceSignature(order);
   if (entry.sig) return entry.sig === now ? null : 'changed';
-  return Number(entry.total) === financeTotal(order.finance) ? 'adopt' : null;
+  // No total recorded (an invoice re-learned from Jurnal rather than written by us) is
+  // taken as agreeing: the audit of 13 Nov found only October and November entries like
+  // that, all built by the current builder. Under Rp2 is rupiah rounding, not a change.
+  if (entry.total === null || entry.total === undefined) return 'adopt';
+  return Math.abs(Number(entry.total) - financeTotal(order.finance)) < 2 ? 'adopt' : null;
 }
